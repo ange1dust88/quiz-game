@@ -1,8 +1,8 @@
 import { LoginForm } from "./LoginForm";
 
-export default function Login() {
+export default function LoginPage() {
   return (
-    <div>
+    <div className="flex justify-center mt-16">
       <LoginForm />
     </div>
   );

@@ -2,18 +2,27 @@
 
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
-import { login } from "./actions";
+import { register } from "./actions";
 
-export function LoginForm() {
-  const [state, loginAction] = useActionState(login, undefined);
+export function RegisterForm() {
+  const [state, registerAction] = useActionState(register, undefined);
 
   return (
-    <form action={loginAction} className="flex max-w-75 flex-col gap-4">
+    <form action={registerAction} className="flex max-w-75 flex-col gap-4">
       <div className="flex flex-col gap-2">
-        <input id="email" name="email" type="email" placeholder="Email" />
+        <input id="email" name="email" placeholder="Email" type="email" />
         {state?.errors?.email && (
           <p className="text-red-500 text-sm">
             {state.errors.email.join(", ")}
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <input id="nickname" name="nickname" placeholder="Nickname" />
+        {state?.errors?.nickname && (
+          <p className="text-red-500 text-sm">
+            {state.errors.nickname.join(", ")}
           </p>
         )}
       </div>
@@ -46,7 +55,7 @@ function SubmitButton() {
       type="submit"
       className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700"
     >
-      Login
+      Зарегистрироваться
     </button>
   );
 }

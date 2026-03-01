@@ -19,4 +19,28 @@ model User {
   email        String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
+
+  profile      PlayerProfile?
+}
+
+model PlayerProfile {
+  id        String @id @default(uuid())
+  userId    String @unique
+  user      User   @relation(fields: [userId], references: [id])
+
+  nickname  String @unique
+  avatarUrl String?
+
+  level     Int    @default(1)
+  experience Int   @default(0)
+  elo       Int    @default(1000)
+
+  country   String?
+
+  gamesPlayed Int  @default(0)
+  gamesWon    Int  @default(0)
+  gamesLost   Int  @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
