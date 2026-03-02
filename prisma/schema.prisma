@@ -24,23 +24,47 @@ model User {
 }
 
 model PlayerProfile {
-  id        String @id @default(uuid())
-  userId    String @unique
-  user      User   @relation(fields: [userId], references: [id])
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id])
 
-  nickname  String @unique
-  avatarUrl String?
+  nickname    String   @unique
+  avatarUrl   String?
 
-  level     Int    @default(1)
-  experience Int   @default(0)
-  elo       Int    @default(1000)
+  level       Int      @default(1)
+  experience  Int      @default(0)
+  elo         Int      @default(1000)
 
-  country   String?
+  country     String?
 
-  gamesPlayed Int  @default(0)
-  gamesWon    Int  @default(0)
-  gamesLost   Int  @default(0)
+  gamesPlayed Int      @default(0)
+  gamesWon    Int      @default(0)
+  gamesLost   Int      @default(0)
 
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  games       PlayerInGame[]  
+}
+
+model GameSession {
+  id        String   @id @default(cuid())
+  status    String   @default("waiting") // waiting | active | finished
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+
+  players   PlayerInGame[]    
+}
+
+model PlayerInGame {
+  id            String         @id @default(cuid())
+
+  gameSessionId String
+  profileId     String
+
+  gameSession   GameSession    @relation(fields: [gameSessionId], references: [id])
+  profile       PlayerProfile  @relation(fields: [profileId], references: [id])
+
+  joinedAt      DateTime       @default(now())
+
+  @@unique([gameSessionId, profileId])
 }
