@@ -13,7 +13,6 @@ datasource db {
   provider = "postgresql"
 }
 
-
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -44,7 +43,7 @@ model PlayerProfile {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  games       PlayerInGame[]  
+  games       PlayerInGame[]
 }
 
 model GameSession {
@@ -52,19 +51,19 @@ model GameSession {
   status    String   @default("waiting") // waiting | active | finished
   createdAt DateTime @default(now())
 
-  players   PlayerInGame[]    
+  players   PlayerInGame[]
 }
 
 model PlayerInGame {
-  id            String         @id @default(cuid())
-
+  id            String @id @default(cuid())
   gameSessionId String
   profileId     String
 
-  gameSession   GameSession    @relation(fields: [gameSessionId], references: [id])
-  profile       PlayerProfile  @relation(fields: [profileId], references: [id])
+  role          String @default("player") // player | host | spectator | admin
+  joinedAt      DateTime @default(now())
 
-  joinedAt      DateTime       @default(now())
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id])
+  profile       PlayerProfile @relation(fields: [profileId], references: [id])
 
   @@unique([gameSessionId, profileId])
 }

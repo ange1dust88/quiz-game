@@ -31,6 +31,7 @@ export async function createRoom() {
     data: {
       gameSessionId: session.id,
       profileId: profile.id,
+      role: "host",
     },
   });
 
