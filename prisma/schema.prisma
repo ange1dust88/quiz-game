@@ -44,14 +44,21 @@ model PlayerProfile {
   updatedAt   DateTime @updatedAt
 
   games       PlayerInGame[]
+  
 }
 
 model GameSession {
   id        String   @id @default(cuid())
   status    String   @default("waiting") // waiting | active | finished
+
+  stage     String   @default("setup")   // setup | expand | war | finished
+  turnIndex Int      @default(0)
+
   createdAt DateTime @default(now())
 
   players   PlayerInGame[]
+  territories Territory[]
+  matchMap  MatchCountry[]  
 }
 
 model PlayerInGame {
@@ -64,6 +71,38 @@ model PlayerInGame {
 
   gameSession   GameSession @relation(fields: [gameSessionId], references: [id])
   profile       PlayerProfile @relation(fields: [profileId], references: [id])
+  ownedCountries MatchCountry[]
 
   @@unique([gameSessionId, profileId])
+}
+
+model CountryTemplate {
+  id        Int     @id
+  name      String
+  neighbors Int[]   
+  matches    MatchCountry[] 
+}
+
+model Territory {
+  id              String @id @default(cuid())
+  gameSessionId   String
+  countryId       Int
+
+  ownerId         String? // profileId
+  isCapital       Boolean @default(false)
+
+  gameSession     GameSession @relation(fields: [gameSessionId], references: [id])
+  
+}
+
+model MatchCountry {
+  id            String @id @default(cuid())
+  gameSessionId String
+  templateId    Int
+  ownerId       String? 
+  isCapital     Boolean @default(false)
+
+  gameSession   GameSession   @relation(fields: [gameSessionId], references: [id])
+  template      CountryTemplate @relation(fields: [templateId], references: [id])
+  owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])
 }

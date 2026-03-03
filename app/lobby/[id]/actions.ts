@@ -44,6 +44,20 @@ export async function startGame(formData: FormData) {
     where: { id: sessionId },
     data: { status: "active" },
   });
+  await initializeMap(sessionId);
 
   redirect(`/match/${sessionId}`);
+}
+
+export async function initializeMap(sessionId: string) {
+  const templates = await prisma.countryTemplate.findMany();
+
+  const countriesData = templates.map((t) => ({
+    gameSessionId: sessionId,
+    templateId: t.id,
+    ownerId: null,
+    isCapital: false,
+  }));
+
+  await prisma.matchCountry.createMany({ data: countriesData });
 }
