@@ -4,6 +4,8 @@ import { prisma } from "@/app/lib/prisma";
 import { StartGameButton } from "./StartGameButton";
 import { cookies } from "next/headers";
 import { decrypt } from "@/app/lib/session";
+import { joinGame } from "./actions";
+import { JoinGameButton } from "./JoinGameButton";
 
 const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
@@ -88,6 +90,9 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
 
           {canStart && <StartGameButton sessionId={session.id} />}
         </>
+      )}
+      {session.status === "waiting" && !me && (
+        <JoinGameButton sessionId={session.id} joinAction={joinGame} />
       )}
 
       {session.status === "active" && <p>Game already started!</p>}

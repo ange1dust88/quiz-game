@@ -49,16 +49,15 @@ model PlayerProfile {
 
 model GameSession {
   id        String   @id @default(cuid())
-  status    String   @default("waiting") // waiting | active | finished
+  status    String   @default("waiting")
 
-  stage     String   @default("setup")   // setup | expand | war | finished
+  stage     String   @default("capitals")
   turnIndex Int      @default(0)
 
   createdAt DateTime @default(now())
 
   players   PlayerInGame[]
-  territories Territory[]
-  matchMap  MatchCountry[]  
+  matchMap  MatchCountry[]
 }
 
 model PlayerInGame {
@@ -66,8 +65,9 @@ model PlayerInGame {
   gameSessionId String
   profileId     String
 
-  role          String @default("player") // player | host | spectator | admin
+  role          String @default("player")
   joinedAt      DateTime @default(now())
+  turnOrder     Int?
 
   gameSession   GameSession @relation(fields: [gameSessionId], references: [id])
   profile       PlayerProfile @relation(fields: [profileId], references: [id])
@@ -83,26 +83,18 @@ model CountryTemplate {
   matches    MatchCountry[] 
 }
 
-model Territory {
-  id              String @id @default(cuid())
-  gameSessionId   String
-  countryId       Int
-
-  ownerId         String? // profileId
-  isCapital       Boolean @default(false)
-
-  gameSession     GameSession @relation(fields: [gameSessionId], references: [id])
-  
-}
 
 model MatchCountry {
   id            String @id @default(cuid())
   gameSessionId String
   templateId    Int
-  ownerId       String? 
+  ownerId       String?
   isCapital     Boolean @default(false)
+  armies        Int     @default(1)
 
   gameSession   GameSession   @relation(fields: [gameSessionId], references: [id])
   template      CountryTemplate @relation(fields: [templateId], references: [id])
   owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])
+
+  @@unique([gameSessionId, templateId])
 }

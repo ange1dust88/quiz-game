@@ -61,3 +61,37 @@ export async function initializeMap(sessionId: string) {
 
   await prisma.matchCountry.createMany({ data: countriesData });
 }
+
+export async function joinGame(sessionId: string) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("session")?.value;
+
+  if (!token) throw new Error("No session token");
+
+  const payload = await decrypt(token);
+  const userId: any = payload?.userId;
+  if (!userId) throw new Error("Invalid session");
+
+  const profile = await prisma.playerProfile.findUnique({
+    where: { userId },
+  });
+  if (!profile) throw new Error("Profile not found");
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    include: { players: true },
+  });
+  if (!session) throw new Error("Session not found");
+  if (session.status !== "waiting") throw new Error("Game already started");
+
+  const existing = session.players.find((p) => p.profileId === profile.id);
+  if (existing) return;
+
+  await prisma.playerInGame.create({
+    data: {
+      gameSessionId: sessionId,
+      profileId: profile.id,
+      role: "player",
+    },
+  });
+}
