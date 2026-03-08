@@ -4,7 +4,7 @@ import { prisma } from "@/app/lib/prisma";
 import { cookies } from "next/headers";
 import { decrypt } from "@/app/lib/session";
 import { claimCapital } from "./actions";
-import { claimTerritory } from "./actions"; // нужно реализовать для expand
+import { claimTerritory } from "./actions";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
