@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { decrypt } from "@/app/lib/session";
 import { claimCapital } from "./actions";
 import { claimTerritory } from "./actions";
+import EuropeMap from "./EuropeMap";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
@@ -36,9 +37,7 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const countries = await prisma.matchCountry.findMany({
     where: { gameSessionId: sessionId },
     include: { template: true, owner: { include: { profile: true } } },
-    orderBy: { templateId: "asc" },
   });
-  if (!countries.length) return <div>Map not initialized</div>;
 
   const activePlayer = session.players[session.turnIndex];
   const isMyTurn = playerInGame.id === activePlayer.id;
@@ -60,53 +59,39 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
     stage = "war";
   }
 
+  const getColor = (c: any) => {
+    if (!c.owner) return "#d1d5db";
+    if (c.ownerId === playerInGame.id) return "#3b82f6";
+    return "#ef4444";
+  };
+
   return (
     <div className="p-4">
       <h1 className="text-2xl font-bold mb-2">Match: {sessionId}</h1>
-      <p className="mb-4">
+
+      <p className="mb-2">
         Stage: <strong>{stage.toUpperCase()}</strong>
       </p>
-      <p className="mb-4">
+
+      <p className="mb-6">
         Turn: <strong>{activePlayer.profile.nickname}</strong>
         {isMyTurn ? " (Your turn!)" : ""}
       </p>
 
-      <div className="grid grid-cols-4 gap-4">
-        {countries.map((c) => (
-          <div
-            key={c.id}
-            className="p-3 border rounded text-center bg-gray-300"
-          >
-            <div className="font-semibold">{c.template.name}</div>
-            <div className="text-sm text-gray-700">
-              {c.owner ? (
-                <>
-                  {c.owner.profile.nickname} (
-                  {c.owner.role === "host" ? "Host" : "Player"})
-                </>
-              ) : (
-                "Unclaimed"
-              )}
-            </div>
-            {c.isCapital && (
-              <div className="text-xs text-red-500 font-semibold">Capital</div>
-            )}
+      <EuropeMap />
 
-            {!c.owner && isMyTurn && (
-              <form
-                action={playerHasCapital ? claimTerritory : claimCapital}
-                className="mt-2"
-              >
-                <input type="hidden" name="sessionId" value={sessionId} />
-                <input type="hidden" name="playerId" value={playerInGame.id} />
-                <input type="hidden" name="countryId" value={c.templateId} />
-                <button className="px-2 py-1 bg-blue-500 text-white rounded text-sm">
-                  {playerHasCapital ? "Claim Territory" : "Place Capital"}
-                </button>
-              </form>
-            )}
-          </div>
-        ))}
+      <div className="mt-6 flex gap-4 text-sm">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 bg-blue-500"></div> Your territory
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 bg-red-500"></div> Enemy territory
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 bg-gray-300"></div> Unclaimed
+        </div>
       </div>
     </div>
   );

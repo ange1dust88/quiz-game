@@ -79,6 +79,7 @@ model PlayerInGame {
 model CountryTemplate {
   id        Int     @id
   name      String
+  svgId     String
   neighbors Int[]   
   matches    MatchCountry[] 
 }

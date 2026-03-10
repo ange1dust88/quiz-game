@@ -18,7 +18,7 @@ export const JoinGameButton: React.FC<JoinGameButtonProps> = ({
 
   return (
     <form onSubmit={handleSubmit}>
-      <button className="px-4 py-2 bg-green-500 text-white rounded">
+      <button className="bg-blue-400 hover:bg-blue-500 border border-blue-300 text-white px-6 py-2 rounded-lg">
         Join Game
       </button>
     </form>
