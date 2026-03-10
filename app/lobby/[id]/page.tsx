@@ -50,7 +50,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
 
   const sessionHost = players.find((p) => p.role === "host");
 
-  const canStart = playersCount >= 2;
+  const canStart = playersCount >= 1;
 
   const me = players.find((p) => p.profileId === profile.id);
   const isHost = me?.role === "host";

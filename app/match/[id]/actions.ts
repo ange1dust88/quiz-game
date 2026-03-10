@@ -3,15 +3,26 @@
 import { prisma } from "@/app/lib/prisma";
 import { revalidatePath } from "next/cache";
 
-export async function claimCapital(formData: FormData) {
-  const sessionId = formData.get("sessionId") as string;
-  const playerId = formData.get("playerId") as string;
-  const countryId = Number(formData.get("countryId"));
+export async function claimCapital(
+  sessionId: string,
+  svgId: string,
+  playerId: string,
+) {
+  console.log(claimCapital);
+  if (!sessionId || !playerId || !svgId) return;
 
-  if (!sessionId || !playerId || !countryId) return;
+  const template = await prisma.countryTemplate.findFirst({
+    where: { svgId },
+  });
+
+  if (!template) return;
 
   const existingCapital = await prisma.matchCountry.findFirst({
-    where: { gameSessionId: sessionId, ownerId: playerId, isCapital: true },
+    where: {
+      gameSessionId: sessionId,
+      ownerId: playerId,
+      isCapital: true,
+    },
   });
 
   if (existingCapital) return;
@@ -20,10 +31,13 @@ export async function claimCapital(formData: FormData) {
     where: {
       gameSessionId_templateId: {
         gameSessionId: sessionId,
-        templateId: countryId,
+        templateId: template.id,
       },
     },
-    data: { ownerId: playerId, isCapital: true },
+    data: {
+      ownerId: playerId,
+      isCapital: true,
+    },
   });
 
   await advanceTurnAndStage(sessionId);
@@ -31,18 +45,24 @@ export async function claimCapital(formData: FormData) {
   revalidatePath(`/match/${sessionId}`);
 }
 
-export async function claimTerritory(formData: FormData) {
-  const sessionId = formData.get("sessionId") as string;
-  const playerId = formData.get("playerId") as string;
-  const countryId = Number(formData.get("countryId"));
+export async function claimTerritory(
+  sessionId: string,
+  svgId: string,
+  playerId: string,
+) {
+  if (!sessionId || !playerId || !svgId) return;
 
-  if (!sessionId || !playerId || !countryId) return;
+  const template = await prisma.countryTemplate.findFirst({
+    where: { svgId },
+  });
+
+  if (!template) return;
 
   const country = await prisma.matchCountry.findUnique({
     where: {
       gameSessionId_templateId: {
         gameSessionId: sessionId,
-        templateId: countryId,
+        templateId: template.id,
       },
     },
   });
@@ -53,10 +73,12 @@ export async function claimTerritory(formData: FormData) {
     where: {
       gameSessionId_templateId: {
         gameSessionId: sessionId,
-        templateId: countryId,
+        templateId: template.id,
       },
     },
-    data: { ownerId: playerId },
+    data: {
+      ownerId: playerId,
+    },
   });
 
   await advanceTurnAndStage(sessionId);
@@ -69,6 +91,7 @@ export async function advanceTurnAndStage(sessionId: string) {
     where: { id: sessionId },
     include: { players: true, matchMap: true },
   });
+
   if (!session) return;
 
   const totalPlayers = session.players.length;
@@ -82,7 +105,7 @@ export async function advanceTurnAndStage(sessionId: string) {
   const totalCountries = session.matchMap.length;
   const claimedCountries = session.matchMap.filter((c) => c.ownerId).length;
 
-  if (newStage === "setup" && capitalsPlaced === totalPlayers) {
+  if (newStage === "capitals" && capitalsPlaced === totalPlayers) {
     newStage = "expand";
   }
 
@@ -92,6 +115,9 @@ export async function advanceTurnAndStage(sessionId: string) {
 
   await prisma.gameSession.update({
     where: { id: sessionId },
-    data: { turnIndex: nextIndex, stage: newStage },
+    data: {
+      turnIndex: nextIndex,
+      stage: newStage,
+    },
   });
 }

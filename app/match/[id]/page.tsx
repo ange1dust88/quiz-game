@@ -14,6 +14,13 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const token = cookieStore.get("session")?.value;
   if (!token) return <div>Not authenticated</div>;
 
+  const PLAYER_COLORS = [
+    "#3b82f6", // blue
+    "#ef4444", // red
+    "#22c55e", // green
+    "#f59e0b", // yellow
+  ];
+
   const payload = await decrypt(token);
   const userId: any = payload?.userId;
   if (!userId) return <div>User not found</div>;
@@ -66,31 +73,68 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   };
 
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-2">Match: {sessionId}</h1>
+    <div
+      className="min-h-screen bg-cover bg-center text-white flex flex-col"
+      style={{ backgroundImage: "url('/gradient.png')" }}
+    >
+      {/* TOP BAR */}
+      <div className="flex justify-between items-center px-6 py-4 bg-black/70 backdrop-blur border-b border-[#4f4f4f]">
+        <div className="flex gap-6 items-center">
+          <p className="text-sm text-gray-400">
+            Stage: <span className="text-white font-semibold">{stage}</span>
+          </p>
 
-      <p className="mb-2">
-        Stage: <strong>{stage.toUpperCase()}</strong>
-      </p>
+          <p className="text-sm text-gray-400">
+            Turn:
+            <span className="text-white font-semibold ml-1">
+              {activePlayer.profile.nickname}
+            </span>
+          </p>
 
-      <p className="mb-6">
-        Turn: <strong>{activePlayer.profile.nickname}</strong>
-        {isMyTurn ? " (Your turn!)" : ""}
-      </p>
-
-      <EuropeMap />
-
-      <div className="mt-6 flex gap-4 text-sm">
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-blue-500"></div> Your territory
+          {isMyTurn && (
+            <span className="text-green-400 text-sm font-semibold">
+              Your turn
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-red-500"></div> Enemy territory
-        </div>
+        <div className="text-xs text-gray-400">Match {sessionId}</div>
+      </div>
 
-        <div className="flex items-center gap-2">
-          <div className="w-4 h-4 bg-gray-300"></div> Unclaimed
+      {/* MAP */}
+      <div className="flex-1 flex items-center justify-center p-6 relative">
+        <EuropeMap
+          countries={countries}
+          players={session.players}
+          playerInGame={playerInGame}
+          isMyTurn={isMyTurn}
+          sessionId={sessionId}
+          stage={stage}
+        />
+
+        <div className="absolute top-6 right-6 bg-black border border-[#4f4f4f] rounded-lg p-4 px-6 flex flex-col gap-3">
+          <h3 className="text-sm text-gray-400 font-semibold">Players</h3>
+
+          {session.players.map((p, index) => (
+            <div key={p.id} className="flex items-center gap-2 text-sm">
+              <div
+                className="w-3 h-3 rounded-sm"
+                style={{ backgroundColor: PLAYER_COLORS[index] }}
+              />
+
+              <span className="text-white">
+                {p.profile.nickname}
+                {p.id === playerInGame.id && (
+                  <span className="text-gray-400"> (You)</span>
+                )}
+              </span>
+            </div>
+          ))}
+
+          <div className="flex items-center gap-2 text-sm">
+            <div className="w-3 h-3 bg-gray-300 rounded-sm"></div>
+            <span className="text-gray-300">Unclaimed</span>
+          </div>
         </div>
       </div>
     </div>
