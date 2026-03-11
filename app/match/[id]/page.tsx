@@ -66,18 +66,11 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
     stage = "war";
   }
 
-  const getColor = (c: any) => {
-    if (!c.owner) return "#d1d5db";
-    if (c.ownerId === playerInGame.id) return "#3b82f6";
-    return "#ef4444";
-  };
-
   return (
     <div
       className="min-h-screen bg-cover bg-center text-white flex flex-col"
       style={{ backgroundImage: "url('/gradient.png')" }}
     >
-      {/* TOP BAR */}
       <div className="flex justify-between items-center px-6 py-4 bg-black/70 backdrop-blur border-b border-[#4f4f4f]">
         <div className="flex gap-6 items-center">
           <p className="text-sm text-gray-400">
@@ -101,7 +94,6 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
         <div className="text-xs text-gray-400">Match {sessionId}</div>
       </div>
 
-      {/* MAP */}
       <div className="flex-1 flex items-center justify-center p-6 relative">
         <EuropeMap
           countries={countries}

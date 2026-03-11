@@ -23,13 +23,19 @@ export default function EuropeMap({
   const map = Object.fromEntries(countries.map((c) => [c.template.svgId, c]));
 
   const PLAYER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b"];
-  const [scale, setScale] = useState(1);
 
   const position = useRef({ x: 0, y: 0 });
+
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  const camera = useRef({
+    x: 0,
+    y: 0,
+    scale: 1,
+  });
+
   const start = useRef({ x: 0, y: 0 });
   const dragging = useRef(false);
-
-  const [transform, setTransform] = useState({ x: 0, y: 0 });
 
   const playerColorMap = Object.fromEntries(
     players.map((p, i) => [p.id, PLAYER_COLORS[i]]),
@@ -68,42 +74,63 @@ export default function EuropeMap({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
 
-    const zoomSpeed = 0.001;
+    const zoomSpeed = 0.0015;
 
-    const newScale = scale - e.deltaY * zoomSpeed;
+    const rect = svgRef.current!.getBoundingClientRect();
 
-    const clamped = Math.min(Math.max(0.6, newScale), 3);
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
 
-    setScale(clamped);
+    const worldX = (mouseX - camera.current.x) / camera.current.scale;
+
+    const worldY = (mouseY - camera.current.y) / camera.current.scale;
+
+    let newScale = camera.current.scale - e.deltaY * zoomSpeed;
+
+    newScale = Math.min(Math.max(0.6, newScale), 3);
+
+    camera.current.x = mouseX - worldX * newScale;
+    camera.current.y = mouseY - worldY * newScale;
+    camera.current.scale = newScale;
+
+    updateTransform();
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
     dragging.current = true;
 
     start.current = {
-      x: e.clientX - position.current.x,
-      y: e.clientY - position.current.y,
+      x: e.clientX - camera.current.x,
+      y: e.clientY - camera.current.y,
     };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!dragging.current) return;
 
-    position.current = {
-      x: e.clientX - start.current.x,
-      y: e.clientY - start.current.y,
-    };
+    camera.current.x = e.clientX - start.current.x;
+    camera.current.y = e.clientY - start.current.y;
 
-    setTransform(position.current);
+    updateTransform();
   };
 
   const handleMouseUp = () => {
     dragging.current = false;
   };
 
+  const updateTransform = () => {
+    if (!svgRef.current) return;
+
+    const { x, y, scale } = camera.current;
+
+    svgRef.current.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  };
+
   return (
     <div
-      className="w-full h-full overflow-hidden cursor-grab flex items-center justify-center"
+      className={`w-full h-full overflow-hidden flex items-center justify-center ${
+        dragging.current ? "cursor-grabbing" : "cursor-grab"
+      }`}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -111,16 +138,16 @@ export default function EuropeMap({
       onMouseLeave={handleMouseUp}
     >
       <svg
+        ref={svgRef}
         viewBox="320 320 400 310"
-        className="max-w-225 transition-transform duration-200"
+        className="max-w-225"
         style={{
-          transform: `translate(${transform.x}px, ${transform.y}px) scale(${scale})`,
-          transformOrigin: "center",
+          transformOrigin: "0 0",
         }}
       >
         <defs>
           <filter id="capitalGlow">
-            <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#FFD700" />
+            <feDropShadow dx="0" dy="0" stdDeviation="2" floodColor="#FFD700" />
           </filter>
         </defs>
         <g
@@ -133,7 +160,7 @@ export default function EuropeMap({
             name="Austria"
             fill={getColor("AT")}
             stroke={isCapital("AT") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("AT") ? 3 : 1}
+            strokeWidth={isCapital("AT") ? 2 : 1}
             filter={isCapital("AT") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -149,7 +176,7 @@ export default function EuropeMap({
             name="Belgium"
             fill={getColor("BE")}
             stroke={isCapital("BE") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("BE") ? 3 : 1}
+            strokeWidth={isCapital("BE") ? 2 : 1}
             filter={isCapital("BE") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -165,7 +192,7 @@ export default function EuropeMap({
             name="Italy"
             fill={getColor("IT")}
             stroke={isCapital("IT") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("IT") ? 3 : 1}
+            strokeWidth={isCapital("IT") ? 2 : 1}
             filter={isCapital("IT") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -181,7 +208,7 @@ export default function EuropeMap({
             name="Switzerland"
             fill={getColor("CH")}
             stroke={isCapital("CH") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("CH") ? 3 : 1}
+            strokeWidth={isCapital("CH") ? 2 : 1}
             filter={isCapital("CH") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -197,7 +224,7 @@ export default function EuropeMap({
             name="Czech Republic"
             fill={getColor("CZ")}
             stroke={isCapital("CZ") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("CZ") ? 3 : 1}
+            strokeWidth={isCapital("CZ") ? 2 : 1}
             filter={isCapital("CZ") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -213,7 +240,7 @@ export default function EuropeMap({
             name="Germany"
             fill={getColor("DE")}
             stroke={isCapital("DE") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("DE") ? 3 : 1}
+            strokeWidth={isCapital("DE") ? 2 : 1}
             filter={isCapital("DE") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -229,7 +256,7 @@ export default function EuropeMap({
             name="Hungary"
             fill={getColor("HU")}
             stroke={isCapital("HU") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("HU") ? 3 : 1}
+            strokeWidth={isCapital("HU") ? 2 : 1}
             filter={isCapital("HU") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -245,7 +272,7 @@ export default function EuropeMap({
             name="Poland"
             fill={getColor("PL")}
             stroke={isCapital("PL") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("PL") ? 3 : 1}
+            strokeWidth={isCapital("PL") ? 2 : 1}
             filter={isCapital("PL") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -261,7 +288,7 @@ export default function EuropeMap({
             name="Slovakia"
             fill={getColor("SK")}
             stroke={isCapital("SK") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("SK") ? 3 : 1}
+            strokeWidth={isCapital("SK") ? 2 : 1}
             filter={isCapital("SK") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -277,7 +304,7 @@ export default function EuropeMap({
             name="Slovenia"
             fill={getColor("SI")}
             stroke={isCapital("SI") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("SI") ? 3 : 1}
+            strokeWidth={isCapital("SI") ? 2 : 1}
             filter={isCapital("SI") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -293,7 +320,7 @@ export default function EuropeMap({
             name="Netherlands"
             fill={getColor("NL")}
             stroke={isCapital("NL") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("NL") ? 3 : 1}
+            strokeWidth={isCapital("NL") ? 2 : 1}
             filter={isCapital("NL") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>
@@ -309,7 +336,7 @@ export default function EuropeMap({
             name="France"
             fill={getColor("FR")}
             stroke={isCapital("FR") ? "#FFD700" : "#000"}
-            strokeWidth={isCapital("FR") ? 3 : 1}
+            strokeWidth={isCapital("FR") ? 2 : 1}
             filter={isCapital("FR") ? "url(#capitalGlow)" : ""}
             className="cursor-pointer hover:brightness-110"
           ></path>

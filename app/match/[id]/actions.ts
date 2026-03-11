@@ -69,13 +69,54 @@ export async function claimTerritory(
 
   if (!country || country.ownerId) return;
 
-  await prisma.matchCountry.update({
+  const myCountries = await prisma.matchCountry.findMany({
     where: {
-      gameSessionId_templateId: {
-        gameSessionId: sessionId,
-        templateId: template.id,
-      },
+      gameSessionId: sessionId,
+      ownerId: playerId,
     },
+    select: {
+      templateId: true,
+    },
+  });
+
+  const myIds = myCountries.map((c) => c.templateId);
+
+  if (myIds.length === 0) {
+    await capture(country.id, playerId, sessionId);
+    return;
+  }
+
+  const templates = await prisma.countryTemplate.findMany({
+    where: {
+      id: { in: myIds },
+    },
+  });
+
+  const neighborIds = new Set<number>();
+
+  for (const t of templates) {
+    t.neighbors.forEach((n) => neighborIds.add(n));
+  }
+  const freeNeighbors = await prisma.matchCountry.findMany({
+    where: {
+      gameSessionId: sessionId,
+      templateId: { in: [...neighborIds] },
+      ownerId: null,
+    },
+  });
+
+  const freeNeighborIds = freeNeighbors.map((c) => c.templateId);
+
+  if (freeNeighborIds.length > 0 && !freeNeighborIds.includes(template.id)) {
+    return;
+  }
+
+  await capture(country.id, playerId, sessionId);
+}
+
+async function capture(countryId: string, playerId: string, sessionId: string) {
+  await prisma.matchCountry.update({
+    where: { id: countryId },
     data: {
       ownerId: playerId,
     },
