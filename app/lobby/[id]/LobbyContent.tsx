@@ -5,6 +5,7 @@ import { createClient } from "@/app/lib/supabase/client";
 import { StartGameButton } from "./StartGameButton";
 import { JoinGameButton } from "./JoinGameButton";
 import { joinGame } from "./actions";
+import { useRouter } from "next/navigation";
 
 interface Player {
   id: string;
@@ -36,6 +37,7 @@ export function LobbyContent({
   currentUser,
 }: Props) {
   const [session, setSession] = useState(initialSession);
+  const router = useRouter();
 
   useEffect(() => {
     const supabase = createClient();
@@ -55,6 +57,20 @@ export function LobbyContent({
           const freshSession = await response.json();
 
           setSession(freshSession);
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "GameSession",
+          filter: `id=eq.${sessionId}`,
+        },
+        async (payload) => {
+          if (payload.new.status === "active") {
+            router.push(`/match/${sessionId}`);
+          }
         },
       )
       .subscribe();
