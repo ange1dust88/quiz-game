@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { claimCapital, claimTerritory } from "./actions";
+import { createClient } from "@/app/lib/supabase/client";
 
 type Props = {
   countries: any[];
@@ -13,80 +14,160 @@ type Props = {
 };
 
 export default function EuropeMap({
-  countries,
+  countries: initialCountries,
   playerInGame,
-  players,
+  players: initialPlayers,
   isMyTurn,
   sessionId,
-  stage,
+  stage: initialStage,
 }: Props) {
-  const map = Object.fromEntries(countries.map((c) => [c.template.svgId, c]));
+  const [countries, setCountries] = useState(initialCountries);
+  const [players, setPlayers] = useState(initialPlayers); // 🔥 Состояние для игроков
+  const [currentStage, setCurrentStage] = useState(initialStage);
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(
+    initialPlayers.findIndex((p) => p.id === playerInGame.id) || 0,
+  );
+
+  const map = useMemo(
+    () => Object.fromEntries(countries.map((c) => [c.template.svgId, c])),
+    [countries],
+  );
 
   const PLAYER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b"];
 
-  const position = useRef({ x: 0, y: 0 });
-
   const svgRef = useRef<SVGSVGElement | null>(null);
-
-  const camera = useRef({
-    x: 0,
-    y: 0,
-    scale: 1,
-  });
-
+  const camera = useRef({ x: 0, y: 0, scale: 1 });
   const start = useRef({ x: 0, y: 0 });
   const dragging = useRef(false);
 
-  const playerColorMap = Object.fromEntries(
-    players.map((p, i) => [p.id, PLAYER_COLORS[i]]),
+  // Подписка на изменения стран
+  useEffect(() => {
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`map-${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "MatchCountry",
+          filter: `gameSessionId=eq.${sessionId}`,
+        },
+        async (payload) => {
+          setCountries((prevCountries) =>
+            prevCountries.map((c) =>
+              c.id === payload.new.id ? { ...c, ...payload.new } : c,
+            ),
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [sessionId]);
+
+  // Подписка на изменения игры
+  useEffect(() => {
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`game-${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "GameSession",
+          filter: `id=eq.${sessionId}`,
+        },
+        async (payload) => {
+          console.log("🎮 Game updated:", payload.new);
+
+          // Обновляем стадию
+          if (payload.new.stage) {
+            setCurrentStage(payload.new.stage);
+          }
+
+          // 🔥 Обновляем индекс хода
+          if (payload.new.turnIndex !== undefined) {
+            setCurrentTurnIndex(payload.new.turnIndex);
+          }
+
+          // 🔥🔥🔥 ВАЖНО: перезапрашиваем всю сессию чтобы получить актуальных игроков
+          const response = await fetch(`/api/sessions/${sessionId}`);
+          const freshSession = await response.json();
+          console.log("👥 Свежие игроки:", freshSession.players);
+          setPlayers(freshSession.players);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [sessionId]);
+
+  // 🔥 Активный игрок теперь вычисляется из обновленных players и turnIndex
+  const activePlayer = players[currentTurnIndex];
+  const isMyTurnNow = playerInGame.id === activePlayer?.id;
+
+  const playerColorMap = useMemo(
+    () => Object.fromEntries(players.map((p, i) => [p.id, PLAYER_COLORS[i]])),
+    [players],
   );
 
-  const getColor = (id: string) => {
-    const c = map[id];
+  const getColor = useCallback(
+    (id: string) => {
+      const c = map[id];
+      if (!c) return "#d1d5db";
+      if (!c.ownerId) return "#d1d5db";
+      return playerColorMap[c.ownerId] ?? "#d1d5db";
+    },
+    [map, playerColorMap],
+  );
 
-    if (!c) return "#d1d5db";
-    if (!c.ownerId) return "#d1d5db";
+  const isCapital = useCallback(
+    (code: string) => {
+      const c = map[code];
+      return c?.isCapital;
+    },
+    [map],
+  );
 
-    return playerColorMap[c.ownerId] ?? "#d1d5db";
-  };
+  const handleClick = useCallback(
+    (svgId: string) => {
+      console.log("click");
+      if (!isMyTurnNow) return;
+      console.log("myTurn");
+      const country = map[svgId];
+      if (!country || country.ownerId) return;
+      console.log("country + !country.ownerId");
 
-  const handleClick = (svgId: string) => {
-    console.log("click");
-    if (!isMyTurn) return;
-    console.log("myTurn");
-    const country = map[svgId];
-    if (!country || country.ownerId) return;
-    console.log("country + !country.ownerId");
-
-    if (stage === "capitals") {
-      claimCapital(sessionId, svgId, playerInGame.id);
-      console.log("claimCapital");
-    } else if (stage === "expand") {
-      claimTerritory(sessionId, svgId, playerInGame.id);
-    }
-  };
-
-  const isCapital = (code: string) => {
-    const c = map[code];
-    return c?.isCapital;
-  };
+      if (currentStage === "capitals") {
+        claimCapital(sessionId, svgId, playerInGame.id);
+        console.log("claimCapital");
+      } else if (currentStage === "expand") {
+        claimTerritory(sessionId, svgId, playerInGame.id);
+      }
+    },
+    [isMyTurnNow, map, currentStage, sessionId, playerInGame.id],
+  );
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
 
     const zoomSpeed = 0.0015;
-
     const rect = svgRef.current!.getBoundingClientRect();
-
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
     const worldX = (mouseX - camera.current.x) / camera.current.scale;
-
     const worldY = (mouseY - camera.current.y) / camera.current.scale;
 
     let newScale = camera.current.scale - e.deltaY * zoomSpeed;
-
     newScale = Math.min(Math.max(0.6, newScale), 3);
 
     camera.current.x = mouseX - worldX * newScale;
@@ -98,7 +179,6 @@ export default function EuropeMap({
 
   const handleMouseDown = (e: React.MouseEvent) => {
     dragging.current = true;
-
     start.current = {
       x: e.clientX - camera.current.x,
       y: e.clientY - camera.current.y,
@@ -107,10 +187,8 @@ export default function EuropeMap({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!dragging.current) return;
-
     camera.current.x = e.clientX - start.current.x;
     camera.current.y = e.clientY - start.current.y;
-
     updateTransform();
   };
 
@@ -120,9 +198,7 @@ export default function EuropeMap({
 
   const updateTransform = () => {
     if (!svgRef.current) return;
-
     const { x, y, scale } = camera.current;
-
     svgRef.current.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
   };
 
