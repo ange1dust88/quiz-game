@@ -130,21 +130,27 @@ async function capture(countryId: string, playerId: string, sessionId: string) {
 export async function advanceTurnAndStage(sessionId: string) {
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
-    include: { players: true, matchMap: true },
+    include: { players: true },
   });
+
+  const totalPlayers = session!.players.length;
+  let nextIndex = session!.turnIndex + 1;
+
+  if (nextIndex >= totalPlayers) nextIndex = 0;
 
   if (!session) return;
 
-  const totalPlayers = session.players.length;
+  const allCountries = await prisma.matchCountry.findMany({
+    where: { gameSessionId: sessionId },
+  });
 
-  let nextIndex = session.turnIndex + 1;
+  const totalCountries = allCountries.length;
+  const capitalsPlaced = allCountries.filter((c) => c.isCapital).length;
+  const claimedCountries = allCountries.filter((c) => c.ownerId).length;
+
   if (nextIndex >= totalPlayers) nextIndex = 0;
 
   let newStage = session.stage;
-
-  const capitalsPlaced = session.matchMap.filter((c) => c.isCapital).length;
-  const totalCountries = session.matchMap.length;
-  const claimedCountries = session.matchMap.filter((c) => c.ownerId).length;
 
   if (newStage === "capitals" && capitalsPlaced === totalPlayers) {
     newStage = "expand";

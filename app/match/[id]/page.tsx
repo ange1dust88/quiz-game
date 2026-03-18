@@ -3,9 +3,8 @@
 import { prisma } from "@/app/lib/prisma";
 import { cookies } from "next/headers";
 import { decrypt } from "@/app/lib/session";
-import { claimCapital } from "./actions";
-import { claimTerritory } from "./actions";
 import EuropeMap from "./EuropeMap";
+import TurnIndicator from "./TurnIndicator";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
@@ -46,13 +45,6 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
     include: { template: true, owner: { include: { profile: true } } },
   });
 
-  const activePlayer = session.players[session.turnIndex];
-  const isMyTurn = playerInGame.id === activePlayer.id;
-
-  const playerHasCapital = !!countries.find(
-    (c) => c.ownerId === playerInGame.id && c.isCapital,
-  );
-
   const unclaimedTerritories = countries.filter((c) => !c.ownerId);
 
   let stage = session.stage;
@@ -73,22 +65,13 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
     >
       <div className="flex justify-between items-center px-6 py-4 bg-black/70 backdrop-blur border-b border-[#4f4f4f]">
         <div className="flex gap-6 items-center">
-          <p className="text-sm text-gray-400">
-            Stage: <span className="text-white font-semibold">{stage}</span>
-          </p>
-
-          <p className="text-sm text-gray-400">
-            Turn:
-            <span className="text-white font-semibold ml-1">
-              {activePlayer.profile.nickname}
-            </span>
-          </p>
-
-          {isMyTurn && (
-            <span className="text-green-400 text-sm font-semibold">
-              Your turn
-            </span>
-          )}
+          <TurnIndicator
+            sessionId={sessionId}
+            initialTurnIndex={session.turnIndex}
+            initialStage={session.stage}
+            players={session.players}
+            playerInGame={playerInGame}
+          />
         </div>
 
         <div className="text-xs text-gray-400">Match {sessionId}</div>
@@ -99,9 +82,9 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
           countries={countries}
           players={session.players}
           playerInGame={playerInGame}
-          isMyTurn={isMyTurn}
           sessionId={sessionId}
           stage={stage}
+          turnIndex={session.turnIndex}
         />
 
         <div className="absolute top-6 right-6 bg-black border border-[#4f4f4f] rounded-lg p-4 px-6 flex flex-col gap-3">

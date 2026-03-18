@@ -8,25 +8,23 @@ type Props = {
   countries: any[];
   players: any[];
   playerInGame: any;
-  isMyTurn: boolean;
   sessionId: string;
   stage: string;
+  turnIndex: number;
 };
 
 export default function EuropeMap({
   countries: initialCountries,
   playerInGame,
   players: initialPlayers,
-  isMyTurn,
   sessionId,
   stage: initialStage,
+  turnIndex: initialTurnIndex,
 }: Props) {
   const [countries, setCountries] = useState(initialCountries);
-  const [players, setPlayers] = useState(initialPlayers); // 🔥 Состояние для игроков
+  const [players, setPlayers] = useState(initialPlayers);
   const [currentStage, setCurrentStage] = useState(initialStage);
-  const [currentTurnIndex, setCurrentTurnIndex] = useState(
-    initialPlayers.findIndex((p) => p.id === playerInGame.id) || 0,
-  );
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(initialTurnIndex);
 
   const map = useMemo(
     () => Object.fromEntries(countries.map((c) => [c.template.svgId, c])),
@@ -40,7 +38,6 @@ export default function EuropeMap({
   const start = useRef({ x: 0, y: 0 });
   const dragging = useRef(false);
 
-  // Подписка на изменения стран
   useEffect(() => {
     const supabase = createClient();
 
@@ -69,7 +66,6 @@ export default function EuropeMap({
     };
   }, [sessionId]);
 
-  // Подписка на изменения игры
   useEffect(() => {
     const supabase = createClient();
 
@@ -84,23 +80,16 @@ export default function EuropeMap({
           filter: `id=eq.${sessionId}`,
         },
         async (payload) => {
-          console.log("🎮 Game updated:", payload.new);
+          console.log("🎮 GameSession payload:", payload);
+          console.log("🎮 turnIndex:", payload.new.turnIndex);
 
-          // Обновляем стадию
           if (payload.new.stage) {
             setCurrentStage(payload.new.stage);
           }
 
-          // 🔥 Обновляем индекс хода
           if (payload.new.turnIndex !== undefined) {
             setCurrentTurnIndex(payload.new.turnIndex);
           }
-
-          // 🔥🔥🔥 ВАЖНО: перезапрашиваем всю сессию чтобы получить актуальных игроков
-          const response = await fetch(`/api/sessions/${sessionId}`);
-          const freshSession = await response.json();
-          console.log("👥 Свежие игроки:", freshSession.players);
-          setPlayers(freshSession.players);
         },
       )
       .subscribe();
@@ -110,7 +99,14 @@ export default function EuropeMap({
     };
   }, [sessionId]);
 
-  // 🔥 Активный игрок теперь вычисляется из обновленных players и turnIndex
+  useEffect(() => {
+    setCurrentTurnIndex(initialTurnIndex);
+  }, [initialTurnIndex]);
+
+  useEffect(() => {
+    setCurrentStage(initialStage);
+  }, [initialStage]);
+
   const activePlayer = players[currentTurnIndex];
   const isMyTurnNow = playerInGame.id === activePlayer?.id;
 
@@ -139,16 +135,11 @@ export default function EuropeMap({
 
   const handleClick = useCallback(
     (svgId: string) => {
-      console.log("click");
       if (!isMyTurnNow) return;
-      console.log("myTurn");
       const country = map[svgId];
       if (!country || country.ownerId) return;
-      console.log("country + !country.ownerId");
-
       if (currentStage === "capitals") {
         claimCapital(sessionId, svgId, playerInGame.id);
-        console.log("claimCapital");
       } else if (currentStage === "expand") {
         claimTerritory(sessionId, svgId, playerInGame.id);
       }
