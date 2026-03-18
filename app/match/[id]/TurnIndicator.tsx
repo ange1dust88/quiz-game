@@ -45,7 +45,7 @@ export default function TurnIndicator({
       )
       .subscribe();
 
-    return () => channel.unsubscribe();
+    return () => void channel.unsubscribe();
   }, [sessionId]);
 
   const activePlayer = players[turnIndex];

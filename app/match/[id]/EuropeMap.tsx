@@ -80,9 +80,6 @@ export default function EuropeMap({
           filter: `id=eq.${sessionId}`,
         },
         async (payload) => {
-          console.log("🎮 GameSession payload:", payload);
-          console.log("🎮 turnIndex:", payload.new.turnIndex);
-
           if (payload.new.stage) {
             setCurrentStage(payload.new.stage);
           }

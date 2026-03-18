@@ -8,7 +8,6 @@ export async function claimCapital(
   svgId: string,
   playerId: string,
 ) {
-  console.log(claimCapital);
   if (!sessionId || !playerId || !svgId) return;
 
   const template = await prisma.countryTemplate.findFirst({
