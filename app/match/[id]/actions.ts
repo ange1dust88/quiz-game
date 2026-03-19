@@ -52,9 +52,6 @@ export async function claimTerritory(
     where: { id: sessionId },
   });
 
-  console.log("pickOrder:", session?.pickOrder);
-  console.log("playerId:", playerId);
-  console.log("first in order:", session?.pickOrder[0]);
   if (!session) return;
 
   if (session.pickOrder[0] !== playerId) return;
@@ -133,6 +130,19 @@ async function capture(countryId: string, playerId: string, sessionId: string) {
 
   const newPickOrder = session!.pickOrder.slice(1);
 
+  const allCountries = await prisma.matchCountry.findMany({
+    where: { gameSessionId: sessionId },
+  });
+  const allClaimed = allCountries.every((c) => c.ownerId !== null);
+
+  if (allClaimed) {
+    await prisma.gameSession.update({
+      where: { id: sessionId },
+      data: { pickOrder: [], picksRemaining: 0, stage: "war" },
+    });
+    return;
+  }
+
   if (newPickOrder.length === 0) {
     await prisma.gameSession.update({
       where: { id: sessionId },
@@ -144,6 +154,10 @@ async function capture(countryId: string, playerId: string, sessionId: string) {
       where: { id: sessionId },
       data: { pickOrder: newPickOrder, picksRemaining: newPickOrder.length },
     });
+  }
+
+  if (newPickOrder[0]) {
+    startPickTimer(sessionId, newPickOrder[0]);
   }
 }
 
@@ -188,6 +202,7 @@ export async function advanceTurnAndStage(sessionId: string) {
   });
 
   if (shouldStartQuestion) {
+    await new Promise((resolve) => setTimeout(resolve, 3500));
     await startQuestion(sessionId);
   }
 }
@@ -272,8 +287,24 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
   const totalPlayers = session!.players.length;
 
   const pickOrder: string[] = [];
-  if (sorted[0]) pickOrder.push(sorted[0].playerId, sorted[0].playerId);
-  if (totalPlayers >= 2 && sorted[1]) pickOrder.push(sorted[1].playerId);
+
+  if (totalPlayers === 2) {
+    if (sorted[0]) pickOrder.push(sorted[0].playerId);
+  } else if (totalPlayers >= 3) {
+    if (sorted[0]) {
+      pickOrder.push(sorted[0].playerId);
+      pickOrder.push(sorted[0].playerId);
+    }
+    if (sorted[1]) pickOrder.push(sorted[1].playerId);
+  }
+
+  const territoriesForPlace = (place: number) => {
+    if (totalPlayers === 2) {
+      return place === 1 ? 1 : 0;
+    } else {
+      return place === 1 ? 2 : place === 2 ? 1 : 0;
+    }
+  };
 
   const results = sorted.map((a, i) => ({
     playerId: a.playerId,
@@ -281,7 +312,7 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
     answer: a.answer,
     diff: Math.abs(a.answer - correctAnswer),
     place: i + 1,
-    territories: i === 0 ? 2 : i === 1 ? 1 : 0,
+    territories: territoriesForPlace(i + 1),
   }));
 
   await prisma.matchQuestion.update({
@@ -296,4 +327,48 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
     where: { id: sessionId },
     data: { pickOrder, picksRemaining: pickOrder.length },
   });
+
+  if (pickOrder[0]) {
+    startPickTimer(sessionId, pickOrder[0]);
+  }
+}
+
+async function startPickTimer(sessionId: string, playerId: string) {
+  await new Promise((resolve) => setTimeout(resolve, 15000));
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+  });
+
+  if (!session || session.pickOrder[0] !== playerId) return;
+
+  const myCountries = await prisma.matchCountry.findMany({
+    where: { gameSessionId: sessionId, ownerId: playerId },
+    select: { templateId: true },
+  });
+
+  const myIds = myCountries.map((c) => c.templateId);
+
+  const templates = await prisma.countryTemplate.findMany({
+    where: { id: { in: myIds } },
+  });
+
+  const neighborIds = new Set<number>();
+  for (const t of templates) {
+    t.neighbors.forEach((n) => neighborIds.add(n));
+  }
+
+  const freeNeighbors = await prisma.matchCountry.findMany({
+    where: {
+      gameSessionId: sessionId,
+      templateId: { in: [...neighborIds] },
+      ownerId: null,
+    },
+  });
+
+  if (freeNeighbors.length === 0) return;
+
+  const random =
+    freeNeighbors[Math.floor(Math.random() * freeNeighbors.length)];
+  await capture(random.id, playerId, sessionId);
 }

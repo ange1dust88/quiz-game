@@ -88,7 +88,7 @@ export default function EuropeMap({
           }
 
           if (payload.new.pickOrder !== undefined) {
-            setPickOrder(payload.new.pickOrder);
+            setPickOrder(payload.new.pickOrder ?? []);
           }
 
           if (payload.new.turnIndex !== undefined) {
@@ -112,9 +112,10 @@ export default function EuropeMap({
   }, [initialStage]);
 
   const isMyTurnNow =
-    currentStage === "expand" && pickOrder.length > 0
+    currentStage === "expand" && (pickOrder ?? []).length > 0
       ? pickOrder[0] === playerInGame.id
       : players[currentTurnIndex]?.id === playerInGame.id;
+
   const playerColorMap = useMemo(
     () => Object.fromEntries(players.map((p, i) => [p.id, PLAYER_COLORS[i]])),
     [players],

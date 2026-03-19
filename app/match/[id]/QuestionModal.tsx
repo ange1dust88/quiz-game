@@ -82,7 +82,7 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
 
     const timeout = setTimeout(() => {
       setResults(null);
-    }, 10000);
+    }, 4000); //10000
 
     return () => clearTimeout(timeout);
   }, [results]);
@@ -100,7 +100,7 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
         }
         return prev - 1;
       });
-    }, 1000);
+    }, 1000); //1000
 
     return () => clearInterval(interval);
   }, [activeQuestion]);
@@ -108,7 +108,7 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
   useEffect(() => {
     if (timeLeft === 0 && !submitted && activeQuestion) {
       setSubmitted(true);
-      submitAnswer(sessionId, playerId, -999999);
+      submitAnswer(sessionId, playerId, 0);
     }
   }, [timeLeft]);
 
@@ -123,7 +123,6 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
       <div className="bg-[#1a1a1a] border border-[#4f4f4f] rounded-xl p-8 w-full max-w-md flex flex-col gap-6">
         {results ? (
-          // показываем результаты
           <>
             <h2 className="text-white font-bold text-lg text-center">
               Results
@@ -156,7 +155,6 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
             </p>
           </>
         ) : (
-          // показываем вопрос
           <>
             <div className="flex justify-between items-center">
               <h2 className="text-white font-bold text-lg">Question</h2>

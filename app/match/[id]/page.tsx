@@ -6,6 +6,7 @@ import { decrypt } from "@/app/lib/session";
 import EuropeMap from "./EuropeMap";
 import TurnIndicator from "./TurnIndicator";
 import QuestionModal from "./QuestionModal";
+import PhaseModal from "./PhaseModal";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
@@ -14,12 +15,7 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const token = cookieStore.get("session")?.value;
   if (!token) return <div>Not authenticated</div>;
 
-  const PLAYER_COLORS = [
-    "#3b82f6", // blue
-    "#ef4444", // red
-    "#22c55e", // green
-    "#f59e0b", // yellow
-  ];
+  const PLAYER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b"];
 
   const payload = await decrypt(token);
   const userId: any = payload?.userId;
@@ -119,6 +115,7 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
       </div>
 
       <QuestionModal sessionId={sessionId} playerId={playerInGame.id} />
+      <PhaseModal sessionId={sessionId} initialStage={session.stage} />
     </>
   );
 };
