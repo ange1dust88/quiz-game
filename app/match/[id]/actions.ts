@@ -1,7 +1,6 @@
 "use server";
 
 import { prisma } from "@/app/lib/prisma";
-import { revalidatePath } from "next/cache";
 
 export async function claimCapital(
   sessionId: string,
@@ -40,8 +39,6 @@ export async function claimCapital(
   });
 
   await advanceTurnAndStage(sessionId);
-
-  revalidatePath(`/match/${sessionId}`);
 }
 
 export async function claimTerritory(
@@ -50,6 +47,17 @@ export async function claimTerritory(
   playerId: string,
 ) {
   if (!sessionId || !playerId || !svgId) return;
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+  });
+
+  console.log("pickOrder:", session?.pickOrder);
+  console.log("playerId:", playerId);
+  console.log("first in order:", session?.pickOrder[0]);
+  if (!session) return;
+
+  if (session.pickOrder[0] !== playerId) return;
 
   const template = await prisma.countryTemplate.findFirst({
     where: { svgId },
@@ -116,14 +124,27 @@ export async function claimTerritory(
 async function capture(countryId: string, playerId: string, sessionId: string) {
   await prisma.matchCountry.update({
     where: { id: countryId },
-    data: {
-      ownerId: playerId,
-    },
+    data: { ownerId: playerId },
   });
 
-  await advanceTurnAndStage(sessionId);
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+  });
 
-  revalidatePath(`/match/${sessionId}`);
+  const newPickOrder = session!.pickOrder.slice(1);
+
+  if (newPickOrder.length === 0) {
+    await prisma.gameSession.update({
+      where: { id: sessionId },
+      data: { pickOrder: [], picksRemaining: 0 },
+    });
+    await startQuestion(sessionId);
+  } else {
+    await prisma.gameSession.update({
+      where: { id: sessionId },
+      data: { pickOrder: newPickOrder, picksRemaining: newPickOrder.length },
+    });
+  }
 }
 
 export async function advanceTurnAndStage(sessionId: string) {
@@ -150,9 +171,11 @@ export async function advanceTurnAndStage(sessionId: string) {
   if (nextIndex >= totalPlayers) nextIndex = 0;
 
   let newStage = session.stage;
+  let shouldStartQuestion = false;
 
   if (newStage === "capitals" && capitalsPlaced === totalPlayers) {
     newStage = "expand";
+    shouldStartQuestion = true;
   }
 
   if (newStage === "expand" && claimedCountries === totalCountries) {
@@ -161,9 +184,116 @@ export async function advanceTurnAndStage(sessionId: string) {
 
   await prisma.gameSession.update({
     where: { id: sessionId },
+    data: { turnIndex: nextIndex, stage: newStage },
+  });
+
+  if (shouldStartQuestion) {
+    await startQuestion(sessionId);
+  }
+}
+
+{
+  /* QUESTIONS */
+}
+
+export async function startQuestion(sessionId: string) {
+  const count = await prisma.question.count();
+  const skip = Math.floor(Math.random() * count);
+
+  const question = await prisma.question.findFirst({ skip });
+  if (!question) return;
+
+  await prisma.matchQuestion.create({
     data: {
-      turnIndex: nextIndex,
-      stage: newStage,
+      gameSessionId: sessionId,
+      questionId: question.id,
+      isActive: true,
+      expiresAt: new Date(Date.now() + 10000),
     },
+  });
+}
+
+export async function submitAnswer(
+  sessionId: string,
+  playerId: string,
+  answer: number,
+) {
+  const activeQuestion = await prisma.matchQuestion.findFirst({
+    where: { gameSessionId: sessionId, isActive: true },
+  });
+  if (!activeQuestion) return;
+
+  await prisma.playerAnswer.upsert({
+    where: {
+      matchQuestionId_playerId: {
+        matchQuestionId: activeQuestion.id,
+        playerId,
+      },
+    },
+    create: { matchQuestionId: activeQuestion.id, playerId, answer },
+    update: { answer },
+  });
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    include: { players: true },
+  });
+
+  const answers = await prisma.playerAnswer.findMany({
+    where: { matchQuestionId: activeQuestion.id },
+  });
+
+  if (answers.length === session!.players.length) {
+    await resolveQuestion(sessionId, activeQuestion.id);
+  }
+}
+
+async function resolveQuestion(sessionId: string, matchQuestionId: string) {
+  const matchQuestion = await prisma.matchQuestion.findUnique({
+    where: { id: matchQuestionId },
+    include: {
+      question: true,
+      answers: { include: { player: { include: { profile: true } } } },
+    },
+  });
+  if (!matchQuestion) return;
+
+  const correctAnswer = matchQuestion.question.answer;
+
+  const sorted = matchQuestion.answers.sort(
+    (a, b) =>
+      Math.abs(a.answer - correctAnswer) - Math.abs(b.answer - correctAnswer),
+  );
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    include: { players: true },
+  });
+  const totalPlayers = session!.players.length;
+
+  const pickOrder: string[] = [];
+  if (sorted[0]) pickOrder.push(sorted[0].playerId, sorted[0].playerId);
+  if (totalPlayers >= 2 && sorted[1]) pickOrder.push(sorted[1].playerId);
+
+  const results = sorted.map((a, i) => ({
+    playerId: a.playerId,
+    nickname: a.player.profile.nickname,
+    answer: a.answer,
+    diff: Math.abs(a.answer - correctAnswer),
+    place: i + 1,
+    territories: i === 0 ? 2 : i === 1 ? 1 : 0,
+  }));
+
+  await prisma.matchQuestion.update({
+    where: { id: matchQuestionId },
+    data: {
+      isActive: false,
+      results,
+    },
+  });
+
+  await prisma.gameSession.update({
+    where: { id: sessionId },
+    data: { pickOrder, picksRemaining: pickOrder.length },
   });
 }

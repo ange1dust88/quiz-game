@@ -58,6 +58,11 @@ model GameSession {
 
   players   PlayerInGame[]
   matchMap  MatchCountry[]
+  questions MatchQuestion[]
+
+  currentQuestionId String?  
+  pickOrder         String[] 
+  picksRemaining    Int      @default(0)
 }
 
 model PlayerInGame {
@@ -72,6 +77,7 @@ model PlayerInGame {
   gameSession   GameSession @relation(fields: [gameSessionId], references: [id])
   profile       PlayerProfile @relation(fields: [profileId], references: [id])
   ownedCountries MatchCountry[]
+  answers        PlayerAnswer[]
 
   @@unique([gameSessionId, profileId])
 }
@@ -98,4 +104,36 @@ model MatchCountry {
   owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])
 
   @@unique([gameSessionId, templateId])
+}
+
+model Question {
+  id      Int    @id @default(autoincrement())
+  text    String
+  answer  Float
+  matches MatchQuestion[]
+}
+
+model MatchQuestion {
+  id            String   @id @default(cuid())
+  gameSessionId String
+  questionId    Int
+  isActive      Boolean  @default(true)
+  expiresAt     DateTime
+
+  gameSession   GameSession    @relation(fields: [gameSessionId], references: [id])
+  question      Question       @relation(fields: [questionId], references: [id])
+  answers       PlayerAnswer[]
+  results Json?
+}
+
+model PlayerAnswer {
+  id              String @id @default(cuid())
+  matchQuestionId String
+  playerId        String
+  answer          Float
+
+  matchQuestion   MatchQuestion @relation(fields: [matchQuestionId], references: [id])
+  player          PlayerInGame  @relation(fields: [playerId], references: [id])
+
+  @@unique([matchQuestionId, playerId])
 }

@@ -11,6 +11,7 @@ type Props = {
   sessionId: string;
   stage: string;
   turnIndex: number;
+  pickOrder: string[];
 };
 
 export default function EuropeMap({
@@ -20,11 +21,13 @@ export default function EuropeMap({
   sessionId,
   stage: initialStage,
   turnIndex: initialTurnIndex,
+  pickOrder: initialPickOrder,
 }: Props) {
   const [countries, setCountries] = useState(initialCountries);
   const [players, setPlayers] = useState(initialPlayers);
   const [currentStage, setCurrentStage] = useState(initialStage);
   const [currentTurnIndex, setCurrentTurnIndex] = useState(initialTurnIndex);
+  const [pickOrder, setPickOrder] = useState(initialPickOrder);
 
   const map = useMemo(
     () => Object.fromEntries(countries.map((c) => [c.template.svgId, c])),
@@ -84,6 +87,10 @@ export default function EuropeMap({
             setCurrentStage(payload.new.stage);
           }
 
+          if (payload.new.pickOrder !== undefined) {
+            setPickOrder(payload.new.pickOrder);
+          }
+
           if (payload.new.turnIndex !== undefined) {
             setCurrentTurnIndex(payload.new.turnIndex);
           }
@@ -104,9 +111,10 @@ export default function EuropeMap({
     setCurrentStage(initialStage);
   }, [initialStage]);
 
-  const activePlayer = players[currentTurnIndex];
-  const isMyTurnNow = playerInGame.id === activePlayer?.id;
-
+  const isMyTurnNow =
+    currentStage === "expand" && pickOrder.length > 0
+      ? pickOrder[0] === playerInGame.id
+      : players[currentTurnIndex]?.id === playerInGame.id;
   const playerColorMap = useMemo(
     () => Object.fromEntries(players.map((p, i) => [p.id, PLAYER_COLORS[i]])),
     [players],

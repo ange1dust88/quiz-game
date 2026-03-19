@@ -7,6 +7,7 @@ type Props = {
   sessionId: string;
   initialTurnIndex: number;
   initialStage: string;
+  initialPickOrder: string[];
   players: any[];
   playerInGame: any;
 };
@@ -15,11 +16,13 @@ export default function TurnIndicator({
   sessionId,
   initialTurnIndex,
   initialStage,
+  initialPickOrder,
   players,
   playerInGame,
 }: Props) {
   const [turnIndex, setTurnIndex] = useState(initialTurnIndex);
   const [stage, setStage] = useState(initialStage);
+  const [pickOrder, setPickOrder] = useState(initialPickOrder);
 
   useEffect(() => {
     const supabase = createClient();
@@ -41,16 +44,21 @@ export default function TurnIndicator({
           if (payload.new.stage) {
             setStage(payload.new.stage);
           }
+          if (payload.new.pickOrder !== undefined) {
+            setPickOrder(payload.new.pickOrder);
+          }
         },
       )
       .subscribe();
 
     return () => void channel.unsubscribe();
   }, [sessionId]);
-
-  const activePlayer = players[turnIndex];
-  const isMyTurn = playerInGame.id === activePlayer?.id;
-
+  const activePlayerId =
+    stage === "expand" && pickOrder.length > 0
+      ? pickOrder[0]
+      : players[turnIndex]?.id;
+  const activePlayer = players.find((p) => p.id === activePlayerId);
+  const isMyTurn = playerInGame.id === activePlayerId;
   return (
     <div className="flex gap-6 items-center">
       <p className="text-sm text-gray-400">
