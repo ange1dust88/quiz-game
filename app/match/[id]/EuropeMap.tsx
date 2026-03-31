@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { claimCapital, claimTerritory } from "./actions";
 import { createClient } from "@/app/lib/supabase/client";
+import { PLAYER_COLORS } from "@/app/lib/constants";
 
 type Props = {
   countries: any[];
@@ -33,8 +34,6 @@ export default function EuropeMap({
     () => Object.fromEntries(countries.map((c) => [c.template.svgId, c])),
     [countries],
   );
-
-  const PLAYER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b"];
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const camera = useRef({ x: 0, y: 0, scale: 1 });
@@ -102,14 +101,6 @@ export default function EuropeMap({
       channel.unsubscribe();
     };
   }, [sessionId]);
-
-  useEffect(() => {
-    setCurrentTurnIndex(initialTurnIndex);
-  }, [initialTurnIndex]);
-
-  useEffect(() => {
-    setCurrentStage(initialStage);
-  }, [initialStage]);
 
   const isMyTurnNow =
     currentStage === "expand" && (pickOrder ?? []).length > 0

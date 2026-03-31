@@ -2,26 +2,10 @@
 
 import { prisma } from "../lib/prisma";
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
-import { decrypt } from "../lib/session";
+import { getProfile } from "../lib/auth";
 
 export async function createRoom() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("session")?.value;
-
-  if (!token) throw new Error("No session token");
-
-  const payload = await decrypt(token);
-  if (!payload?.userId) {
-    throw new Error("Invalid session");
-  }
-  const userId: any = payload.userId;
-  if (!userId) throw new Error("Invalid session");
-
-  const profile = await prisma.playerProfile.findUnique({
-    where: { userId },
-  });
-  if (!profile) throw new Error("Profile not found");
+  const profile = await getProfile();
 
   const session = await prisma.gameSession.create({
     data: { status: "waiting" },
@@ -36,4 +20,10 @@ export async function createRoom() {
   });
 
   redirect(`/lobby/${session.id}`);
+}
+
+export async function joinRoom(formData: FormData) {
+  const roomId = formData.get("roomId") as string;
+  if (!roomId) return;
+  redirect(`/lobby/${roomId}`);
 }

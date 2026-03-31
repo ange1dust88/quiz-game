@@ -34,6 +34,15 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
   const [results, setResults] = useState<Result[] | null>(null);
 
   useEffect(() => {
+    const fetchActiveQuestion = async () => {
+      const res = await fetch(`/api/sessions/${sessionId}/question`);
+      const data = await res.json();
+      if (data) setActiveQuestion(data);
+    };
+    fetchActiveQuestion();
+  }, [sessionId]);
+
+  useEffect(() => {
     const supabase = createClient();
 
     const channel = supabase
@@ -46,7 +55,7 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
           table: "MatchQuestion",
           filter: `gameSessionId=eq.${sessionId}`,
         },
-        async (payload) => {
+        async () => {
           const res = await fetch(`/api/sessions/${sessionId}/question`);
           const data = await res.json();
           setActiveQuestion(data);
@@ -78,30 +87,17 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
   }, [sessionId]);
 
   useEffect(() => {
-    if (!results) return;
-
-    const timeout = setTimeout(() => {
-      setResults(null);
-    }, 4000); //10000
-
-    return () => clearTimeout(timeout);
-  }, [results]);
-
-  useEffect(() => {
     if (!activeQuestion) return;
 
-    setTimeLeft(10);
+    const updateTimer = () => {
+      const left = Math.ceil(
+        (new Date(activeQuestion.expiresAt).getTime() - Date.now()) / 1000,
+      );
+      setTimeLeft(left <= 0 ? 0 : left);
+    };
 
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000); //1000
-
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
   }, [activeQuestion]);
 
@@ -112,11 +108,21 @@ export default function QuestionModal({ sessionId, playerId }: Props) {
     }
   }, [timeLeft]);
 
+  useEffect(() => {
+    if (!results) return;
+    const timeout = setTimeout(() => {
+      setResults(null);
+      window.dispatchEvent(new Event("resultsClose"));
+    }, 4000);
+    return () => clearTimeout(timeout);
+  }, [results]);
+
   const handleSubmit = async () => {
     if (!answer || submitted) return;
     setSubmitted(true);
     await submitAnswer(sessionId, playerId, parseFloat(answer));
   };
+
   if (!activeQuestion && !results) return null;
 
   return (

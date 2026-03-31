@@ -28,7 +28,7 @@ export default function PhaseModal({ sessionId, initialStage }: Props) {
   const [message, setMessage] = useState<{
     title: string;
     description: string;
-  } | null>(PHASE_MESSAGES[initialStage] ?? null);
+  } | null>(null);
   const currentStageRef = useRef(initialStage);
 
   useEffect(() => {
@@ -66,6 +66,14 @@ export default function PhaseModal({ sessionId, initialStage }: Props) {
     const timeout = setTimeout(() => setMessage(null), 3000);
     return () => clearTimeout(timeout);
   }, [message]);
+
+  useEffect(() => {
+    const key = `phase-shown-${sessionId}`;
+    if (!sessionStorage.getItem(key) && PHASE_MESSAGES[initialStage]) {
+      setMessage(PHASE_MESSAGES[initialStage]);
+      sessionStorage.setItem(key, "true");
+    }
+  }, []);
 
   if (!message) return null;
 

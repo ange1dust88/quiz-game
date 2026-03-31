@@ -2,14 +2,21 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/app/lib/supabase/client";
+type Player = {
+  id: string;
+  profile: { nickname: string };
+};
 
+type PlayerInGame = {
+  id: string;
+};
 type Props = {
   sessionId: string;
   initialTurnIndex: number;
   initialStage: string;
   initialPickOrder: string[];
-  players: any[];
-  playerInGame: any;
+  players: Player[];
+  playerInGame: PlayerInGame;
 };
 
 export default function TurnIndicator({
@@ -26,11 +33,14 @@ export default function TurnIndicator({
   const [pickTimer, setPickTimer] = useState<number | null>(null);
 
   useEffect(() => {
-    if (stage === "expand" && pickOrder.length > 0) {
-      setPickTimer(15);
-    } else {
-      setPickTimer(null);
-    }
+    const handleResultsClose = () => {
+      if (pickOrder.length > 0) {
+        setPickTimer(15);
+      }
+    };
+
+    window.addEventListener("resultsClose", handleResultsClose);
+    return () => window.removeEventListener("resultsClose", handleResultsClose);
   }, [pickOrder]);
 
   useEffect(() => {
@@ -47,7 +57,7 @@ export default function TurnIndicator({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [pickTimer !== null]);
+  }, [pickTimer !== null ? "active" : "inactive"]);
 
   useEffect(() => {
     const supabase = createClient();

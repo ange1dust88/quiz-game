@@ -1,48 +1,23 @@
-"use client";
-
-import { useRouter } from "next/navigation";
 import Input from "../components/ui/Input";
 import { logout } from "../login/actions";
-import { createRoom } from "./actions";
-import { useFormStatus } from "react-dom";
-
-function CreateRoomButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <button
-      disabled={pending}
-      className="bg-blue-400 hover:bg-blue-500 border border-blue-300 text-white px-6 py-3 rounded-lg"
-      type="submit"
-    >
-      Create Room
-    </button>
-  );
-}
+import { createRoom, joinRoom } from "./actions";
+import CreateRoomButton from "./CreateRoomButton";
 
 export default function Dashboard() {
-  const router = useRouter();
-
-  function handleJoin(formData: FormData) {
-    const roomId = formData.get("roomId");
-
-    if (!roomId) return;
-
-    router.push(`/lobby/${roomId}`);
-  }
-
   return (
     <div
       className="h-screen  text-white p-10 flex flex-col gap-8 bg-cover bg-center"
       style={{ backgroundImage: "url('/gradient.png')" }}
     >
       <div className="flex justify-end items-center">
-        <button
-          onClick={() => logout()}
-          className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] px-4 py-2 rounded-lg"
-        >
-          Logout
-        </button>
+        <form action={logout}>
+          <button
+            type="submit"
+            className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] px-4 py-2 rounded-lg"
+          >
+            Logout
+          </button>
+        </form>
       </div>
 
       <div className="grid grid-cols-2 gap-6">
@@ -61,7 +36,7 @@ export default function Dashboard() {
         </form>
 
         <form
-          action={handleJoin}
+          action={joinRoom}
           className="bg-[#1a1a1a] border border-[#4f4f4f] rounded-lg p-6 flex flex-col gap-4"
         >
           <h2 className="text-xl font-semibold">Join Game</h2>

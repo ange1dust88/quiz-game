@@ -73,47 +73,11 @@ export async function claimTerritory(
 
   if (!country || country.ownerId) return;
 
-  const myCountries = await prisma.matchCountry.findMany({
-    where: {
-      gameSessionId: sessionId,
-      ownerId: playerId,
-    },
-    select: {
-      templateId: true,
-    },
-  });
-
-  const myIds = myCountries.map((c) => c.templateId);
-
-  if (myIds.length === 0) {
-    await capture(country.id, playerId, sessionId);
-    return;
-  }
-
-  const templates = await prisma.countryTemplate.findMany({
-    where: {
-      id: { in: myIds },
-    },
-  });
-
-  const neighborIds = new Set<number>();
-
-  for (const t of templates) {
-    t.neighbors.forEach((n) => neighborIds.add(n));
-  }
-  const freeNeighbors = await prisma.matchCountry.findMany({
-    where: {
-      gameSessionId: sessionId,
-      templateId: { in: [...neighborIds] },
-      ownerId: null,
-    },
-  });
-
+  const freeNeighbors = await getFreeNeighbors(sessionId, playerId);
   const freeNeighborIds = freeNeighbors.map((c) => c.templateId);
 
-  if (freeNeighborIds.length > 0 && !freeNeighborIds.includes(template.id)) {
+  if (freeNeighborIds.length > 0 && !freeNeighborIds.includes(template.id))
     return;
-  }
 
   await capture(country.id, playerId, sessionId);
 }
@@ -167,12 +131,11 @@ export async function advanceTurnAndStage(sessionId: string) {
     include: { players: true },
   });
 
+  if (!session) return;
   const totalPlayers = session!.players.length;
   let nextIndex = session!.turnIndex + 1;
 
   if (nextIndex >= totalPlayers) nextIndex = 0;
-
-  if (!session) return;
 
   const allCountries = await prisma.matchCountry.findMany({
     where: { gameSessionId: sessionId },
@@ -181,8 +144,6 @@ export async function advanceTurnAndStage(sessionId: string) {
   const totalCountries = allCountries.length;
   const capitalsPlaced = allCountries.filter((c) => c.isCapital).length;
   const claimedCountries = allCountries.filter((c) => c.ownerId).length;
-
-  if (nextIndex >= totalPlayers) nextIndex = 0;
 
   let newStage = session.stage;
   let shouldStartQuestion = false;
@@ -207,9 +168,7 @@ export async function advanceTurnAndStage(sessionId: string) {
   }
 }
 
-{
-  /* QUESTIONS */
-}
+// QUESTIONS
 
 export async function startQuestion(sessionId: string) {
   const count = await prisma.question.count();
@@ -342,12 +301,21 @@ async function startPickTimer(sessionId: string, playerId: string) {
 
   if (!session || session.pickOrder[0] !== playerId) return;
 
+  const freeNeighbors = await getFreeNeighbors(sessionId, playerId);
+  if (freeNeighbors.length === 0) return;
+  const random =
+    freeNeighbors[Math.floor(Math.random() * freeNeighbors.length)];
+  await capture(random.id, playerId, sessionId);
+}
+
+async function getFreeNeighbors(sessionId: string, playerId: string) {
   const myCountries = await prisma.matchCountry.findMany({
     where: { gameSessionId: sessionId, ownerId: playerId },
     select: { templateId: true },
   });
 
   const myIds = myCountries.map((c) => c.templateId);
+  if (myIds.length === 0) return [];
 
   const templates = await prisma.countryTemplate.findMany({
     where: { id: { in: myIds } },
@@ -358,17 +326,11 @@ async function startPickTimer(sessionId: string, playerId: string) {
     t.neighbors.forEach((n) => neighborIds.add(n));
   }
 
-  const freeNeighbors = await prisma.matchCountry.findMany({
+  return prisma.matchCountry.findMany({
     where: {
       gameSessionId: sessionId,
       templateId: { in: [...neighborIds] },
       ownerId: null,
     },
   });
-
-  if (freeNeighbors.length === 0) return;
-
-  const random =
-    freeNeighbors[Math.floor(Math.random() * freeNeighbors.length)];
-  await capture(random.id, playerId, sessionId);
 }

@@ -7,24 +7,14 @@ import EuropeMap from "./EuropeMap";
 import TurnIndicator from "./TurnIndicator";
 import QuestionModal from "./QuestionModal";
 import PhaseModal from "./PhaseModal";
+import { PLAYER_COLORS } from "@/app/lib/constants";
+import { getProfileSafe } from "@/app/lib/auth";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
 
-  const cookieStore = await cookies();
-  const token = cookieStore.get("session")?.value;
-  if (!token) return <div>Not authenticated</div>;
-
-  const PLAYER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b"];
-
-  const payload = await decrypt(token);
-  const userId: any = payload?.userId;
-  if (!userId) return <div>User not found</div>;
-
-  const playerProfile = await prisma.playerProfile.findUnique({
-    where: { userId },
-  });
-  if (!playerProfile) return <div>Profile not found</div>;
+  const playerProfile = await getProfileSafe();
+  if (!playerProfile) return <div>Not authenticated</div>;
 
   const playerInGame = await prisma.playerInGame.findFirst({
     where: { profileId: playerProfile.id, gameSessionId: sessionId },

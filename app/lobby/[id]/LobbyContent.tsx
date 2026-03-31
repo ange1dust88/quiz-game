@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/app/lib/supabase/client";
 import { StartGameButton } from "./StartGameButton";
-import { JoinGameButton } from "./JoinGameButton";
 import { joinGame } from "./actions";
 import { useRouter } from "next/navigation";
 
@@ -163,7 +162,7 @@ export function LobbyContent({
               onClick={async () => {
                 await joinGame(session.id);
               }}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+              className="w-full bg-blue-400 hover:bg-blue-500 border border-blue-300 text-white px-6 py-2 rounded-lg"
             >
               Join Game
             </button>
