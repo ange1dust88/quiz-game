@@ -9,6 +9,7 @@ import QuestionModal from "./QuestionModal";
 import PhaseModal from "./PhaseModal";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 import { getProfileSafe } from "@/app/lib/auth";
+import WarModal from "./WarModal";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
@@ -106,6 +107,7 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
 
       <QuestionModal sessionId={sessionId} playerId={playerInGame.id} />
       <PhaseModal sessionId={sessionId} initialStage={session.stage} />
+      <WarModal sessionId={sessionId} playerId={playerInGame.id} />
     </>
   );
 };

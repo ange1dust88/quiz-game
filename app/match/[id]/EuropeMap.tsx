@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
-import { claimCapital, claimTerritory } from "./actions";
+import { attackTerritory, claimCapital, claimTerritory } from "./actions";
 import { createClient } from "@/app/lib/supabase/client";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 
@@ -134,16 +134,22 @@ export default function EuropeMap({
     (svgId: string) => {
       if (!isMyTurnNow) return;
       const country = map[svgId];
-      if (!country || country.ownerId) return;
+      if (!country) return;
+
       if (currentStage === "capitals") {
+        if (country.ownerId) return;
         claimCapital(sessionId, svgId, playerInGame.id);
       } else if (currentStage === "expand") {
+        if (country.ownerId) return;
         claimTerritory(sessionId, svgId, playerInGame.id);
+      } else if (currentStage === "war") {
+        if (!country.ownerId) return;
+        if (country.ownerId === playerInGame.id) return;
+        attackTerritory(sessionId, playerInGame.id, country.id);
       }
     },
     [isMyTurnNow, map, currentStage, sessionId, playerInGame.id],
   );
-
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
 

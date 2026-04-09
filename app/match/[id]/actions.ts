@@ -334,3 +334,169 @@ async function getFreeNeighbors(sessionId: string, playerId: string) {
     },
   });
 }
+
+// WAR
+export async function attackTerritory(
+  sessionId: string,
+  attackerId: string,
+  countryId: string,
+) {
+  console.log("attackTerritory called", { sessionId, attackerId, countryId });
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+  });
+  console.log(
+    "session stage:",
+    session?.stage,
+    "currentAttackId:",
+    session?.currentAttackId,
+  );
+
+  if (!session || session.stage !== "war") return;
+  if (session.currentAttackId) return;
+
+  const country = await prisma.matchCountry.findUnique({
+    where: { id: countryId },
+  });
+  console.log("country:", country?.id, "ownerId:", country?.ownerId);
+
+  if (!country || !country.ownerId || country.ownerId === attackerId) return;
+
+  const enemyNeighbors = await getEnemyNeighbors(sessionId, attackerId);
+  console.log("enemyNeighbors count:", enemyNeighbors.length);
+  console.log(
+    "canAttack:",
+    enemyNeighbors.some((c) => c.id === countryId),
+  );
+
+  const canAttack = enemyNeighbors.some((c) => c.id === countryId);
+  if (!canAttack) return;
+
+  const count = await prisma.warQuestion.count();
+  const question = await prisma.warQuestion.findFirst({
+    skip: Math.floor(Math.random() * count),
+  });
+  if (!question) return;
+
+  const attack = await prisma.warAttack.create({
+    data: {
+      gameSessionId: sessionId,
+      attackerId,
+      defenderId: country.ownerId,
+      countryId,
+      isActive: true,
+      questionId: question.id,
+    },
+  });
+
+  await prisma.gameSession.update({
+    where: { id: sessionId },
+    data: { currentAttackId: attack.id },
+  });
+}
+
+export async function submitWarAnswer(
+  attackId: string,
+  playerId: string,
+  isCorrect: boolean,
+) {
+  await prisma.warAnswer.upsert({
+    where: { attackId_playerId: { attackId, playerId } },
+    create: { attackId, playerId, isCorrect },
+    update: { isCorrect },
+  });
+
+  const answers = await prisma.warAnswer.findMany({
+    where: { attackId },
+  });
+
+  const attack = await prisma.warAttack.findUnique({
+    where: { id: attackId },
+  });
+  if (!attack) return;
+
+  if (answers.length === 2) {
+    await resolveAttack(attackId);
+  }
+}
+
+async function resolveAttack(attackId: string) {
+  const attack = await prisma.warAttack.findUnique({
+    where: { id: attackId },
+    include: { answers: true },
+  });
+  if (!attack) return;
+
+  const attackerAnswer = attack.answers.find(
+    (a) => a.playerId === attack.attackerId,
+  );
+  const defenderAnswer = attack.answers.find(
+    (a) => a.playerId === attack.defenderId,
+  );
+
+  const attackerCorrect = attackerAnswer?.isCorrect ?? false;
+  const defenderCorrect = defenderAnswer?.isCorrect ?? false;
+
+  if (attackerCorrect && defenderCorrect) {
+    await prisma.warAnswer.deleteMany({ where: { attackId } });
+    await prisma.warAttack.update({
+      where: { id: attackId },
+      data: { isActive: true },
+    });
+    return;
+  }
+
+  if (attackerCorrect && !defenderCorrect) {
+    await prisma.matchCountry.update({
+      where: { id: attack.countryId },
+      data: { ownerId: attack.attackerId },
+    });
+  }
+
+  if (!attackerCorrect && defenderCorrect) {
+    await prisma.matchCountry.update({
+      where: { id: attack.countryId },
+      data: { armies: { increment: 100 } },
+    });
+  }
+
+  await prisma.warAttack.update({
+    where: { id: attackId },
+    data: { isActive: false },
+  });
+
+  await prisma.gameSession.update({
+    where: { id: attack.gameSessionId },
+    data: { currentAttackId: null },
+  });
+
+  await advanceTurnAndStage(attack.gameSessionId);
+}
+
+async function getEnemyNeighbors(sessionId: string, playerId: string) {
+  const myCountries = await prisma.matchCountry.findMany({
+    where: { gameSessionId: sessionId, ownerId: playerId },
+    select: { templateId: true },
+  });
+
+  const myIds = myCountries.map((c) => c.templateId);
+  if (myIds.length === 0) return [];
+
+  const templates = await prisma.countryTemplate.findMany({
+    where: { id: { in: myIds } },
+  });
+
+  const neighborIds = new Set<number>();
+  for (const t of templates) {
+    t.neighbors.forEach((n) => neighborIds.add(n));
+  }
+
+  return prisma.matchCountry.findMany({
+    where: {
+      gameSessionId: sessionId,
+      templateId: { in: [...neighborIds] },
+      ownerId: { not: null, notIn: [playerId] },
+    },
+  });
+}

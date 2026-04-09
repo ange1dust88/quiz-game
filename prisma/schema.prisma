@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client"
   output   = "../app/generated/prisma"
@@ -14,126 +8,153 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
+  id           String         @id @default(uuid())
+  email        String         @unique
   passwordHash String
-  createdAt    DateTime @default(now())
-
+  createdAt    DateTime       @default(now())
   profile      PlayerProfile?
 }
 
 model PlayerProfile {
-  id          String   @id @default(uuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id])
-
-  nickname    String   @unique
+  id          String         @id @default(uuid())
+  userId      String         @unique
+  nickname    String         @unique
   avatarUrl   String?
-
-  level       Int      @default(1)
-  experience  Int      @default(0)
-  elo         Int      @default(1000)
-
+  level       Int            @default(1)
+  experience  Int            @default(0)
+  elo         Int            @default(1000)
   country     String?
-
-  gamesPlayed Int      @default(0)
-  gamesWon    Int      @default(0)
-  gamesLost   Int      @default(0)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
+  gamesPlayed Int            @default(0)
+  gamesWon    Int            @default(0)
+  gamesLost   Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
   games       PlayerInGame[]
-  
+  user        User           @relation(fields: [userId], references: [id])
 }
 
 model GameSession {
-  id        String   @id @default(cuid())
-  status    String   @default("waiting")
-
-  stage     String   @default("capitals")
-  turnIndex Int      @default(0)
-
-  createdAt DateTime @default(now())
-
-  players   PlayerInGame[]
-  matchMap  MatchCountry[]
-  questions MatchQuestion[]
-
-  currentQuestionId String?  
-  pickOrder         String[] 
-  picksRemaining    Int      @default(0)
+  id                String          @id @default(cuid())
+  status            String          @default("waiting")
+  createdAt         DateTime        @default(now())
+  stage             String          @default("capitals")
+  turnIndex         Int             @default(0)
+  currentQuestionId String?
+  pickOrder         String[]
+  picksRemaining    Int             @default(0)
+  matchMap          MatchCountry[]
+  questions         MatchQuestion[]
+  players           PlayerInGame[]
+  currentAttackId   String?
+  attacks           WarAttack[]  
 }
 
 model PlayerInGame {
-  id            String @id @default(cuid())
-  gameSessionId String
-  profileId     String
-
-  role          String @default("player")
-  joinedAt      DateTime @default(now())
-  turnOrder     Int?
-
-  gameSession   GameSession @relation(fields: [gameSessionId], references: [id])
-  profile       PlayerProfile @relation(fields: [profileId], references: [id])
+  id             String         @id @default(cuid())
+  gameSessionId  String
+  profileId      String
+  joinedAt       DateTime       @default(now())
+  role           String         @default("player")
+  turnOrder      Int?
   ownedCountries MatchCountry[]
   answers        PlayerAnswer[]
+  gameSession    GameSession    @relation(fields: [gameSessionId], references: [id])
+  profile        PlayerProfile  @relation(fields: [profileId], references: [id])
+
+  attacksAsAttacker  WarAttack[] @relation("attacker")  
+  attacksAsDefender  WarAttack[] @relation("defender")  
+  warAnswers         WarAnswer[]  
 
   @@unique([gameSessionId, profileId])
 }
 
 model CountryTemplate {
-  id        Int     @id
+  id        Int            @id
   name      String
+  neighbors Int[]
   svgId     String
-  neighbors Int[]   
-  matches    MatchCountry[] 
+  matches   MatchCountry[]
 }
 
-
 model MatchCountry {
-  id            String @id @default(cuid())
+  id            String          @id @default(cuid())
   gameSessionId String
   templateId    Int
   ownerId       String?
-  isCapital     Boolean @default(false)
-  armies        Int     @default(1)
-
-  gameSession   GameSession   @relation(fields: [gameSessionId], references: [id])
-  template      CountryTemplate @relation(fields: [templateId], references: [id])
+  isCapital     Boolean         @default(false)
+  armies        Int             @default(1)
+  gameSession   GameSession     @relation(fields: [gameSessionId], references: [id])
   owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])
+  template      CountryTemplate @relation(fields: [templateId], references: [id])
+  attacks   WarAttack[]  
 
   @@unique([gameSessionId, templateId])
 }
 
 model Question {
-  id      Int    @id @default(autoincrement())
+  id      Int             @id @default(autoincrement())
   text    String
   answer  Float
   matches MatchQuestion[]
 }
 
 model MatchQuestion {
-  id            String   @id @default(cuid())
+  id            String         @id @default(cuid())
   gameSessionId String
   questionId    Int
-  isActive      Boolean  @default(true)
+  isActive      Boolean        @default(true)
   expiresAt     DateTime
-
+  results       Json?
   gameSession   GameSession    @relation(fields: [gameSessionId], references: [id])
   question      Question       @relation(fields: [questionId], references: [id])
   answers       PlayerAnswer[]
-  results Json?
 }
 
 model PlayerAnswer {
-  id              String @id @default(cuid())
+  id              String        @id @default(cuid())
   matchQuestionId String
   playerId        String
   answer          Float
-
   matchQuestion   MatchQuestion @relation(fields: [matchQuestionId], references: [id])
   player          PlayerInGame  @relation(fields: [playerId], references: [id])
 
   @@unique([matchQuestionId, playerId])
+}
+
+model WarAttack {
+  id            String   @id @default(cuid())
+  gameSessionId String
+  attackerId    String
+  defenderId    String
+  countryId     String
+  isActive      Boolean  @default(true)
+  
+  gameSession   GameSession  @relation(fields: [gameSessionId], references: [id])
+  attacker      PlayerInGame @relation("attacker", fields: [attackerId], references: [id])
+  defender      PlayerInGame @relation("defender", fields: [defenderId], references: [id])
+  country       MatchCountry @relation(fields: [countryId], references: [id])
+  answers       WarAnswer[]
+  questionId  Int?
+  question    WarQuestion? @relation(fields: [questionId], references: [id])
+
+}
+
+model WarAnswer {
+  id          String    @id @default(cuid())
+  attackId    String
+  playerId    String
+  isCorrect   Boolean
+  
+  attack      WarAttack    @relation(fields: [attackId], references: [id])
+  player      PlayerInGame @relation(fields: [playerId], references: [id])
+
+  @@unique([attackId, playerId])
+}
+
+model WarQuestion {
+  id       Int    @id @default(autoincrement())
+  text     String
+  options  String[]
+  answer   String
+  attacks  WarAttack[]
 }

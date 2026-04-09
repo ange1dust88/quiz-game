@@ -16,10 +16,6 @@ export default async function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL("/login", req.nextUrl));
   }
 
-  if (isProtectedRoute && !session?.userId) {
-    return NextResponse.redirect(new URL("/register", req.nextUrl));
-  }
-
   if (isPublicRoute && session?.userId) {
     return NextResponse.redirect(new URL("/dashboard", req.nextUrl));
   }
