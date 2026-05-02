@@ -11,7 +11,7 @@ function SubmitButton({ text }: SubmitButtonTypes) {
     <button
       disabled={pending}
       type="submit"
-      className="bg-blue-400 border border-blue-300 text-white p-2 px-4 rounded-lg hover:bg-blue-500 hover:border-blue-400 cursor-pointer"
+      className="bg-blue-400 hover:bg-blue-500 transition-colors text-white px-6 py-3 rounded-lg font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
     >
       {text}
     </button>

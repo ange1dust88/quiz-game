@@ -1,15 +1,13 @@
 "use server";
 
 import { prisma } from "@/app/lib/prisma";
-import { cookies } from "next/headers";
-import { decrypt } from "@/app/lib/session";
 import EuropeMap from "./EuropeMap";
-import TurnIndicator from "./TurnIndicator";
-import QuestionModal from "./QuestionModal";
-import PhaseModal from "./PhaseModal";
-import { PLAYER_COLORS } from "@/app/lib/constants";
 import { getProfileSafe } from "@/app/lib/auth";
-import WarModal from "./WarModal";
+import MatchHeader from "./MatchHeader";
+import PlayerPanel from "./PlayerPanel";
+import ActionPanel from "./ActionPanel";
+import StatusBar from "./StatusBar";
+import EventFeed from "./EventFeed";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
@@ -24,9 +22,20 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
 
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
-    include: { players: { include: { profile: true } } },
+    include: {
+      players: { include: { profile: true } },
+      events: { orderBy: { createdAt: "desc" }, take: 30 },
+    },
   });
   if (!session) return <div>Session not found</div>;
+
+  const initialEvents = session.events.map((e) => ({
+    id: e.id,
+    createdAt: e.createdAt.toISOString(),
+    type: e.type,
+    actorId: e.actorId,
+    payload: e.payload as Record<string, unknown>,
+  }));
 
   const countries = await prisma.matchCountry.findMany({
     where: { gameSessionId: sessionId },
@@ -46,68 +55,88 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
     stage = "war";
   }
 
+  const matchId = sessionId.slice(-6).replace(/(.{4})(.{2})/, "$1-$2");
+
   return (
     <>
-      <div
-        className="min-h-screen bg-cover bg-center text-white flex flex-col"
-        style={{ backgroundImage: "url('/gradient.png')" }}
-      >
-        <div className="flex justify-between items-center px-6 py-4 bg-black/70 backdrop-blur border-b border-[#4f4f4f]">
-          <div className="flex gap-6 items-center">
-            <TurnIndicator
-              sessionId={sessionId}
-              initialTurnIndex={session.turnIndex}
-              initialStage={session.stage}
+      <div className="h-screen flex flex-col text-white overflow-hidden">
+        <MatchHeader
+          sessionId={sessionId}
+          matchId={matchId}
+          initialStage={session.stage}
+        />
+
+        <div className="flex-1 flex min-h-0">
+          <main className="flex-1 relative overflow-hidden">
+            <EuropeMap
+              countries={countries}
               players={session.players}
               playerInGame={playerInGame}
-              initialPickOrder={session.pickOrder}
+              sessionId={sessionId}
+              stage={stage}
+              turnIndex={session.turnIndex}
+              pickOrder={session.pickOrder}
             />
-          </div>
 
-          <div className="text-xs text-gray-400">Match {sessionId}</div>
-        </div>
-
-        <div className="flex-1 flex items-center justify-center p-6 relative">
-          <EuropeMap
-            countries={countries}
-            players={session.players}
-            playerInGame={playerInGame}
-            sessionId={sessionId}
-            stage={stage}
-            turnIndex={session.turnIndex}
-            pickOrder={session.pickOrder}
-          />
-
-          <div className="absolute top-6 right-6 bg-black border border-[#4f4f4f] rounded-lg p-4 px-6 flex flex-col gap-3">
-            <h3 className="text-sm text-gray-400 font-semibold">Players</h3>
-
-            {session.players.map((p, index) => (
-              <div key={p.id} className="flex items-center gap-2 text-sm">
-                <div
-                  className="w-3 h-3 rounded-sm"
-                  style={{ backgroundColor: PLAYER_COLORS[index] }}
-                />
-
-                <span className="text-white">
-                  {p.profile.nickname}
-                  {p.id === playerInGame.id && (
-                    <span className="text-gray-400"> (You)</span>
-                  )}
-                </span>
-              </div>
-            ))}
-
-            <div className="flex items-center gap-2 text-sm">
-              <div className="w-3 h-3 bg-gray-300 rounded-sm"></div>
-              <span className="text-gray-300">Unclaimed</span>
+            <div className="absolute bottom-4 left-4">
+              <StatusBar
+                sessionId={sessionId}
+                players={session.players}
+                initialStage={session.stage}
+                initialTurnIndex={session.turnIndex}
+                initialPickOrder={session.pickOrder}
+              />
             </div>
-          </div>
+
+            <div className="absolute bottom-4 right-4 flex items-center gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-medium">
+              <span>Scroll · Zoom</span>
+              <span>Drag · Pan</span>
+            </div>
+          </main>
+
+          <aside className="w-[360px] flex flex-col gap-3 p-4 border-l border-[#1f1f24] bg-[#0a0a0f]/80 overflow-y-auto">
+            <ActionPanel
+              sessionId={sessionId}
+              initialStage={session.stage}
+              initialTurnIndex={session.turnIndex}
+              initialPickOrder={session.pickOrder}
+              initialPickExpiresAt={
+                session.pickExpiresAt
+                  ? session.pickExpiresAt.toISOString()
+                  : null
+              }
+              initialNextQuestionAt={
+                session.nextQuestionAt
+                  ? session.nextQuestionAt.toISOString()
+                  : null
+              }
+              initialCapitalExpiresAt={
+                session.capitalExpiresAt
+                  ? session.capitalExpiresAt.toISOString()
+                  : null
+              }
+              players={session.players}
+              playerInGame={playerInGame}
+            />
+
+            <PlayerPanel
+              sessionId={sessionId}
+              initialPlayers={session.players}
+              initialCountries={countries}
+              initialTurnIndex={session.turnIndex}
+              initialStage={session.stage}
+              initialPickOrder={session.pickOrder}
+              currentPlayerId={playerInGame.id}
+            />
+
+            <EventFeed
+              sessionId={sessionId}
+              initialEvents={initialEvents}
+              players={session.players}
+            />
+          </aside>
         </div>
       </div>
-
-      <QuestionModal sessionId={sessionId} playerId={playerInGame.id} />
-      <PhaseModal sessionId={sessionId} initialStage={session.stage} />
-      <WarModal sessionId={sessionId} playerId={playerInGame.id} />
     </>
   );
 };

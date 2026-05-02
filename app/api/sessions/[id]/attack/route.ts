@@ -9,7 +9,12 @@ export async function GET(
 
   const attack = await prisma.warAttack.findFirst({
     where: { gameSessionId: id, isActive: true },
-    include: { question: true },
+    include: {
+      question: true,
+      tieQuestion: true,
+      country: { include: { template: true } },
+      answers: true,
+    },
   });
 
   if (!attack) return NextResponse.json(null);

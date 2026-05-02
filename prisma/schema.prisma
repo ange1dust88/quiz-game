@@ -42,11 +42,15 @@ model GameSession {
   currentQuestionId String?
   pickOrder         String[]
   picksRemaining    Int             @default(0)
+  pickExpiresAt     DateTime?
+  nextQuestionAt    DateTime?
+  capitalExpiresAt  DateTime?
   matchMap          MatchCountry[]
   questions         MatchQuestion[]
   players           PlayerInGame[]
   currentAttackId   String?
-  attacks           WarAttack[]  
+  attacks           WarAttack[]
+  events            MatchEvent[]
 }
 
 model PlayerInGame {
@@ -61,9 +65,10 @@ model PlayerInGame {
   gameSession    GameSession    @relation(fields: [gameSessionId], references: [id])
   profile        PlayerProfile  @relation(fields: [profileId], references: [id])
 
-  attacksAsAttacker  WarAttack[] @relation("attacker")  
-  attacksAsDefender  WarAttack[] @relation("defender")  
-  warAnswers         WarAnswer[]  
+  attacksAsAttacker  WarAttack[] @relation("attacker")
+  attacksAsDefender  WarAttack[] @relation("defender")
+  warAnswers         WarAnswer[]
+  events             MatchEvent[]
 
   @@unique([gameSessionId, profileId])
 }
@@ -92,10 +97,11 @@ model MatchCountry {
 }
 
 model Question {
-  id      Int             @id @default(autoincrement())
-  text    String
-  answer  Float
-  matches MatchQuestion[]
+  id         Int             @id @default(autoincrement())
+  text       String
+  answer     Float
+  matches    MatchQuestion[]
+  warAttacks WarAttack[]
 }
 
 model MatchQuestion {
@@ -122,21 +128,28 @@ model PlayerAnswer {
 }
 
 model WarAttack {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   gameSessionId String
   attackerId    String
   defenderId    String
   countryId     String
-  isActive      Boolean  @default(true)
-  
+  isActive      Boolean   @default(true)
+  expiresAt     DateTime?
+
+  // Tie-breaker (used when both got the multiple-choice question right)
+  tieQuestionId      Int?
+  tieExpiresAt       DateTime?
+  tieAttackerAnswer  Float?
+  tieDefenderAnswer  Float?
+
   gameSession   GameSession  @relation(fields: [gameSessionId], references: [id])
   attacker      PlayerInGame @relation("attacker", fields: [attackerId], references: [id])
   defender      PlayerInGame @relation("defender", fields: [defenderId], references: [id])
   country       MatchCountry @relation(fields: [countryId], references: [id])
   answers       WarAnswer[]
-  questionId  Int?
-  question    WarQuestion? @relation(fields: [questionId], references: [id])
-
+  questionId    Int?
+  question      WarQuestion? @relation(fields: [questionId], references: [id])
+  tieQuestion   Question?    @relation(fields: [tieQuestionId], references: [id])
 }
 
 model WarAnswer {
@@ -157,4 +170,18 @@ model WarQuestion {
   options  String[]
   answer   String
   attacks  WarAttack[]
+}
+
+model MatchEvent {
+  id            String        @id @default(cuid())
+  gameSessionId String
+  createdAt     DateTime      @default(now())
+  type          String
+  actorId       String?
+  payload       Json
+
+  gameSession   GameSession   @relation(fields: [gameSessionId], references: [id])
+  actor         PlayerInGame? @relation(fields: [actorId], references: [id])
+
+  @@index([gameSessionId, createdAt])
 }

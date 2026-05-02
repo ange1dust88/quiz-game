@@ -13,7 +13,7 @@ function Input({ id, name, type, placeholder, required = false }: InputTypes) {
       type={type}
       placeholder={placeholder}
       required={required}
-      className="border text-white bg-[#292929] border-[#4f4f4f] rounded-lg px-4 py-2"
+      className="text-white bg-[#292929] border border-[#4f4f4f] focus:border-blue-500/60 focus:outline-none transition-colors rounded-lg px-4 py-2 placeholder:text-[#6a6a6a]"
     />
   );
 }

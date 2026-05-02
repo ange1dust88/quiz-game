@@ -33,7 +33,7 @@ export function RegisterForm() {
   return (
     <form
       action={registerAction}
-      className="flex flex-col gap-4 bg-black rounded-lg p-2 w-110 transition-all duration-300"
+      className="flex flex-col gap-4 bg-[#0d0d12]/90 backdrop-blur border border-[#4f4f4f] rounded-2xl p-2 w-full max-w-md transition-all duration-300"
     >
       <div className="flex justify-between px-4 pt-4">
         <div className="flex justify-center items-center gap-4">
@@ -49,17 +49,17 @@ export function RegisterForm() {
         </div>
         <button
           onClick={() => router.push("/login")}
-          className="text-white border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] rounded-lg px-4 py-2 cursor-pointer"
+          type="button"
+          className="text-white border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors rounded-lg px-4 py-2 cursor-pointer text-sm"
         >
-          {" "}
-          Sign In{" "}
+          Sign In
         </button>
       </div>
 
       <motion.div
         layout
         transition={{ duration: 0.5 }}
-        className={`flex flex-col gap-4 bg-[#1a1a1a] h-full p-4 rounded-lg  origin-top ${
+        className={`flex flex-col gap-4 bg-[#1a1a1a] h-full p-4 rounded-xl origin-top ${
           shake ? "animate-shake" : ""
         }`}
       >

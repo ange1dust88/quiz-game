@@ -26,7 +26,10 @@ export async function startGame(formData: FormData) {
 
   await prisma.gameSession.update({
     where: { id: sessionId },
-    data: { status: "active" },
+    data: {
+      status: "active",
+      capitalExpiresAt: new Date(Date.now() + 20000),
+    },
   });
   await initializeMap(sessionId);
 

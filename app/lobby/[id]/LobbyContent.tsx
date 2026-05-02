@@ -85,11 +85,8 @@ export function LobbyContent({
   const canStart = players.length >= 1;
 
   return (
-    <div
-      className="flex justify-center items-center min-h-screen bg-cover bg-center text-white"
-      style={{ backgroundImage: "url('/gradient.png')" }}
-    >
-      <div className="bg-black/90 backdrop-blur rounded-xl p-2 w-120 shadow-xl border border-[#2a2a2a]">
+    <div className="flex justify-center items-center min-h-screen text-white px-4 py-10">
+      <div className="bg-[#0d0d12]/90 backdrop-blur rounded-2xl p-2 w-full max-w-lg shadow-xl border border-[#4f4f4f]">
         <div className="flex gap-4 items-center p-4 justify-between border-b border-[#2a2a2a]">
           <div className="flex gap-3 items-center">
             <svg
@@ -104,12 +101,12 @@ export function LobbyContent({
               {host?.profile?.nickname || "Unknown"}'s lobby
             </h1>
           </div>
-          <span className="text-xs bg-[#1a1a1a] px-3 py-1 rounded-lg border border-[#333] text-[#a0a0a0]">
+          <span className="text-xs uppercase tracking-wider bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-md">
             {session?.status || "waiting"}
           </span>
         </div>
 
-        <div className="bg-[#1a1a1a] p-5 rounded-lg m-4 flex flex-col gap-5">
+        <div className="bg-[#1a1a1a] p-5 rounded-xl m-4 flex flex-col gap-5">
           <div className="flex justify-between text-sm text-[#9a9a9a]">
             <h2 className="text-lg font-semibold text-white">Players</h2>
             <p>
@@ -162,7 +159,7 @@ export function LobbyContent({
               onClick={async () => {
                 await joinGame(session.id);
               }}
-              className="w-full bg-blue-400 hover:bg-blue-500 border border-blue-300 text-white px-6 py-2 rounded-lg"
+              className="w-full bg-blue-400 hover:bg-blue-500 transition-colors text-white px-6 py-2 rounded-lg font-medium"
             >
               Join Game
             </button>
@@ -180,7 +177,7 @@ export function LobbyContent({
               <span className="text-sm text-[#ccc]">{sessionId}</span>
               <button
                 onClick={() => navigator.clipboard.writeText(sessionId)}
-                className="ml-auto text-xs bg-[#2a2a2a] px-2 py-1 rounded hover:bg-[#333]"
+                className="ml-auto text-xs bg-[#2a2a2a] hover:bg-[#3a3a3a] transition-colors px-2 py-1 rounded"
               >
                 Copy
               </button>
