@@ -3,12 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/app/lib/supabase/client";
 import { PLAYER_COLORS } from "@/app/lib/constants";
-
-function parsePgDate(value: unknown): string | null {
-  if (!value || typeof value !== "string") return null;
-  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) return value;
-  return value.replace(" ", "T") + "Z";
-}
+import { parsePgDate, relativeTime } from "@/app/lib/dates";
 
 type Player = {
   id: string;
@@ -165,11 +160,3 @@ function describeEvent(e: MatchEvent, actor: string): string {
   }
 }
 
-function relativeTime(deltaMs: number): string {
-  const sec = Math.max(0, Math.floor(deltaMs / 1000));
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h`;
-}

@@ -8,6 +8,7 @@ import PlayerPanel from "./PlayerPanel";
 import ActionPanel from "./ActionPanel";
 import StatusBar from "./StatusBar";
 import EventFeed from "./EventFeed";
+import DevPanel from "./DevPanel";
 
 const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id: sessionId } = await params;
@@ -56,6 +57,7 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
   }
 
   const matchId = sessionId.slice(-6).replace(/(.{4})(.{2})/, "$1-$2");
+  const maxWarRounds = process.env.NODE_ENV === "production" ? 5 : 2;
 
   return (
     <>
@@ -64,6 +66,9 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
           sessionId={sessionId}
           matchId={matchId}
           initialStage={session.stage}
+          initialWarTurns={session.warTurns}
+          totalPlayers={session.players.length}
+          maxWarRounds={maxWarRounds}
         />
 
         <div className="flex-1 flex min-h-0">
@@ -88,9 +93,12 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
               />
             </div>
 
-            <div className="absolute bottom-4 right-4 flex items-center gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-medium">
-              <span>Scroll · Zoom</span>
-              <span>Drag · Pan</span>
+            <div className="absolute bottom-4 right-4 flex flex-col items-end gap-2">
+              <DevPanel sessionId={sessionId} />
+              <div className="flex items-center gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-medium">
+                <span>Scroll · Zoom</span>
+                <span>Drag · Pan</span>
+              </div>
             </div>
           </main>
 
@@ -115,6 +123,12 @@ const Match = async ({ params }: { params: Promise<{ id: string }> }) => {
                   ? session.capitalExpiresAt.toISOString()
                   : null
               }
+              initialWarTurnExpiresAt={
+                session.warTurnExpiresAt
+                  ? session.warTurnExpiresAt.toISOString()
+                  : null
+              }
+              initialWinnerId={session.winnerId}
               players={session.players}
               playerInGame={playerInGame}
             />

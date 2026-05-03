@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/app/lib/supabase/client";
 import {
+  forceAutoAttack,
   forceAutoCapital,
   forceAutoPick,
   forceResolveAttack,
@@ -13,12 +16,8 @@ import {
   submitWarTieBreaker,
 } from "./actions";
 import { PLAYER_COLORS } from "@/app/lib/constants";
-
-function parsePgDate(value: unknown): string | null {
-  if (!value || typeof value !== "string") return null;
-  if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) return value;
-  return value.replace(" ", "T") + "Z";
-}
+import { parsePgDate } from "@/app/lib/dates";
+import { sounds } from "@/app/lib/sounds";
 
 type Player = {
   id: string;
@@ -42,6 +41,8 @@ type Result = {
   diff: number;
   place: number;
   territories: number;
+  correctAnswer: number;
+  timeMs: number | null;
 };
 
 type ActiveAttack = {
@@ -49,11 +50,16 @@ type ActiveAttack = {
   attackerId: string;
   defenderId: string;
   countryId: string;
+  questionId: number | null;
   expiresAt: string | null;
   tieQuestionId: number | null;
   tieExpiresAt: string | null;
   tieAttackerAnswer: number | null;
   tieDefenderAnswer: number | null;
+  tieAttackerTimeMs: number | null;
+  tieDefenderTimeMs: number | null;
+  lastAttackerCorrect: boolean | null;
+  lastDefenderCorrect: boolean | null;
   question: { text: string; options: string[]; answer: string };
   tieQuestion: { text: string; answer: number } | null;
   country: { template: { name: string } };
@@ -68,6 +74,8 @@ type Props = {
   initialPickExpiresAt: string | null;
   initialNextQuestionAt: string | null;
   initialCapitalExpiresAt: string | null;
+  initialWarTurnExpiresAt: string | null;
+  initialWinnerId: string | null;
   players: Player[];
   playerInGame: PlayerInGame;
 };
@@ -80,6 +88,8 @@ export default function ActionPanel({
   initialPickExpiresAt,
   initialNextQuestionAt,
   initialCapitalExpiresAt,
+  initialWarTurnExpiresAt,
+  initialWinnerId,
   players,
   playerInGame,
 }: Props) {
@@ -95,6 +105,10 @@ export default function ActionPanel({
   const [capitalExpiresAt, setCapitalExpiresAt] = useState<string | null>(
     initialCapitalExpiresAt,
   );
+  const [warTurnExpiresAt, setWarTurnExpiresAt] = useState<string | null>(
+    initialWarTurnExpiresAt,
+  );
+  const [winnerId, setWinnerId] = useState<string | null>(initialWinnerId);
   const [now, setNow] = useState<number | null>(null);
 
   const [activeQuestion, setActiveQuestion] = useState<ActiveQuestion | null>(
@@ -109,12 +123,47 @@ export default function ActionPanel({
   const [warSubmitted, setWarSubmitted] = useState(false);
   const [tieAnswer, setTieAnswer] = useState("");
   const [tieSubmitted, setTieSubmitted] = useState(false);
-  const [mcRevealed, setMcRevealed] = useState(false);
+  const [mcRevealEnds, setMcRevealEnds] = useState<number | null>(null);
+  const [mcOutcome, setMcOutcome] = useState<
+    "tie" | "siege" | "decisive" | null
+  >(null);
+  const [transitionPlayerId, setTransitionPlayerId] = useState<string | null>(
+    null,
+  );
+  const [transitionEndsAt, setTransitionEndsAt] = useState<number | null>(
+    null,
+  );
+  const prevActivePlayerIdRef = useRef<string | null>(null);
+  const router = useRouter();
+  const mcRevealed = mcRevealEnds !== null;
+  const mcRevealedRef = useRef(false);
+  useEffect(() => {
+    mcRevealedRef.current = mcRevealed;
+  }, [mcRevealed]);
+
+  // Synchronous guard: if Supabase delivers the resolution UPDATEs in such
+  // quick succession that React hasn't committed mcRevealEnds yet,
+  // mcRevealedRef would still be false and we'd schedule duplicate cleanup
+  // timeouts. This ref is set the moment startReveal commits to running, so
+  // any concurrent caller short-circuits cleanly.
+  const revealScheduledRef = useRef(false);
 
   const activeAttackRef = useRef(activeAttack);
   useEffect(() => {
     activeAttackRef.current = activeAttack;
   }, [activeAttack]);
+
+  // Held until after a "X's turn" transition ends, so the new question only
+  // appears once the overlay clears. `undefined` = nothing pending; `null` =
+  // attack ended outright.
+  const pendingNextAttackRef = useRef<ActiveAttack | null | undefined>(
+    undefined,
+  );
+
+  // Latest activePlayerId, mirrored into a ref so async reveal cleanup can
+  // detect a turn change without re-binding closures. Updated by the effect
+  // alongside the activePlayerId computation further below.
+  const activePlayerIdRef = useRef<string | null>(null);
 
   const answerRef = useRef(answer);
   useEffect(() => {
@@ -156,12 +205,18 @@ export default function ActionPanel({
           if (payload.new.capitalExpiresAt !== undefined) {
             setCapitalExpiresAt(parsePgDate(payload.new.capitalExpiresAt));
           }
-          // Backup path for war: if currentAttackId went non-null, fetch attack.
-          // (Covers the case when WarAttack realtime is misbehaving.)
+          if (payload.new.warTurnExpiresAt !== undefined) {
+            setWarTurnExpiresAt(parsePgDate(payload.new.warTurnExpiresAt));
+          }
+          if (payload.new.winnerId !== undefined) {
+            setWinnerId(payload.new.winnerId ?? null);
+          }
+          // Backup path for war: realtime on WarAttack can be flaky; track via session.
           if (
             payload.new.currentAttackId &&
             !activeAttackRef.current
           ) {
+            // Attack just started — fetch full data
             fetch(`/api/sessions/${sessionId}/attack`)
               .then((r) => r.json())
               .then((data) => {
@@ -173,6 +228,51 @@ export default function ActionPanel({
                   setTieSubmitted(false);
                 }
               });
+          } else if (
+            payload.new.currentAttackId === null &&
+            activeAttackRef.current
+          ) {
+            if (revealScheduledRef.current) return;
+            revealScheduledRef.current = true;
+            // Attack ended — reveal correct answer briefly then clear.
+            // After the reveal, if the turn moved, route through the
+            // "X's turn" overlay before clearing the attack so the user
+            // sees: result → whose turn → next.
+            const wasInTie =
+              activeAttackRef.current.tieQuestionId !== null;
+            if (!wasInTie) {
+              setMcRevealEnds(Date.now() + 3500);
+              setMcOutcome("decisive");
+            } else {
+              // Tie ended — reveal phase is keyed by mcRevealEnds too.
+              setMcRevealEnds(Date.now() + 3500);
+            }
+            setTimeout(() => {
+              const prev = prevActivePlayerIdRef.current;
+              const current = activePlayerIdRef.current;
+              const turnChanged =
+                prev !== null && current !== null && prev !== current;
+
+              flushSync(() => {
+                if (turnChanged) {
+                  prevActivePlayerIdRef.current = current;
+                  pendingNextAttackRef.current = null;
+                  setMcRevealEnds(null);
+                  setMcOutcome(null);
+                  setTransitionPlayerId(current);
+                  setTransitionEndsAt(Date.now() + 2500);
+                } else {
+                  setMcRevealEnds(null);
+                  setMcOutcome(null);
+                  setActiveAttack(null);
+                  setWarSelected(null);
+                  setWarSubmitted(false);
+                  setTieAnswer("");
+                  setTieSubmitted(false);
+                }
+              });
+              revealScheduledRef.current = false;
+            }, 3500);
           }
         },
       )
@@ -276,34 +376,164 @@ export default function ActionPanel({
           filter: `gameSessionId=eq.${sessionId}`,
         },
         (payload) => {
-          const wasInTie = activeAttackRef.current?.tieQuestionId !== null;
+          const current = activeAttackRef.current;
+          if (!current || current.id !== payload.new.id) return;
+          const wasInTie = current.tieQuestionId != null;
           const becameTie =
             payload.new.tieQuestionId && !wasInTie && payload.new.isActive;
           const ended = !payload.new.isActive;
+          const siegeContinued =
+            payload.new.isActive &&
+            !payload.new.tieQuestionId &&
+            payload.new.questionId &&
+            payload.new.questionId !== current.questionId;
 
-          if (becameTie || ended) {
-            // Reveal MC correct answer briefly before transition
-            if (!wasInTie) setMcRevealed(true);
+          // Atomic-claim signal: server just marked the MC round as resolving.
+          // Triggers reveal preemptively so the old question doesn't linger
+          // while we wait for the next UPDATE that carries the outcome.
+          const mcJustResolving =
+            !!current.expiresAt &&
+            payload.new.expiresAt == null &&
+            payload.new.isActive &&
+            !payload.new.tieQuestionId &&
+            !current.tieQuestionId;
+
+          // Always keep scalar fields in sync (timer, deadlines, answers).
+          // Functional update — when Supabase delivers several UPDATEs
+          // back-to-back, the activeAttackRef effect can lag behind, but
+          // `prev` is always React's freshest committed/queued state.
+          if (!becameTie && !ended && !siegeContinued) {
+            setActiveAttack((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    questionId: payload.new.questionId ?? null,
+                    expiresAt: parsePgDate(payload.new.expiresAt),
+                    tieQuestionId: payload.new.tieQuestionId ?? null,
+                    tieExpiresAt: parsePgDate(payload.new.tieExpiresAt),
+                    tieAttackerAnswer:
+                      payload.new.tieAttackerAnswer ?? null,
+                    tieDefenderAnswer:
+                      payload.new.tieDefenderAnswer ?? null,
+                    tieAttackerTimeMs:
+                      payload.new.tieAttackerTimeMs ?? null,
+                    tieDefenderTimeMs:
+                      payload.new.tieDefenderTimeMs ?? null,
+                    lastAttackerCorrect:
+                      payload.new.lastAttackerCorrect ?? null,
+                    lastDefenderCorrect:
+                      payload.new.lastDefenderCorrect ?? null,
+                  }
+                : prev,
+            );
+          }
+
+          // Single source of truth for "start the 3.5s reveal phase".
+          // Schedules the post-reveal refetch+apply once.
+          const startReveal = (
+            outcome: "tie" | "siege" | "decisive" | null,
+          ) => {
+            if (revealScheduledRef.current) {
+              if (outcome) setMcOutcome(outcome);
+              return;
+            }
+            revealScheduledRef.current = true;
+            setMcRevealEnds(Date.now() + 3500);
+            if (outcome) setMcOutcome(outcome);
             setTimeout(async () => {
-              setMcRevealed(false);
-              if (becameTie) {
+              // Fetch FIRST, then commit state in one flushSync block — the
+              // sync flush guarantees mcRevealEnds=null and the new
+              // activeAttack land in the same render. Without it, React 19
+              // can split the post-await setStates across renders, briefly
+              // showing the old question with a 0 timer.
+              let next: ActiveAttack | null = null;
+              try {
                 const res = await fetch(
                   `/api/sessions/${sessionId}/attack`,
                 );
                 const data = await res.json();
-                if (data) {
-                  setActiveAttack(normalizeAttack(data));
+                next = data ? normalizeAttack(data) : null;
+              } catch {
+                next = null;
+              }
+
+              const prev = prevActivePlayerIdRef.current;
+              const current = activePlayerIdRef.current;
+              const turnChanged =
+                prev !== null && current !== null && prev !== current;
+
+              flushSync(() => {
+                if (turnChanged) {
+                  // Turn moved while we were revealing — show "X's turn"
+                  // overlay first, then swap in the new question.
+                  prevActivePlayerIdRef.current = current;
+                  pendingNextAttackRef.current = next;
+                  setMcRevealEnds(null);
+                  setMcOutcome(null);
+                  setTransitionPlayerId(current);
+                  setTransitionEndsAt(Date.now() + 2500);
+                } else {
+                  // Same player continues (siege / tie) or no attack — apply
+                  // the new state immediately.
+                  setMcRevealEnds(null);
+                  setMcOutcome(null);
+                  setActiveAttack(next);
                   setWarSelected(null);
                   setWarSubmitted(false);
                   setTieAnswer("");
                   setTieSubmitted(false);
-                } else {
-                  setActiveAttack(null);
                 }
-              } else {
-                setActiveAttack(null);
-              }
-            }, 2500);
+              });
+              revealScheduledRef.current = false;
+            }, 3500);
+          };
+
+          if (becameTie || ended || siegeContinued) {
+            // Clear timers on the local copy and lock in the latest tie /
+            // outcome data so the 3.5s reveal phase has it. Use `?? prev.X`
+            // because for `siegeContinued`, payload.new has the tie answers
+            // / questionId already nulled by `continueAttack` — but the
+            // reveal still needs the values from before that wipe.
+            setActiveAttack((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    tieQuestionId:
+                      payload.new.tieQuestionId ?? prev.tieQuestionId,
+                    tieAttackerAnswer:
+                      payload.new.tieAttackerAnswer ??
+                      prev.tieAttackerAnswer,
+                    tieDefenderAnswer:
+                      payload.new.tieDefenderAnswer ??
+                      prev.tieDefenderAnswer,
+                    tieAttackerTimeMs:
+                      payload.new.tieAttackerTimeMs ??
+                      prev.tieAttackerTimeMs,
+                    tieDefenderTimeMs:
+                      payload.new.tieDefenderTimeMs ??
+                      prev.tieDefenderTimeMs,
+                    lastAttackerCorrect:
+                      payload.new.lastAttackerCorrect ??
+                      prev.lastAttackerCorrect,
+                    lastDefenderCorrect:
+                      payload.new.lastDefenderCorrect ??
+                      prev.lastDefenderCorrect,
+                    expiresAt: null,
+                    tieExpiresAt: null,
+                  }
+                : prev,
+            );
+            const outcome: "tie" | "siege" | "decisive" = becameTie
+              ? "tie"
+              : siegeContinued
+                ? "siege"
+                : "decisive";
+            startReveal(outcome);
+          } else if (mcJustResolving && !wasInTie) {
+            // Resolution started but outcome hasn't arrived yet — kick off the
+            // reveal now so the old question is replaced immediately. Outcome
+            // banner will populate when the next UPDATE arrives.
+            startReveal(null);
           }
         },
       )
@@ -318,7 +548,8 @@ export default function ActionPanel({
       !capitalExpiresAt &&
       !nextQuestionAt &&
       !activeQuestion &&
-      !activeAttack
+      !activeAttack &&
+      !warTurnExpiresAt
     ) {
       return;
     }
@@ -331,6 +562,7 @@ export default function ActionPanel({
     nextQuestionAt,
     activeQuestion,
     activeAttack,
+    warTurnExpiresAt,
   ]);
 
   // Trigger forceAutoPick at deadline
@@ -365,6 +597,17 @@ export default function ActionPanel({
     );
     return () => clearTimeout(timeout);
   }, [capitalExpiresAt, sessionId]);
+
+  // Trigger forceAutoAttack at deadline (war stage, no attack chosen)
+  useEffect(() => {
+    if (!warTurnExpiresAt) return;
+    const remaining = new Date(warTurnExpiresAt).getTime() - Date.now();
+    const timeout = setTimeout(
+      () => forceAutoAttack(sessionId),
+      Math.max(0, remaining) + 200,
+    );
+    return () => clearTimeout(timeout);
+  }, [warTurnExpiresAt, sessionId]);
 
   // Auto-submit answer at question expiry
   useEffect(() => {
@@ -402,6 +645,41 @@ export default function ActionPanel({
     const timeout = setTimeout(() => setResults(null), 4000);
     return () => clearTimeout(timeout);
   }, [results]);
+
+  // Polling watchdog for the expand-stage question: once I've submitted, the
+  // realtime UPDATE that marks `isActive: false` (= everyone answered) can be
+  // dropped by Supabase. Poll the question endpoint and clear locally as soon
+  // as the server says it's no longer active — that hides the timer.
+  useEffect(() => {
+    if (!activeQuestion || !submitted) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/question`);
+        if (cancelled) return;
+        const data = await res.json();
+        if (!data) {
+          // Question resolved server-side → clear immediately so the
+          // timer disappears without waiting for realtime.
+          setActiveQuestion(null);
+          return;
+        }
+        if (!cancelled) timer = setTimeout(poll, 1500);
+      } catch {
+        if (!cancelled) timer = setTimeout(poll, 1500);
+      }
+    };
+
+    timer = setTimeout(poll, 1500);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeQuestion, submitted, sessionId]);
 
   // War MC auto-submit on timer expiry (defaults to wrong)
   const isWarInvolved =
@@ -453,6 +731,114 @@ export default function ActionPanel({
     return () => clearTimeout(timeout);
   }, [activeAttack, sessionId]);
 
+  // Polling watchdog: while an attack is active and no transition is in
+  // progress, periodically fetch and reconcile state. Catches realtime drops.
+  useEffect(() => {
+    if (!activeAttack || mcRevealed) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const triggerTransition = (
+      outcome: "tie" | "siege" | "decisive",
+      next: ActiveAttack | null,
+    ) => {
+      if (revealScheduledRef.current) return;
+      revealScheduledRef.current = true;
+      setMcRevealEnds(Date.now() + 3500);
+      setMcOutcome(outcome);
+      setTimeout(() => {
+        const prev = prevActivePlayerIdRef.current;
+        const current = activePlayerIdRef.current;
+        const turnChanged =
+          prev !== null && current !== null && prev !== current;
+
+        flushSync(() => {
+          if (turnChanged) {
+            prevActivePlayerIdRef.current = current;
+            pendingNextAttackRef.current = next;
+            setMcRevealEnds(null);
+            setMcOutcome(null);
+            setTransitionPlayerId(current);
+            setTransitionEndsAt(Date.now() + 2500);
+          } else {
+            setMcRevealEnds(null);
+            setMcOutcome(null);
+            setActiveAttack(next);
+            setWarSelected(null);
+            setWarSubmitted(false);
+            setTieAnswer("");
+            setTieSubmitted(false);
+          }
+        });
+        revealScheduledRef.current = false;
+      }, 3500);
+    };
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/attack`);
+        if (!res.ok || cancelled) {
+          if (!cancelled) timer = setTimeout(poll, 1500);
+          return;
+        }
+        const data = await res.json();
+        const current = activeAttackRef.current;
+        if (cancelled || !current) return;
+
+        if (!data) {
+          triggerTransition("decisive", null);
+          return;
+        }
+        const fresh = normalizeAttack(data);
+        if (fresh.tieQuestionId && !current.tieQuestionId) {
+          triggerTransition("tie", fresh);
+          return;
+        }
+        if (fresh.questionId && fresh.questionId !== current.questionId) {
+          triggerTransition("siege", fresh);
+          return;
+        }
+
+        // No transition — sync scalar fields (expiresAt may have been
+        // cleared by an atomic claim that didn't reach us via realtime).
+        if (
+          fresh.expiresAt !== current.expiresAt ||
+          fresh.tieExpiresAt !== current.tieExpiresAt ||
+          fresh.tieAttackerAnswer !== current.tieAttackerAnswer ||
+          fresh.tieDefenderAnswer !== current.tieDefenderAnswer ||
+          fresh.tieAttackerTimeMs !== current.tieAttackerTimeMs ||
+          fresh.tieDefenderTimeMs !== current.tieDefenderTimeMs
+        ) {
+          setActiveAttack((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  expiresAt: fresh.expiresAt,
+                  tieExpiresAt: fresh.tieExpiresAt,
+                  tieAttackerAnswer: fresh.tieAttackerAnswer,
+                  tieDefenderAnswer: fresh.tieDefenderAnswer,
+                  tieAttackerTimeMs: fresh.tieAttackerTimeMs,
+                  tieDefenderTimeMs: fresh.tieDefenderTimeMs,
+                }
+              : prev,
+          );
+        }
+
+        if (!cancelled) timer = setTimeout(poll, 1500);
+      } catch {
+        if (!cancelled) timer = setTimeout(poll, 1500);
+      }
+    };
+
+    timer = setTimeout(poll, 1500);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeAttack, mcRevealed, sessionId]);
+
   // Active player + my-turn check
   let activePlayerId: string | null = null;
   if (stage === "capitals") {
@@ -462,6 +848,65 @@ export default function ActionPanel({
   } else if (stage === "war") {
     activePlayerId = players[turnIndex]?.id ?? null;
   }
+
+  // Mirror activePlayerId into the ref declared up top.
+  useEffect(() => {
+    activePlayerIdRef.current = activePlayerId;
+  }, [activePlayerId]);
+
+  // Brief "X's turn" transition whenever the active player changes.
+  // Suppressed during the war reveal phase so the result banner finishes
+  // before the overlay covers it; the reveal cleanup itself fires the
+  // transition once it sees the turn moved while we were revealing.
+  useEffect(() => {
+    if (mcRevealed) return;
+    const prev = prevActivePlayerIdRef.current;
+    if (
+      activePlayerId !== prev &&
+      activePlayerId !== null &&
+      prev !== null
+    ) {
+      setTransitionPlayerId(activePlayerId);
+      setTransitionEndsAt(Date.now() + 2500);
+    }
+    prevActivePlayerIdRef.current = activePlayerId;
+  }, [activePlayerId, mcRevealed]);
+
+  useEffect(() => {
+    if (transitionEndsAt === null) return;
+    const remaining = transitionEndsAt - Date.now();
+    const timeout = setTimeout(() => {
+      setTransitionPlayerId(null);
+      setTransitionEndsAt(null);
+      // If the war reveal stashed a next attack while waiting for this
+      // overlay, apply it now so the new question only appears AFTER the
+      // "X's turn" card clears.
+      if (pendingNextAttackRef.current !== undefined) {
+        setActiveAttack(pendingNextAttackRef.current);
+        pendingNextAttackRef.current = undefined;
+        setWarSelected(null);
+        setWarSubmitted(false);
+        setTieAnswer("");
+        setTieSubmitted(false);
+      }
+    }, Math.max(0, remaining));
+    return () => clearTimeout(timeout);
+  }, [transitionEndsAt]);
+
+  // When the game ends, briefly show the "heading to results" card, then
+  // redirect to the lobby route which renders the results screen.
+  useEffect(() => {
+    if (stage !== "ended") return;
+    const timeout = setTimeout(() => {
+      router.push(`/lobby/${sessionId}`);
+    }, 1500);
+    return () => clearTimeout(timeout);
+  }, [stage, sessionId, router]);
+
+  const transitionCountdown =
+    transitionEndsAt !== null && now !== null
+      ? Math.max(0, Math.ceil((transitionEndsAt - now) / 1000))
+      : null;
   const isMyTurn =
     activePlayerId !== null && playerInGame.id === activePlayerId;
   const activePlayer = activePlayerId
@@ -477,6 +922,7 @@ export default function ActionPanel({
   } else if (activeQuestion) timerDeadline = activeQuestion.expiresAt;
   else if (pickExpiresAt) timerDeadline = pickExpiresAt;
   else if (capitalExpiresAt) timerDeadline = capitalExpiresAt;
+  else if (warTurnExpiresAt) timerDeadline = warTurnExpiresAt;
   else if (nextQuestionAt) timerDeadline = nextQuestionAt;
 
   const timer =
@@ -487,11 +933,60 @@ export default function ActionPanel({
         )
       : null;
 
+  // Tick on the last 3 seconds of any active timer.
+  const lastTickedRef = useRef<{ deadline: string | null; second: number }>({
+    deadline: null,
+    second: 0,
+  });
+  useEffect(() => {
+    if (timer === null || timerDeadline === null) {
+      lastTickedRef.current = { deadline: null, second: 0 };
+      return;
+    }
+    if (timer > 3 || timer <= 0) return;
+    const last = lastTickedRef.current;
+    // Only one tick per (deadline, second) pair.
+    if (last.deadline === timerDeadline && last.second === timer) return;
+    lastTickedRef.current = { deadline: timerDeadline, second: timer };
+    sounds.tick();
+  }, [timer, timerDeadline]);
+
+  // Attack started — notify involved players.
+  const lastAttackIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeAttack) {
+      lastAttackIdRef.current = null;
+      return;
+    }
+    if (lastAttackIdRef.current === activeAttack.id) return;
+    lastAttackIdRef.current = activeAttack.id;
+    if (
+      activeAttack.attackerId === playerInGame.id ||
+      activeAttack.defenderId === playerInGame.id
+    ) {
+      sounds.attackStart();
+    }
+  }, [activeAttack, playerInGame.id]);
+
+  // Game over — victory / defeat fanfare.
+  const playedEndRef = useRef(false);
+  useEffect(() => {
+    if (stage !== "ended") {
+      playedEndRef.current = false;
+      return;
+    }
+    if (playedEndRef.current) return;
+    playedEndRef.current = true;
+    if (winnerId && winnerId === playerInGame.id) sounds.victory();
+    else sounds.defeat();
+  }, [stage, winnerId, playerInGame.id]);
+
   const handleSubmit = () => {
     if (!answer || submitted) return;
     const typed = parseFloat(answer);
     if (!Number.isFinite(typed)) return;
     setSubmitted(true);
+    sounds.submit();
     submitAnswer(sessionId, playerInGame.id, typed);
   };
 
@@ -499,6 +994,7 @@ export default function ActionPanel({
     if (!activeAttack || warSubmitted) return;
     setWarSelected(option);
     setWarSubmitted(true);
+    sounds.submit();
     const isCorrect = option === activeAttack.question.answer;
     submitWarAnswer(activeAttack.id, playerInGame.id, isCorrect);
   };
@@ -508,11 +1004,51 @@ export default function ActionPanel({
     const typed = parseFloat(tieAnswer);
     if (!Number.isFinite(typed)) return;
     setTieSubmitted(true);
+    sounds.submit();
     submitWarTieBreaker(activeAttack.id, playerInGame.id, typed);
   };
 
-  // MC reveal flag is set on resolution UPDATE (kept true for 2.5s)
+  // MC reveal flag is set on resolution UPDATE (kept true for 3.5s)
   const bothMcAnswered = mcRevealed;
+  const prepCountdown =
+    mcRevealEnds !== null && now !== null
+      ? Math.max(0, Math.ceil((mcRevealEnds - now) / 1000))
+      : null;
+
+  if (transitionPlayerId) {
+    const player = players.find((p) => p.id === transitionPlayerId);
+    const isMe = transitionPlayerId === playerInGame.id;
+    return (
+      <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-6 flex flex-col items-center justify-center gap-2 text-center min-h-[140px]">
+        <div className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
+          Next turn
+        </div>
+        <h2 className="text-2xl font-bold leading-tight">
+          {isMe
+            ? "Your turn"
+            : `${player?.profile.nickname ?? "Someone"}'s turn`}
+        </h2>
+        {transitionCountdown !== null && (
+          <p className="text-xs text-gray-500 font-mono">
+            Starting in {transitionCountdown}s
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (stage === "ended") {
+    return (
+      <div className="bg-[#14141a] border border-emerald-400/40 rounded-xl p-5 flex flex-col gap-3 items-center text-center">
+        <div className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
+          Game over
+        </div>
+        <h2 className="text-xl font-bold leading-tight">
+          Heading to results…
+        </h2>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-5 flex flex-col gap-3">
@@ -531,6 +1067,8 @@ export default function ActionPanel({
           onPick={handleWarPick}
           onTieSubmit={handleTieSubmit}
           bothMcAnswered={bothMcAnswered}
+          mcOutcome={mcOutcome}
+          prepCountdown={prepCountdown}
           timer={timer}
         />
       ) : activeQuestion ? (
@@ -565,11 +1103,12 @@ function normalizeAttack(raw: ActiveAttack): ActiveAttack {
 
 function TimerBadge({ timer }: { timer: number | null }) {
   if (timer === null) return null;
+  const colour =
+    timer <= 5 ? "text-red-400" : "text-yellow-300";
+  const pulse = timer > 0 && timer <= 3 ? " timer-warning" : "";
   return (
     <span
-      className={`text-base font-mono font-bold shrink-0 ${
-        timer <= 5 ? "text-red-400" : "text-yellow-300"
-      }`}
+      className={`text-base font-mono font-bold shrink-0 ${colour}${pulse}`}
     >
       {timer}s
     </span>
@@ -717,41 +1256,69 @@ function ResultsView({
   results: Result[];
   players: Player[];
 }) {
+  const correct = results[0]?.correctAnswer ?? null;
   return (
     <>
-      <div className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
-        Results
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
+          Results
+        </div>
+        {correct !== null && (
+          <div className="text-xs text-gray-400">
+            correct:{" "}
+            <span className="font-mono font-bold text-emerald-300">
+              {correct}
+            </span>
+          </div>
+        )}
       </div>
       <div className="flex flex-col gap-2">
         {results.map((r) => {
           const idx = players.findIndex((p) => p.id === r.playerId);
           const color = PLAYER_COLORS[idx % PLAYER_COLORS.length] ?? "#666";
+          const isExact = r.answer !== null && r.diff === 0;
           return (
             <div
               key={r.playerId}
-              className="flex items-center gap-2 px-2 py-2 rounded-md bg-[#1f1f24]"
+              className="flex items-center gap-2 px-2.5 py-2 rounded-md bg-[#1f1f24]"
             >
-              <span className="text-xs text-gray-500 w-5 text-center">
+              <span className="text-xs text-gray-500 w-5 text-center font-mono">
                 #{r.place}
               </span>
               <div
                 className="w-2 h-2 rounded-full shrink-0"
                 style={{ backgroundColor: color }}
               />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold truncate">
-                  {r.nickname}
-                </div>
-                <div className="text-[11px] text-gray-500">
-                  {r.answer === null ? "no answer" : `answered ${r.answer}`}
-                </div>
-              </div>
+              <span className="text-sm font-semibold truncate flex-1 min-w-0">
+                {r.nickname}
+              </span>
+              {r.answer !== null ? (
+                <>
+                  <span
+                    className={`font-mono text-sm font-bold tabular-nums ${
+                      isExact ? "text-emerald-300" : "text-white"
+                    }`}
+                    title={
+                      r.diff > 0 ? `off by ${formatDiff(r.diff)}` : undefined
+                    }
+                  >
+                    {r.answer}
+                  </span>
+                  <span className="text-[11px] text-gray-400 font-mono tabular-nums w-16 text-right">
+                    {r.timeMs !== null ? `in ${formatTime(r.timeMs)}` : "—"}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[11px] italic text-gray-600">
+                  no answer
+                </span>
+              )}
               <span
-                className={`text-xs font-bold shrink-0 ${
-                  r.territories > 0 ? "text-emerald-400" : "text-gray-600"
+                className={`text-xs font-bold shrink-0 w-7 text-right ${
+                  r.territories > 0 ? "text-emerald-400" : "text-gray-700"
                 }`}
               >
-                +{r.territories}
+                {r.territories > 0 ? `+${r.territories}` : "—"}
               </span>
             </div>
           );
@@ -759,6 +1326,15 @@ function ResultsView({
       </div>
     </>
   );
+}
+
+function formatDiff(diff: number): string {
+  if (diff === 0) return "exact";
+  return Number.isInteger(diff) ? String(diff) : diff.toFixed(2);
+}
+
+function formatTime(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function WarView({
@@ -773,6 +1349,8 @@ function WarView({
   onPick,
   onTieSubmit,
   bothMcAnswered,
+  mcOutcome,
+  prepCountdown,
   timer,
 }: {
   attack: ActiveAttack;
@@ -786,6 +1364,8 @@ function WarView({
   onPick: (option: string) => void;
   onTieSubmit: () => void;
   bothMcAnswered: boolean;
+  mcOutcome: "tie" | "siege" | "decisive" | null;
+  prepCountdown: number | null;
   timer: number | null;
 }) {
   const isAttacker = attack.attackerId === playerId;
@@ -799,49 +1379,76 @@ function WarView({
   const isTie = attack.tieQuestionId !== null;
 
   if (isTie) {
+    const bothTieAnswered =
+      attack.tieAttackerAnswer !== null && attack.tieDefenderAnswer !== null;
+    const correctTie = attack.tieQuestion?.answer ?? null;
     return (
       <>
         <div className="flex items-start justify-between gap-3">
           <div className="text-[10px] uppercase tracking-widest text-amber-400 font-semibold">
             Tie-breaker · {country}
           </div>
-          <TimerBadge timer={timer} />
+          <TimerBadge timer={bothTieAnswered ? null : timer} />
         </div>
         <p className="text-xs text-gray-400">
           {attacker?.profile.nickname} vs {defender?.profile.nickname} —
-          closest answer wins.
+          closest answer wins, fastest breaks ties.
         </p>
-        <h2 className="text-lg font-bold leading-tight">
-          {attack.tieQuestion?.text}
-        </h2>
-        {!isInvolved ? (
-          <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
-            Watching…
-          </div>
-        ) : !tieSubmitted ? (
-          <div className="flex flex-col gap-2 mt-1">
-            <input
-              type="number"
-              value={tieAnswer}
-              onChange={(e) => setTieAnswer(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onTieSubmit();
-              }}
-              placeholder="Your answer…"
-              autoFocus
-              className="bg-[#1f1f24] border border-[#2a2a32] focus:border-amber-400/50 focus:outline-none rounded-md px-3 py-2 text-sm text-white placeholder:text-gray-600 transition-colors"
+        {bothTieAnswered ? (
+          <>
+            <h2 className="text-lg font-bold leading-tight">
+              Tie resolved
+              {correctTie !== null && (
+                <span className="text-gray-500 font-normal text-xs ml-2">
+                  correct: {correctTie}
+                </span>
+              )}
+            </h2>
+            <TieAnswerSummary
+              attackerName={attacker?.profile.nickname ?? "Attacker"}
+              defenderName={defender?.profile.nickname ?? "Defender"}
+              correct={correctTie}
+              attackerAnswer={attack.tieAttackerAnswer}
+              defenderAnswer={attack.tieDefenderAnswer}
+              attackerTimeMs={attack.tieAttackerTimeMs}
+              defenderTimeMs={attack.tieDefenderTimeMs}
             />
-            <button
-              onClick={onTieSubmit}
-              className="bg-amber-400 hover:bg-amber-500 transition-colors text-black px-4 py-2 rounded-md font-semibold text-sm"
-            >
-              Submit
-            </button>
-          </div>
+          </>
         ) : (
-          <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
-            Waiting for opponent…
-          </div>
+          <>
+            <h2 className="text-lg font-bold leading-tight">
+              {attack.tieQuestion?.text}
+            </h2>
+            {!isInvolved ? (
+              <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
+                Watching…
+              </div>
+            ) : !tieSubmitted ? (
+              <div className="flex flex-col gap-2 mt-1">
+                <input
+                  type="number"
+                  value={tieAnswer}
+                  onChange={(e) => setTieAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") onTieSubmit();
+                  }}
+                  placeholder="Your answer…"
+                  autoFocus
+                  className="bg-[#1f1f24] border border-[#2a2a32] focus:border-amber-400/50 focus:outline-none rounded-md px-3 py-2 text-sm text-white placeholder:text-gray-600 transition-colors"
+                />
+                <button
+                  onClick={onTieSubmit}
+                  className="bg-amber-400 hover:bg-amber-500 transition-colors text-black px-4 py-2 rounded-md font-semibold text-sm"
+                >
+                  Submit
+                </button>
+              </div>
+            ) : (
+              <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
+                Waiting for opponent…
+              </div>
+            )}
+          </>
         )}
       </>
     );
@@ -864,9 +1471,18 @@ function WarView({
       <p className="text-xs text-gray-400">
         {attacker?.profile.nickname} → {defender?.profile.nickname}
       </p>
-      <h2 className="text-lg font-bold leading-tight">
-        {attack.question.text}
-      </h2>
+      {bothMcAnswered ? (
+        <h2 className="text-lg font-bold leading-tight">
+          Round resolved
+          <span className="text-gray-500 font-normal text-xs ml-2">
+            answer: {attack.question.answer}
+          </span>
+        </h2>
+      ) : (
+        <h2 className="text-lg font-bold leading-tight">
+          {attack.question.text}
+        </h2>
+      )}
       <div className="grid grid-cols-2 gap-2">
         {attack.question.options.map((option) => {
           const isCorrect = option === attack.question.answer;
@@ -919,6 +1535,196 @@ function WarView({
           Watching…
         </div>
       )}
+      {bothMcAnswered && (
+        <AnswerSummary
+          attackerName={attacker?.profile.nickname ?? "Attacker"}
+          defenderName={defender?.profile.nickname ?? "Defender"}
+          attackerCorrect={attack.lastAttackerCorrect}
+          defenderCorrect={attack.lastDefenderCorrect}
+        />
+      )}
+      {bothMcAnswered && mcOutcome === "tie" && (
+        <div className="bg-amber-400/10 border border-amber-400/30 rounded-md px-3 py-2 text-xs text-amber-200 flex items-center justify-between gap-2">
+          <span>Both correct — closest answer wins next round</span>
+          {prepCountdown !== null && (
+            <span className="font-mono font-bold">{prepCountdown}s</span>
+          )}
+        </div>
+      )}
+      {bothMcAnswered && mcOutcome === "siege" && (
+        <div className="bg-red-400/10 border border-red-400/30 rounded-md px-3 py-2 text-xs text-red-200 flex items-center justify-between gap-2">
+          <span>Capital damaged — next round incoming</span>
+          {prepCountdown !== null && (
+            <span className="font-mono font-bold">{prepCountdown}s</span>
+          )}
+        </div>
+      )}
     </>
+  );
+}
+
+function AnswerSummary({
+  attackerName,
+  defenderName,
+  attackerCorrect,
+  defenderCorrect,
+}: {
+  attackerName: string;
+  defenderName: string;
+  attackerCorrect: boolean | null;
+  defenderCorrect: boolean | null;
+}) {
+  return (
+    <div className="bg-[#1f1f24] rounded-md px-3 py-2 flex flex-col gap-1.5">
+      <AnswerRow label={attackerName} role="atk" correct={attackerCorrect} />
+      <AnswerRow label={defenderName} role="def" correct={defenderCorrect} />
+    </div>
+  );
+}
+
+function TieAnswerSummary({
+  attackerName,
+  defenderName,
+  correct,
+  attackerAnswer,
+  defenderAnswer,
+  attackerTimeMs,
+  defenderTimeMs,
+}: {
+  attackerName: string;
+  defenderName: string;
+  correct: number | null;
+  attackerAnswer: number | null;
+  defenderAnswer: number | null;
+  attackerTimeMs: number | null;
+  defenderTimeMs: number | null;
+}) {
+  const aDiff =
+    attackerAnswer === null || correct === null
+      ? null
+      : Math.abs(attackerAnswer - correct);
+  const dDiff =
+    defenderAnswer === null || correct === null
+      ? null
+      : Math.abs(defenderAnswer - correct);
+
+  // Mirror the server's tiebreak: closer wins; equal diff → faster wins;
+  // equal time → defender holds.
+  let attackerWon = false;
+  if (aDiff !== null && dDiff !== null) {
+    if (aDiff < dDiff) attackerWon = true;
+    else if (aDiff === dDiff) {
+      const aT = attackerTimeMs ?? Number.POSITIVE_INFINITY;
+      const dT = defenderTimeMs ?? Number.POSITIVE_INFINITY;
+      attackerWon = aT < dT;
+    }
+  } else if (aDiff !== null && dDiff === null) {
+    attackerWon = true;
+  }
+
+  return (
+    <div className="bg-[#1f1f24] rounded-md px-3 py-2 flex flex-col gap-1.5">
+      <TieAnswerRow
+        label={attackerName}
+        role="atk"
+        answer={attackerAnswer}
+        diff={aDiff}
+        timeMs={attackerTimeMs}
+        won={attackerWon}
+      />
+      <TieAnswerRow
+        label={defenderName}
+        role="def"
+        answer={defenderAnswer}
+        diff={dDiff}
+        timeMs={defenderTimeMs}
+        won={!attackerWon}
+      />
+    </div>
+  );
+}
+
+function TieAnswerRow({
+  label,
+  role,
+  answer,
+  diff,
+  timeMs,
+  won,
+}: {
+  label: string;
+  role: "atk" | "def";
+  answer: number | null;
+  diff: number | null;
+  timeMs: number | null;
+  won: boolean;
+}) {
+  const dotColor = won ? "bg-emerald-400" : "bg-gray-600";
+  const tone = won ? "text-emerald-200" : "text-gray-400";
+  return (
+    <div className={`flex items-center gap-2 text-xs ${tone}`}>
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
+      <span className="text-gray-400 uppercase tracking-widest text-[9px]">
+        {role}
+      </span>
+      <span className="text-white font-semibold truncate">{label}</span>
+      <span className="ml-auto flex items-center gap-2.5 font-mono tabular-nums">
+        {answer !== null ? (
+          <>
+            <span
+              className={`font-bold text-sm ${
+                won ? "text-emerald-200" : "text-gray-400"
+              }`}
+              title={diff !== null ? `off by ${formatDiff(diff)}` : undefined}
+            >
+              {answer}
+            </span>
+            <span
+              className={`${
+                won ? "text-emerald-300" : "text-gray-500"
+              } text-[11px]`}
+            >
+              {timeMs !== null ? `in ${formatTime(timeMs)}` : "—"}
+            </span>
+          </>
+        ) : (
+          <span className="italic text-gray-600">no answer</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function AnswerRow({
+  label,
+  role,
+  correct,
+}: {
+  label: string;
+  role: "atk" | "def";
+  correct: boolean | null;
+}) {
+  const isOk = correct === true;
+  const isWrong = correct === false;
+  const dotColor = isOk
+    ? "bg-emerald-400"
+    : isWrong
+      ? "bg-red-400"
+      : "bg-gray-600";
+  const text = isOk ? "answered correctly" : isWrong ? "got it wrong" : "—";
+  const textColor = isOk
+    ? "text-emerald-300"
+    : isWrong
+      ? "text-red-300"
+      : "text-gray-500";
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
+      <span className="text-gray-400 uppercase tracking-widest text-[9px]">
+        {role}
+      </span>
+      <span className="text-white font-semibold truncate">{label}</span>
+      <span className={`ml-auto ${textColor}`}>{text}</span>
+    </div>
   );
 }

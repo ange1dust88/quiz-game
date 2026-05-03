@@ -16,6 +16,8 @@ type Country = {
   id: string;
   ownerId: string | null;
   isCapital: boolean;
+  armies: number;
+  points: number;
   template: { id: number; name: string };
 };
 
@@ -102,7 +104,7 @@ export default function PlayerPanel({
     activePlayerId = initialPlayers[turnIndex]?.id ?? null;
   }
 
-  const totalLands = countries.length;
+  const totalPoints = countries.reduce((s, c) => s + (c.points ?? 0), 0);
 
   return (
     <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-4 flex flex-col gap-3">
@@ -119,16 +121,18 @@ export default function PlayerPanel({
           const isYou = p.id === currentPlayerId;
           const isActive = p.id === activePlayerId;
           const color = PLAYER_COLORS[idx % PLAYER_COLORS.length];
-          const lands = countries.filter((c) => c.ownerId === p.id).length;
-          const capital = countries.find(
-            (c) => c.ownerId === p.id && c.isCapital,
-          );
+          const owned = countries.filter((c) => c.ownerId === p.id);
+          const lands = owned.length;
+          const points = owned.reduce((s, c) => s + (c.points ?? 0), 0);
+          const capital = owned.find((c) => c.isCapital);
           const code = capital
             ? capital.template.name.slice(0, 2).toUpperCase()
             : p.profile.nickname.slice(0, 2).toUpperCase();
           const initial = p.profile.nickname.charAt(0).toUpperCase();
           const progress =
-            totalLands > 0 ? Math.round((lands / totalLands) * 100) : 0;
+            totalPoints > 0
+              ? Math.round((points / totalPoints) * 100)
+              : 0;
 
           return (
             <div
@@ -155,8 +159,12 @@ export default function PlayerPanel({
                     <span className="text-[10px] text-gray-500">you</span>
                   )}
                 </div>
-                <div className="text-xs text-gray-500">
-                  {code} · {lands} Land{lands === 1 ? "" : "s"}
+                <div className="text-xs text-gray-500 flex items-center gap-2">
+                  <span>
+                    {code} · {points.toLocaleString()} pts · {lands}{" "}
+                    {lands === 1 ? "land" : "lands"}
+                  </span>
+                  {capital && <CapitalHp hp={capital.armies} />}
                 </div>
               </div>
 
@@ -180,5 +188,25 @@ export default function PlayerPanel({
         })}
       </div>
     </div>
+  );
+}
+
+const MAX_CAPITAL_HP = 3;
+
+function CapitalHp({ hp }: { hp: number }) {
+  return (
+    <span
+      className="inline-flex items-center gap-0.5"
+      title={`Capital HP: ${hp}/${MAX_CAPITAL_HP}`}
+    >
+      {Array.from({ length: MAX_CAPITAL_HP }).map((_, i) => (
+        <span
+          key={i}
+          className={`w-1.5 h-1.5 rounded-full ${
+            i < hp ? "bg-amber-400" : "bg-[#2a2a32]"
+          }`}
+        />
+      ))}
+    </span>
   );
 }

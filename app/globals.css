@@ -51,3 +51,62 @@ body {
 .animate-shake {
   animation: shake 0.35s ease;
 }
+
+/* Brightness/saturation pulse on a country path when ownership changes. */
+@keyframes capturePulse {
+  0% {
+    filter: brightness(190%) saturate(150%);
+  }
+  100% {
+    filter: brightness(100%) saturate(100%);
+  }
+}
+.country-captured {
+  animation: capturePulse 0.7s ease-out;
+}
+
+/* Quick darken+desaturate flash when a capital takes a hit. */
+@keyframes damagePulse {
+  0% {
+    filter: brightness(60%) saturate(50%);
+  }
+  60% {
+    filter: brightness(110%) saturate(100%);
+  }
+  100% {
+    filter: brightness(100%) saturate(100%);
+  }
+}
+.country-damaged {
+  animation: damagePulse 0.55s ease-out;
+}
+
+/* Timer badge pulses in the last seconds. */
+@keyframes timerPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.85;
+  }
+}
+.timer-warning {
+  animation: timerPulse 0.7s ease-in-out infinite;
+}
+
+/* Pulsing ring around a player avatar when it's their turn. */
+@keyframes turnPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+  }
+}
+.turn-active {
+  animation: turnPulse 1.4s ease-out infinite;
+}

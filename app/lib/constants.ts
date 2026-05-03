@@ -1,1 +1,2 @@
-export const PLAYER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b"];
+// Match the screenshot palette: pink, sky, mint, amber.
+export const PLAYER_COLORS = ["#ec4899", "#38bdf8", "#34d399", "#fbbf24"];

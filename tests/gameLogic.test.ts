@@ -1,0 +1,244 @@
+import { describe, expect, it } from "vitest";
+import {
+  attackerWonOutcome,
+  computePickOrder,
+  computeTieResult,
+  computeWarRound,
+  rankAnswers,
+  territoriesForPlace,
+  warEndReason,
+  winnerByLands,
+} from "@/app/match/[id]/gameLogic";
+
+describe("rankAnswers", () => {
+  it("ranks by closeness to the correct answer", () => {
+    const out = rankAnswers(
+      [
+        { playerId: "a", answer: 100, answeredAtMs: 0 },
+        { playerId: "b", answer: 42, answeredAtMs: 0 },
+        { playerId: "c", answer: 60, answeredAtMs: 0 },
+      ],
+      50,
+    );
+    expect(out.map((r) => r.playerId)).toEqual(["b", "c", "a"]);
+  });
+
+  it("breaks ties by who answered first (lower answeredAtMs wins)", () => {
+    const out = rankAnswers(
+      [
+        { playerId: "slow", answer: 60, answeredAtMs: 5000 },
+        { playerId: "fast", answer: 40, answeredAtMs: 1200 },
+      ],
+      50,
+    );
+    // Both off by 10 — fastest wins.
+    expect(out.map((r) => r.playerId)).toEqual(["fast", "slow"]);
+  });
+
+  it("only uses time as a tiebreaker, never to override closeness", () => {
+    const out = rankAnswers(
+      [
+        { playerId: "fastWrong", answer: 0, answeredAtMs: 100 },
+        { playerId: "slowRight", answer: 50, answeredAtMs: 9000 },
+      ],
+      50,
+    );
+    expect(out[0].playerId).toBe("slowRight");
+  });
+
+  it("does not mutate the input array", () => {
+    const input = [
+      { playerId: "a", answer: 100, answeredAtMs: 0 },
+      { playerId: "b", answer: 42, answeredAtMs: 0 },
+    ];
+    rankAnswers(input, 50);
+    expect(input.map((r) => r.playerId)).toEqual(["a", "b"]);
+  });
+
+  it("handles an empty list", () => {
+    expect(rankAnswers([], 50)).toEqual([]);
+  });
+});
+
+describe("territoriesForPlace", () => {
+  it("2-player game: only first place picks 1 territory", () => {
+    expect(territoriesForPlace(1, 2)).toBe(1);
+    expect(territoriesForPlace(2, 2)).toBe(0);
+  });
+
+  it("3+ player game: 1st picks 2, 2nd picks 1, others 0", () => {
+    expect(territoriesForPlace(1, 3)).toBe(2);
+    expect(territoriesForPlace(2, 3)).toBe(1);
+    expect(territoriesForPlace(3, 3)).toBe(0);
+    expect(territoriesForPlace(4, 4)).toBe(0);
+  });
+});
+
+describe("computePickOrder", () => {
+  it("2 players → 1 pick for the closest answer", () => {
+    expect(computePickOrder(["a", "b"], 2)).toEqual(["a"]);
+  });
+
+  it("3 players → 1st gets two consecutive picks, 2nd gets one", () => {
+    expect(computePickOrder(["a", "b", "c"], 3)).toEqual(["a", "a", "b"]);
+  });
+
+  it("4 players → same as 3 players (1st x2, 2nd x1)", () => {
+    expect(computePickOrder(["a", "b", "c", "d"], 4)).toEqual([
+      "a",
+      "a",
+      "b",
+    ]);
+  });
+
+  it("missing 2nd-place answer in 3+ game → only winner picks", () => {
+    expect(computePickOrder(["a"], 3)).toEqual(["a", "a"]);
+  });
+
+  it("no answers → empty queue", () => {
+    expect(computePickOrder([], 3)).toEqual([]);
+    expect(computePickOrder([], 2)).toEqual([]);
+  });
+});
+
+describe("computeWarRound", () => {
+  it("returns 1 for a fresh war (no turns yet)", () => {
+    expect(computeWarRound(0, 4, 5)).toBe(1);
+  });
+
+  it("rounds advance every totalPlayers turns", () => {
+    expect(computeWarRound(3, 4, 5)).toBe(1);
+    expect(computeWarRound(4, 4, 5)).toBe(2);
+    expect(computeWarRound(7, 4, 5)).toBe(2);
+    expect(computeWarRound(8, 4, 5)).toBe(3);
+  });
+
+  it("caps the displayed round at maxRounds", () => {
+    expect(computeWarRound(20, 4, 5)).toBe(5); // round 6 clamped to 5
+    expect(computeWarRound(100, 4, 5)).toBe(5);
+  });
+
+  it("dev mode (2 rounds) clamps quickly", () => {
+    expect(computeWarRound(0, 2, 2)).toBe(1);
+    expect(computeWarRound(2, 2, 2)).toBe(2);
+    expect(computeWarRound(4, 2, 2)).toBe(2);
+  });
+
+  it("zero players degrades gracefully", () => {
+    expect(computeWarRound(5, 0, 5)).toBe(1);
+  });
+});
+
+describe("warEndReason", () => {
+  it("returns null while at least 2 players hold land and rounds remain", () => {
+    expect(warEndReason(3, 4, 5, 3)).toBe(null);
+  });
+
+  it("flags sole_survivor when only one player has territories", () => {
+    expect(warEndReason(7, 4, 5, 1)).toBe("sole_survivor");
+  });
+
+  it("flags rounds_exhausted when warTurns hits the round-limit", () => {
+    expect(warEndReason(20, 4, 5, 2)).toBe("rounds_exhausted");
+    expect(warEndReason(21, 4, 5, 2)).toBe("rounds_exhausted");
+  });
+
+  it("sole_survivor wins over rounds_exhausted (precedence)", () => {
+    expect(warEndReason(20, 4, 5, 1)).toBe("sole_survivor");
+  });
+});
+
+describe("winnerByLands", () => {
+  const players = [{ id: "a" }, { id: "b" }, { id: "c" }];
+
+  it("returns the player with the most lands", () => {
+    const counts = new Map([
+      ["a", 5],
+      ["b", 12],
+      ["c", 7],
+    ]);
+    expect(winnerByLands(players, counts)).toEqual({ id: "b" });
+  });
+
+  it("breaks ties by player insertion order", () => {
+    const counts = new Map([
+      ["a", 8],
+      ["b", 8],
+      ["c", 8],
+    ]);
+    expect(winnerByLands(players, counts)).toEqual({ id: "a" });
+  });
+
+  it("treats missing entries as zero", () => {
+    const counts = new Map<string, number>();
+    expect(winnerByLands(players, counts)).toEqual({ id: "a" });
+  });
+
+  it("returns null for an empty roster", () => {
+    expect(winnerByLands([], new Map())).toBe(null);
+  });
+});
+
+describe("computeTieResult", () => {
+  it("attacker closer to correct → attacker wins", () => {
+    expect(computeTieResult(50, 48, 60, 4000, 1000)).toBe("attacker_won");
+  });
+
+  it("defender closer to correct → defender holds", () => {
+    expect(computeTieResult(50, 30, 52, 1000, 4000)).toBe("defender_held");
+  });
+
+  it("equal diff → faster wins (attacker faster)", () => {
+    expect(computeTieResult(50, 60, 40, 2000, 7000)).toBe("attacker_won");
+  });
+
+  it("equal diff → faster wins (defender faster)", () => {
+    expect(computeTieResult(50, 40, 60, 7000, 2000)).toBe("defender_held");
+  });
+
+  it("equal diff and equal time → defender holds (defender bias)", () => {
+    expect(computeTieResult(50, 60, 40, 3000, 3000)).toBe("defender_held");
+  });
+
+  it("nobody answered → no_change", () => {
+    expect(computeTieResult(50, null, null, null, null)).toBe("no_change");
+  });
+
+  it("only attacker answered → attacker wins", () => {
+    expect(computeTieResult(50, 100, null, 5000, null)).toBe("attacker_won");
+  });
+
+  it("only defender answered → defender holds", () => {
+    expect(computeTieResult(50, null, 100, null, 5000)).toBe("defender_held");
+  });
+
+  it("missing time on equal diff → other side's time wins", () => {
+    // Attacker has time, defender's missing → defender treated as slower → attacker wins
+    expect(computeTieResult(50, 60, 40, 2000, null)).toBe("attacker_won");
+  });
+});
+
+describe("attackerWonOutcome", () => {
+  it("damages a capital with HP > 1 and continues siege", () => {
+    expect(attackerWonOutcome({ isCapital: true, armies: 3 })).toEqual({
+      type: "siege_continues",
+      remainingHp: 2,
+    });
+    expect(attackerWonOutcome({ isCapital: true, armies: 2 })).toEqual({
+      type: "siege_continues",
+      remainingHp: 1,
+    });
+  });
+
+  it("falls a capital at HP 1 (cascade trigger)", () => {
+    expect(attackerWonOutcome({ isCapital: true, armies: 1 })).toEqual({
+      type: "capital_falls",
+    });
+  });
+
+  it("transfers a regular territory immediately", () => {
+    expect(attackerWonOutcome({ isCapital: false, armies: 1 })).toEqual({
+      type: "territory_taken",
+    });
+  });
+});

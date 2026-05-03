@@ -39,6 +39,8 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
           },
         },
       },
+      matchMap: true,
+      events: { orderBy: { createdAt: "desc" }, take: 200 },
     },
   });
 
@@ -46,9 +48,23 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     return <div>No room found</div>;
   }
 
+  const totalPlayers = session.players.length;
+  const maxWarRounds = process.env.NODE_ENV === "production" ? 5 : 2;
+  const warRound =
+    totalPlayers > 0
+      ? Math.min(
+          maxWarRounds,
+          Math.floor(session.warTurns / totalPlayers) + 1,
+        )
+      : 1;
+
   const initialSession = {
     id: session.id,
     status: session.status,
+    stage: session.stage,
+    winnerId: session.winnerId,
+    warRound,
+    maxWarRounds,
     players: session.players.map((p) => ({
       id: p.id,
       profileId: p.profileId,
@@ -56,6 +72,18 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       profile: {
         nickname: p.profile.nickname,
       },
+    })),
+    countries: session.matchMap.map((c) => ({
+      id: c.id,
+      ownerId: c.ownerId,
+      isCapital: c.isCapital,
+      points: c.points,
+    })),
+    events: session.events.map((e) => ({
+      id: e.id,
+      type: e.type,
+      actorId: e.actorId,
+      payload: (e.payload ?? {}) as Record<string, unknown>,
     })),
   };
 

@@ -5,6 +5,7 @@ import { createClient } from "@/app/lib/supabase/client";
 import { StartGameButton } from "./StartGameButton";
 import { joinGame } from "./actions";
 import { useRouter } from "next/navigation";
+import ResultsView from "./ResultsView";
 
 interface Player {
   id: string;
@@ -15,10 +16,30 @@ interface Player {
   };
 }
 
+interface Country {
+  id: string;
+  ownerId: string | null;
+  isCapital: boolean;
+  points: number;
+}
+
+interface EventRow {
+  id: string;
+  type: string;
+  actorId: string | null;
+  payload: Record<string, unknown>;
+}
+
 interface GameSession {
   id: string;
   status: string;
+  stage: string;
+  winnerId: string | null;
+  warRound: number;
+  maxWarRounds: number;
   players: Player[];
+  countries: Country[];
+  events: EventRow[];
 }
 
 interface Props {
@@ -38,6 +59,11 @@ export function LobbyContent({
   const [session, setSession] = useState(initialSession);
   const router = useRouter();
 
+  // Re-sync state when the server-rendered props refresh (e.g. via router.refresh()).
+  useEffect(() => {
+    setSession(initialSession);
+  }, [initialSession]);
+
   useEffect(() => {
     const supabase = createClient();
 
@@ -54,8 +80,7 @@ export function LobbyContent({
         async () => {
           const response = await fetch(`/api/sessions/${sessionId}`);
           const freshSession = await response.json();
-
-          setSession(freshSession);
+          setSession((prev) => ({ ...prev, ...freshSession }));
         },
       )
       .on(
@@ -69,6 +94,8 @@ export function LobbyContent({
         async (payload) => {
           if (payload.new.status === "active") {
             router.push(`/match/${sessionId}`);
+          } else if (payload.new.status === "completed") {
+            router.refresh();
           }
         },
       )
@@ -77,12 +104,27 @@ export function LobbyContent({
     return () => {
       channel.unsubscribe();
     };
-  }, [sessionId]);
+  }, [sessionId, router]);
   const host = session?.players?.find((p) => p.role === "host");
   const players = session?.players ?? [];
   const me = session?.players?.find((p) => p.profileId === currentUser.id);
   const isHost = me?.role === "host";
   const canStart = players.length >= 1;
+
+  if (session?.status === "completed") {
+    return (
+      <ResultsView
+        sessionId={sessionId}
+        players={players}
+        countries={session.countries}
+        events={session.events}
+        winnerId={session.winnerId}
+        warRound={session.warRound}
+        maxRounds={session.maxWarRounds}
+        currentPlayerId={me?.id ?? null}
+      />
+    );
+  }
 
   return (
     <div className="flex justify-center items-center min-h-screen text-white px-4 py-10">

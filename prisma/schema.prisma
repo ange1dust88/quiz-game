@@ -45,6 +45,9 @@ model GameSession {
   pickExpiresAt     DateTime?
   nextQuestionAt    DateTime?
   capitalExpiresAt  DateTime?
+  warTurnExpiresAt  DateTime?
+  warTurns          Int             @default(0)
+  winnerId          String?
   matchMap          MatchCountry[]
   questions         MatchQuestion[]
   players           PlayerInGame[]
@@ -88,6 +91,7 @@ model MatchCountry {
   ownerId       String?
   isCapital     Boolean         @default(false)
   armies        Int             @default(1)
+  points        Int             @default(200)
   gameSession   GameSession     @relation(fields: [gameSessionId], references: [id])
   owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])
   template      CountryTemplate @relation(fields: [templateId], references: [id])
@@ -121,6 +125,7 @@ model PlayerAnswer {
   matchQuestionId String
   playerId        String
   answer          Float
+  answeredAt      DateTime      @default(now())
   matchQuestion   MatchQuestion @relation(fields: [matchQuestionId], references: [id])
   player          PlayerInGame  @relation(fields: [playerId], references: [id])
 
@@ -136,11 +141,20 @@ model WarAttack {
   isActive      Boolean   @default(true)
   expiresAt     DateTime?
 
+  // Snapshot of who was right on the most recent MC round (overwritten each
+  // siege round). Drives the reveal banner on clients.
+  lastAttackerCorrect Boolean?
+  lastDefenderCorrect Boolean?
+
   // Tie-breaker (used when both got the multiple-choice question right)
   tieQuestionId      Int?
   tieExpiresAt       DateTime?
   tieAttackerAnswer  Float?
   tieDefenderAnswer  Float?
+  // Time spent thinking, in milliseconds since the tie phase started.
+  // Used both as a tiebreak (faster wins on equal diffs) and for display.
+  tieAttackerTimeMs  Int?
+  tieDefenderTimeMs  Int?
 
   gameSession   GameSession  @relation(fields: [gameSessionId], references: [id])
   attacker      PlayerInGame @relation("attacker", fields: [attackerId], references: [id])

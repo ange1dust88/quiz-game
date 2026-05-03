@@ -2,12 +2,24 @@
 
 import { prisma } from "@/app/lib/prisma";
 import type { Prisma } from "@/app/generated/prisma/client";
+import {
+  computePickOrder,
+  computeTieResult,
+  rankAnswers,
+  territoriesForPlace,
+  warEndReason,
+  winnerByLands,
+} from "./gameLogic";
 
 const PICK_TIMER_MS = 15000;
 const CAPITAL_TIMER_MS = 20000;
+const QUESTION_TIMER_MS = 15000;
 const PHASE_DELAY_MS = 3500;
 const WAR_MC_TIMER_MS = 15000;
-const WAR_TIE_TIMER_MS = 10000;
+const WAR_TIE_TIMER_MS = 15000;
+const WAR_TURN_TIMER_MS = 20000;
+const MAX_WAR_ROUNDS =
+  process.env.NODE_ENV === "production" ? 5 : 2;
 
 async function logEvent(
   sessionId: string,
@@ -46,7 +58,7 @@ export async function claimCapital(
       templateId: template.id,
       ownerId: null,
     },
-    data: { ownerId: playerId, isCapital: true, armies: 3 },
+    data: { ownerId: playerId, isCapital: true, armies: 3, points: 1000 },
   });
   if (claim.count === 0) return;
 
@@ -155,6 +167,9 @@ async function capture(
         stage: "war",
         pickExpiresAt: null,
         turnIndex: leaderIndex,
+        warTurnExpiresAt: new Date(Date.now() + WAR_TURN_TIMER_MS),
+        warTurns: 0,
+        winnerId: null,
       },
     });
     return;
@@ -210,6 +225,72 @@ export async function advanceTurnAndStage(sessionId: string) {
     newStage = "war";
   }
 
+  // War-end checks: this advance is consuming a war turn.
+  if (session.stage === "war") {
+    const landsCount = new Map<string, number>();
+    const points = new Map<string, number>();
+    for (const c of allCountries) {
+      if (!c.ownerId) continue;
+      landsCount.set(c.ownerId, (landsCount.get(c.ownerId) ?? 0) + 1);
+      points.set(c.ownerId, (points.get(c.ownerId) ?? 0) + c.points);
+    }
+    const playersWithLandCount = session.players.filter(
+      (p) => (landsCount.get(p.id) ?? 0) > 0,
+    ).length;
+    const newWarTurns = (session.warTurns ?? 0) + 1;
+    const reason = warEndReason(
+      newWarTurns,
+      totalPlayers,
+      MAX_WAR_ROUNDS,
+      playersWithLandCount,
+    );
+
+    if (reason !== null) {
+      // Winner is the player with most points (alive players only when
+      // we're in sole_survivor — there's only one anyway, but keep the same
+      // pattern for consistency).
+      const winner =
+        reason === "sole_survivor"
+          ? winnerByLands(
+              session.players.filter((p) => (landsCount.get(p.id) ?? 0) > 0),
+              points,
+            )
+          : winnerByLands(session.players, points);
+
+      await prisma.gameSession.update({
+        where: { id: sessionId },
+        data: {
+          status: "completed",
+          stage: "ended",
+          winnerId: winner?.id ?? null,
+          warTurns: newWarTurns,
+          warTurnExpiresAt: null,
+          capitalExpiresAt: null,
+          pickExpiresAt: null,
+          nextQuestionAt: null,
+          currentAttackId: null,
+        },
+      });
+      await logEvent(sessionId, "game_over", winner?.id ?? null, {
+        reason,
+        pointsByWinner: points.get(winner?.id ?? "") ?? 0,
+        landsByWinner: landsCount.get(winner?.id ?? "") ?? 0,
+      });
+      return;
+    }
+
+    await prisma.gameSession.update({
+      where: { id: sessionId },
+      data: {
+        turnIndex: nextIndex,
+        warTurns: newWarTurns,
+        warTurnExpiresAt: new Date(Date.now() + WAR_TURN_TIMER_MS),
+        capitalExpiresAt: null,
+      },
+    });
+    return;
+  }
+
   await prisma.gameSession.update({
     where: { id: sessionId },
     data: {
@@ -221,6 +302,10 @@ export async function advanceTurnAndStage(sessionId: string) {
       capitalExpiresAt:
         newStage === "capitals"
           ? new Date(Date.now() + CAPITAL_TIMER_MS)
+          : null,
+      warTurnExpiresAt:
+        newStage === "war"
+          ? new Date(Date.now() + WAR_TURN_TIMER_MS)
           : null,
     },
   });
@@ -255,7 +340,7 @@ export async function forceAutoCapital(sessionId: string) {
   const random = free[Math.floor(Math.random() * free.length)];
   const update = await prisma.matchCountry.updateMany({
     where: { id: random.id, ownerId: null },
-    data: { ownerId: player.id, isCapital: true, armies: 3 },
+    data: { ownerId: player.id, isCapital: true, armies: 3, points: 1000 },
   });
   if (update.count === 0) return;
 
@@ -299,7 +384,7 @@ export async function startQuestion(sessionId: string) {
       gameSessionId: sessionId,
       questionId: question.id,
       isActive: true,
-      expiresAt: new Date(Date.now() + 10000),
+      expiresAt: new Date(Date.now() + QUESTION_TIMER_MS),
     },
   });
 }
@@ -322,7 +407,9 @@ export async function submitAnswer(
       },
     },
     create: { matchQuestionId: activeQuestion.id, playerId, answer },
-    update: { answer },
+    // Refresh answeredAt on resubmit so the latest answer's timing wins
+    // tiebreaks (matches how the user perceives "submitting" their answer).
+    update: { answer, answeredAt: new Date() },
   });
 
   const session = await prisma.gameSession.findUnique({
@@ -358,10 +445,16 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
   if (!matchQuestion) return;
 
   const correctAnswer = matchQuestion.question.answer;
+  const questionStartMs =
+    matchQuestion.expiresAt.getTime() - QUESTION_TIMER_MS;
 
-  const sorted = matchQuestion.answers.sort(
-    (a, b) =>
-      Math.abs(a.answer - correctAnswer) - Math.abs(b.answer - correctAnswer),
+  // Rank by closeness, ties broken by who submitted first.
+  const sorted = rankAnswers(
+    matchQuestion.answers.map((a) => ({
+      ...a,
+      answeredAtMs: a.answeredAt.getTime(),
+    })),
+    correctAnswer,
   );
 
   const session = await prisma.gameSession.findUnique({
@@ -371,12 +464,6 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
   if (!session) return;
   const totalPlayers = session.players.length;
 
-  const territoriesForPlace = (place: number) => {
-    if (totalPlayers === 2) return place === 1 ? 1 : 0;
-    return place === 1 ? 2 : place === 2 ? 1 : 0;
-  };
-
-  const pickOrder: string[] = [];
   type ResultEntry = {
     playerId: string;
     nickname: string;
@@ -384,17 +471,16 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
     diff: number;
     place: number;
     territories: number;
+    correctAnswer: number;
+    timeMs: number | null;
   };
+  let pickOrder: string[] = [];
   let results: ResultEntry[] = [];
 
   if (sorted.length === 0 && totalPlayers > 0) {
     // Nobody answered — randomly pick a "lucky winner" so the game keeps moving.
     const lucky = session.players[Math.floor(Math.random() * totalPlayers)];
-    if (totalPlayers === 2) {
-      pickOrder.push(lucky.id);
-    } else if (totalPlayers >= 3) {
-      pickOrder.push(lucky.id, lucky.id);
-    }
+    pickOrder = computePickOrder([lucky.id], totalPlayers);
     const others = session.players.filter((p) => p.id !== lucky.id);
     results = [
       {
@@ -403,7 +489,9 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
         answer: null,
         diff: 0,
         place: 1,
-        territories: territoriesForPlace(1),
+        territories: territoriesForPlace(1, totalPlayers),
+        correctAnswer,
+        timeMs: null,
       },
       ...others.map((p, i) => ({
         playerId: p.id,
@@ -412,27 +500,41 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
         diff: 0,
         place: i + 2,
         territories: 0,
+        correctAnswer,
+        timeMs: null,
       })),
     ];
   } else {
-    if (totalPlayers === 2) {
-      if (sorted[0]) pickOrder.push(sorted[0].playerId);
-    } else if (totalPlayers >= 3) {
-      if (sorted[0]) {
-        pickOrder.push(sorted[0].playerId);
-        pickOrder.push(sorted[0].playerId);
-      }
-      if (sorted[1]) pickOrder.push(sorted[1].playerId);
-    }
+    pickOrder = computePickOrder(
+      sorted.map((a) => a.playerId),
+      totalPlayers,
+    );
 
-    results = sorted.map((a, i) => ({
+    const ranked = sorted.map((a, i) => ({
       playerId: a.playerId,
       nickname: a.player.profile.nickname,
       answer: a.answer,
       diff: Math.abs(a.answer - correctAnswer),
       place: i + 1,
-      territories: territoriesForPlace(i + 1),
+      territories: territoriesForPlace(i + 1, totalPlayers),
+      correctAnswer,
+      timeMs: Math.max(0, a.answeredAtMs - questionStartMs),
     }));
+    // Append players who never submitted so the reveal screen lists everyone.
+    const answered = new Set(ranked.map((r) => r.playerId));
+    const missing = session.players
+      .filter((p) => !answered.has(p.id))
+      .map((p, j) => ({
+        playerId: p.id,
+        nickname: p.profile.nickname,
+        answer: null,
+        diff: 0,
+        place: ranked.length + j + 1,
+        territories: 0,
+        correctAnswer,
+        timeMs: null,
+      }));
+    results = [...ranked, ...missing];
   }
 
   await prisma.matchQuestion.update({
@@ -573,7 +675,7 @@ export async function attackTerritory(
 
   await prisma.gameSession.update({
     where: { id: sessionId },
-    data: { currentAttackId: attack.id },
+    data: { currentAttackId: attack.id, warTurnExpiresAt: null },
   });
 
   await logEvent(sessionId, "attack_started", attackerId, {
@@ -616,12 +718,25 @@ export async function submitWarTieBreaker(
   if (!attack || !attack.isActive || !attack.tieQuestionId) return;
   if (playerId !== attack.attackerId && playerId !== attack.defenderId) return;
 
+  // Time spent on the tie question, in ms since the tie phase started.
+  // tieExpiresAt is still set here (resolveTiePhase hasn't atomically cleared
+  // it yet), so we can recover the start instant from the deadline.
+  const tieStartMs = attack.tieExpiresAt
+    ? attack.tieExpiresAt.getTime() - WAR_TIE_TIMER_MS
+    : Date.now();
+  // Clamp into [0, WAR_TIE_TIMER_MS] so timezone roundtripping or auto-submit
+  // edge cases never produce a nonsensical value (e.g. 1.7e12 ms).
+  const elapsedMs = Math.max(
+    0,
+    Math.min(WAR_TIE_TIMER_MS, Date.now() - tieStartMs),
+  );
+
   await prisma.warAttack.update({
     where: { id: attackId },
     data:
       playerId === attack.attackerId
-        ? { tieAttackerAnswer: answer }
-        : { tieDefenderAnswer: answer },
+        ? { tieAttackerAnswer: answer, tieAttackerTimeMs: elapsedMs }
+        : { tieDefenderAnswer: answer, tieDefenderTimeMs: elapsedMs },
   });
 
   const fresh = await prisma.warAttack.findUnique({
@@ -655,6 +770,16 @@ async function resolveMcPhase(attackId: string) {
   const defenderCorrect =
     attack.answers.find((a) => a.playerId === attack.defenderId)?.isCorrect ??
     false;
+
+  // Persist the per-side correctness so the reveal banner on every client
+  // can show "X answered correctly" without separately fetching answers.
+  await prisma.warAttack.update({
+    where: { id: attackId },
+    data: {
+      lastAttackerCorrect: attackerCorrect,
+      lastDefenderCorrect: defenderCorrect,
+    },
+  });
 
   if (attackerCorrect && defenderCorrect) {
     await startTieBreaker(attackId);
@@ -713,24 +838,14 @@ async function resolveTiePhase(attackId: string) {
   });
   if (!attack || !attack.tieQuestion) return;
 
-  const correct = attack.tieQuestion.answer;
-  const attackerDiff =
-    attack.tieAttackerAnswer === null
-      ? Number.POSITIVE_INFINITY
-      : Math.abs(attack.tieAttackerAnswer - correct);
-  const defenderDiff =
-    attack.tieDefenderAnswer === null
-      ? Number.POSITIVE_INFINITY
-      : Math.abs(attack.tieDefenderAnswer - correct);
-
-  if (attackerDiff === Number.POSITIVE_INFINITY && defenderDiff === Number.POSITIVE_INFINITY) {
-    await endAttack(attack, "no_change");
-  } else if (attackerDiff < defenderDiff) {
-    await endAttack(attack, "attacker_won");
-  } else {
-    // Tie or defender closer — defender holds
-    await endAttack(attack, "defender_held");
-  }
+  const outcome = computeTieResult(
+    attack.tieQuestion.answer,
+    attack.tieAttackerAnswer,
+    attack.tieDefenderAnswer,
+    attack.tieAttackerTimeMs,
+    attack.tieDefenderTimeMs,
+  );
+  await endAttack(attack, outcome);
 }
 
 type AttackOutcome = "attacker_won" | "defender_held" | "no_change";
@@ -752,8 +867,8 @@ async function endAttack(
   if (!country) return;
 
   if (outcome === "attacker_won") {
-    if (country.armies > 1) {
-      // Damaged but didn't fall.
+    if (country.isCapital && country.armies > 1) {
+      // Capital damaged but still standing — siege continues.
       await prisma.matchCountry.update({
         where: { id: attack.countryId },
         data: { armies: { decrement: 1 } },
@@ -766,9 +881,11 @@ async function endAttack(
           country: country.template.name,
           defenderId: attack.defenderId,
           remainingHp: country.armies - 1,
-          isCapital: country.isCapital,
+          isCapital: true,
         },
       );
+      await continueAttack(attack.id);
+      return; // Do NOT finalize — attack stays live.
     } else if (country.isCapital) {
       // Capital falls — defender's whole empire transfers.
       const defenderLands = await prisma.matchCountry.findMany({
@@ -777,12 +894,24 @@ async function endAttack(
           ownerId: attack.defenderId,
         },
       });
+      // The captured capital becomes a regular territory (HP resets, but
+      // its point value stays — capturing a capital is the prize).
+      await prisma.matchCountry.update({
+        where: { id: attack.countryId },
+        data: {
+          ownerId: attack.attackerId,
+          isCapital: false,
+          armies: 1,
+        },
+      });
+      // Remaining defender territories transfer ownership but keep their
+      // points (any defence bonuses are tied to the territory, not the player).
       await prisma.matchCountry.updateMany({
         where: {
           gameSessionId: attack.gameSessionId,
           ownerId: attack.defenderId,
         },
-        data: { ownerId: attack.attackerId, isCapital: false, armies: 1 },
+        data: { ownerId: attack.attackerId },
       });
       await logEvent(
         attack.gameSessionId,
@@ -805,15 +934,16 @@ async function endAttack(
       });
     }
   } else if (outcome === "defender_held") {
+    // Successful defence — territory gains +100 points (HP unchanged).
     const updated = await prisma.matchCountry.update({
       where: { id: attack.countryId },
-      data: { armies: { increment: 1 } },
-      include: { template: true },
+      data: { points: { increment: 100 } },
     });
     await logEvent(attack.gameSessionId, "attack_held", attack.defenderId, {
-      country: updated.template.name,
+      country: country.template.name,
       attackerId: attack.attackerId,
-      newHp: updated.armies,
+      hp: country.armies,
+      newPoints: updated.points,
     });
   } else {
     await logEvent(
@@ -844,6 +974,29 @@ async function endAttack(
   await advanceTurnAndStage(attack.gameSessionId);
 }
 
+async function continueAttack(attackId: string) {
+  // Pick a fresh MC question, clear answers + tie state, restart MC phase.
+  const count = await prisma.warQuestion.count();
+  if (count === 0) return;
+  const question = await prisma.warQuestion.findFirst({
+    skip: Math.floor(Math.random() * count),
+  });
+  if (!question) return;
+
+  await prisma.warAnswer.deleteMany({ where: { attackId } });
+  await prisma.warAttack.update({
+    where: { id: attackId },
+    data: {
+      questionId: question.id,
+      expiresAt: new Date(Date.now() + WAR_MC_TIMER_MS),
+      tieQuestionId: null,
+      tieExpiresAt: null,
+      tieAttackerAnswer: null,
+      tieDefenderAnswer: null,
+    },
+  });
+}
+
 export async function forceResolveAttack(sessionId: string) {
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
@@ -863,6 +1016,77 @@ export async function forceResolveAttack(sessionId: string) {
     if (!attack.expiresAt || attack.expiresAt > nowDate) return;
     await resolveMcPhase(attack.id);
   }
+}
+
+export async function forceAutoAttack(sessionId: string) {
+  // Atomic claim: only one client wins, even if all fire simultaneously.
+  const claim = await prisma.gameSession.updateMany({
+    where: {
+      id: sessionId,
+      stage: "war",
+      currentAttackId: null,
+      warTurnExpiresAt: { not: null, lte: new Date() },
+    },
+    data: { warTurnExpiresAt: null },
+  });
+  if (claim.count === 0) return;
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    include: { players: true },
+  });
+  if (!session) return;
+  const attacker = session.players[session.turnIndex];
+  if (!attacker) return;
+
+  const enemies = await getEnemyNeighbors(sessionId, attacker.id);
+  if (enemies.length === 0) {
+    // Player has no enemy neighbours — skip turn
+    await advanceTurnAndStage(sessionId);
+    return;
+  }
+
+  const target = enemies[Math.floor(Math.random() * enemies.length)];
+  if (!target.ownerId) {
+    await advanceTurnAndStage(sessionId);
+    return;
+  }
+
+  const wqCount = await prisma.warQuestion.count();
+  if (wqCount === 0) {
+    await advanceTurnAndStage(sessionId);
+    return;
+  }
+  const question = await prisma.warQuestion.findFirst({
+    skip: Math.floor(Math.random() * wqCount),
+  });
+  if (!question) {
+    await advanceTurnAndStage(sessionId);
+    return;
+  }
+
+  const attack = await prisma.warAttack.create({
+    data: {
+      gameSessionId: sessionId,
+      attackerId: attacker.id,
+      defenderId: target.ownerId,
+      countryId: target.id,
+      isActive: true,
+      questionId: question.id,
+      expiresAt: new Date(Date.now() + WAR_MC_TIMER_MS),
+    },
+  });
+
+  await prisma.gameSession.update({
+    where: { id: sessionId },
+    data: { currentAttackId: attack.id },
+  });
+
+  await logEvent(sessionId, "attack_started", attacker.id, {
+    country: target.template.name,
+    defenderId: target.ownerId,
+    auto: true,
+  });
 }
 
 async function getEnemyNeighbors(sessionId: string, playerId: string) {
@@ -888,6 +1112,108 @@ async function getEnemyNeighbors(sessionId: string, playerId: string) {
       gameSessionId: sessionId,
       templateId: { in: [...neighborIds] },
       ownerId: { not: null, notIn: [playerId] },
+    },
+    include: { template: true },
+  });
+}
+
+// DEV-ONLY HELPERS
+// These are gated behind NODE_ENV !== "production" so they're inert in prod.
+
+export async function devSkipStage(
+  sessionId: string,
+  target: "expand" | "war",
+) {
+  if (process.env.NODE_ENV === "production") return;
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    include: { players: true },
+  });
+  if (!session || session.players.length === 0) return;
+
+  // 1. Ensure every player has a capital. Assign random unowned countries
+  //    to anyone missing one.
+  const allCountries = await prisma.matchCountry.findMany({
+    where: { gameSessionId: sessionId },
+  });
+
+  for (const player of session.players) {
+    const has = allCountries.some(
+      (c) => c.ownerId === player.id && c.isCapital,
+    );
+    if (has) continue;
+    const free = allCountries.filter((c) => !c.ownerId);
+    if (free.length === 0) break;
+    const random = free[Math.floor(Math.random() * free.length)];
+    await prisma.matchCountry.updateMany({
+      where: { id: random.id, ownerId: null },
+      data: { ownerId: player.id, isCapital: true, armies: 3, points: 1000 },
+    });
+    random.ownerId = player.id;
+    random.isCapital = true;
+  }
+
+  if (target === "expand") {
+    await prisma.gameSession.update({
+      where: { id: sessionId },
+      data: {
+        stage: "expand",
+        capitalExpiresAt: null,
+        pickOrder: [],
+        picksRemaining: 0,
+        pickExpiresAt: null,
+        nextQuestionAt: new Date(Date.now() + 1000),
+      },
+    });
+    return;
+  }
+
+  // target === "war": distribute remaining unowned territories round-robin.
+  const fresh = await prisma.matchCountry.findMany({
+    where: { gameSessionId: sessionId },
+  });
+  const free = fresh.filter((c) => !c.ownerId);
+  for (let i = 0; i < free.length; i++) {
+    const player = session.players[i % session.players.length];
+    await prisma.matchCountry.update({
+      where: { id: free[i].id },
+      data: { ownerId: player.id },
+    });
+  }
+
+  // Pick leader (most lands) as the first attacker.
+  const counts = new Map<string, number>();
+  const finalLands = await prisma.matchCountry.findMany({
+    where: { gameSessionId: sessionId },
+  });
+  for (const c of finalLands) {
+    if (c.ownerId) counts.set(c.ownerId, (counts.get(c.ownerId) ?? 0) + 1);
+  }
+  let leaderIndex = 0;
+  let maxLands = -1;
+  session.players.forEach((p, i) => {
+    const lands = counts.get(p.id) ?? 0;
+    if (lands > maxLands) {
+      maxLands = lands;
+      leaderIndex = i;
+    }
+  });
+
+  await prisma.gameSession.update({
+    where: { id: sessionId },
+    data: {
+      stage: "war",
+      turnIndex: leaderIndex,
+      pickOrder: [],
+      picksRemaining: 0,
+      pickExpiresAt: null,
+      nextQuestionAt: null,
+      capitalExpiresAt: null,
+      currentAttackId: null,
+      warTurnExpiresAt: new Date(Date.now() + WAR_TURN_TIMER_MS),
+      warTurns: 0,
+      winnerId: null,
     },
   });
 }
