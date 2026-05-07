@@ -21,8 +21,7 @@ export async function startGame(formData: FormData) {
   if (currentPlayer.role !== "host")
     throw new Error("Only host can start the game");
 
-  if (session.players.length < 1)
-    // change in prod
+  if (session.players.length < 2)
     throw new Error("Not enough players to start the game");
 
   await prisma.gameSession.update({

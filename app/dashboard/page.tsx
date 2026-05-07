@@ -41,22 +41,14 @@ export default async function Dashboard() {
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Link
-              href="/analytics"
+          <form action={logout}>
+            <button
+              type="submit"
               className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors px-4 py-2 rounded-lg text-sm"
             >
-              Analytics
-            </Link>
-            <form action={logout}>
-              <button
-                type="submit"
-                className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors px-4 py-2 rounded-lg text-sm"
-              >
-                Logout
-              </button>
-            </form>
-          </div>
+              Logout
+            </button>
+          </form>
         </header>
 
         {showReminder && <ProfileReminderBanner />}

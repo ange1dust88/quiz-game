@@ -136,7 +136,7 @@ export function LobbyContent({
   const players = session?.players ?? [];
   const me = session?.players?.find((p) => p.profileId === currentUser.id);
   const isHost = me?.role === "host";
-  const canStart = players.length >= 1;
+  const canStart = players.length >= 2;
 
   if (session?.status === "completed") {
     return (

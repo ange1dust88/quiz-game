@@ -15,6 +15,7 @@ import {
   winnerByLands,
 } from "./gameLogic";
 import { capitalParamsForChoice } from "@/app/lib/matchChoices";
+import { MAX_WAR_ROUNDS } from "@/app/lib/constants";
 
 // Reads a player's stored choice for a given key, or null if they haven't
 // picked one (defaults are applied by the caller via `capitalParamsForChoice`
@@ -36,8 +37,6 @@ const PHASE_DELAY_MS = 3500;
 const WAR_MC_TIMER_MS = 15000;
 const WAR_TIE_TIMER_MS = 15000;
 const WAR_TURN_TIMER_MS = 20000;
-const MAX_WAR_ROUNDS =
-  process.env.NODE_ENV === "production" ? 5 : 2;
 
 async function logEvent(
   sessionId: string,
@@ -1263,111 +1262,3 @@ async function getEnemyNeighbors(sessionId: string, playerId: string) {
   });
 }
 
-// DEV-ONLY HELPERS
-// These are gated behind NODE_ENV !== "production" so they're inert in prod.
-
-export async function devSkipStage(
-  sessionId: string,
-  target: "expand" | "war",
-) {
-  if (process.env.NODE_ENV === "production") return;
-
-  const session = await prisma.gameSession.findUnique({
-    where: { id: sessionId },
-    include: { players: true },
-  });
-  if (!session || session.players.length === 0) return;
-
-  // 1. Ensure every player has a capital. Assign random unowned countries
-  //    to anyone missing one.
-  const allCountries = await prisma.matchCountry.findMany({
-    where: { gameSessionId: sessionId },
-  });
-
-  for (const player of session.players) {
-    const has = allCountries.some(
-      (c) => c.ownerId === player.id && c.isCapital,
-    );
-    if (has) continue;
-    const free = allCountries.filter((c) => !c.ownerId);
-    if (free.length === 0) break;
-    const random = free[Math.floor(Math.random() * free.length)];
-    const choice = await getPlayerChoice(player.id, "capital_style");
-    const capitalParams = capitalParamsForChoice(choice);
-    await prisma.matchCountry.updateMany({
-      where: { id: random.id, ownerId: null },
-      data: {
-        ownerId: player.id,
-        isCapital: true,
-        armies: capitalParams.armies,
-        maxArmies: capitalParams.armies,
-        points: capitalParams.points,
-      },
-    });
-    random.ownerId = player.id;
-    random.isCapital = true;
-  }
-
-  if (target === "expand") {
-    await prisma.gameSession.update({
-      where: { id: sessionId },
-      data: {
-        stage: "expand",
-        capitalExpiresAt: null,
-        pickOrder: [],
-        picksRemaining: 0,
-        pickExpiresAt: null,
-        nextQuestionAt: new Date(Date.now() + 1000),
-      },
-    });
-    return;
-  }
-
-  // target === "war": distribute remaining unowned territories round-robin.
-  const fresh = await prisma.matchCountry.findMany({
-    where: { gameSessionId: sessionId },
-  });
-  const free = fresh.filter((c) => !c.ownerId);
-  for (let i = 0; i < free.length; i++) {
-    const player = session.players[i % session.players.length];
-    await prisma.matchCountry.update({
-      where: { id: free[i].id },
-      data: { ownerId: player.id },
-    });
-  }
-
-  // Pick leader (most lands) as the first attacker.
-  const counts = new Map<string, number>();
-  const finalLands = await prisma.matchCountry.findMany({
-    where: { gameSessionId: sessionId },
-  });
-  for (const c of finalLands) {
-    if (c.ownerId) counts.set(c.ownerId, (counts.get(c.ownerId) ?? 0) + 1);
-  }
-  let leaderIndex = 0;
-  let maxLands = -1;
-  session.players.forEach((p, i) => {
-    const lands = counts.get(p.id) ?? 0;
-    if (lands > maxLands) {
-      maxLands = lands;
-      leaderIndex = i;
-    }
-  });
-
-  await prisma.gameSession.update({
-    where: { id: sessionId },
-    data: {
-      stage: "war",
-      turnIndex: leaderIndex,
-      pickOrder: [],
-      picksRemaining: 0,
-      pickExpiresAt: null,
-      nextQuestionAt: null,
-      capitalExpiresAt: null,
-      currentAttackId: null,
-      warTurnExpiresAt: new Date(Date.now() + WAR_TURN_TIMER_MS),
-      warTurns: 0,
-      winnerId: null,
-    },
-  });
-}

@@ -4,6 +4,7 @@ import { prisma } from "@/app/lib/prisma";
 import { cookies } from "next/headers";
 import { decrypt } from "@/app/lib/session";
 import { LobbyContent } from "./LobbyContent";
+import { MAX_WAR_ROUNDS } from "@/app/lib/constants";
 
 const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
@@ -50,11 +51,10 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
   }
 
   const totalPlayers = session.players.length;
-  const maxWarRounds = process.env.NODE_ENV === "production" ? 5 : 2;
   const warRound =
     totalPlayers > 0
       ? Math.min(
-          maxWarRounds,
+          MAX_WAR_ROUNDS,
           Math.floor(session.warTurns / totalPlayers) + 1,
         )
       : 1;
@@ -65,7 +65,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     stage: session.stage,
     winnerId: session.winnerId,
     warRound,
-    maxWarRounds,
+    maxWarRounds: MAX_WAR_ROUNDS,
     players: session.players.map((p) => ({
       id: p.id,
       profileId: p.profileId,
