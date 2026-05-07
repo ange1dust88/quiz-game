@@ -18,6 +18,7 @@ type Country = {
   ownerId: string | null;
   isCapital: boolean;
   armies: number;
+  maxArmies: number;
   points: number;
   template: { id: number; name: string };
 };
@@ -169,7 +170,12 @@ export default function PlayerPanel({
                     {code} · {points.toLocaleString()} pts · {lands}{" "}
                     {lands === 1 ? "land" : "lands"}
                   </span>
-                  {capital && <CapitalHp hp={capital.armies} />}
+                  {capital && (
+                    <CapitalHp
+                      hp={capital.armies}
+                      maxHp={capital.maxArmies}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -196,15 +202,16 @@ export default function PlayerPanel({
   );
 }
 
-const MAX_CAPITAL_HP = 3;
-
-function CapitalHp({ hp }: { hp: number }) {
+function CapitalHp({ hp, maxHp }: { hp: number; maxHp: number }) {
+  // Render exactly maxHp dots so a 2-HP "risky" capital looks full at 2/2,
+  // and a damaged 3-HP standard capital correctly shows missing dots.
+  const total = Math.max(1, maxHp);
   return (
     <span
       className="inline-flex items-center gap-0.5"
-      title={`Capital HP: ${hp}/${MAX_CAPITAL_HP}`}
+      title={`Capital HP: ${hp}/${total}`}
     >
-      {Array.from({ length: MAX_CAPITAL_HP }).map((_, i) => (
+      {Array.from({ length: total }).map((_, i) => (
         <span
           key={i}
           className={`w-1.5 h-1.5 rounded-full ${

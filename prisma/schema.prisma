@@ -89,8 +89,26 @@ model PlayerInGame {
   attacksAsDefender  WarAttack[] @relation("defender")
   warAnswers         WarAnswer[]
   events             MatchEvent[]
+  choices            MatchChoice[]
 
   @@unique([gameSessionId, profileId])
+}
+
+// Pre-match strategic choices — one row per (player, choice key).
+// Captures the player's selection on a binary card (e.g. capital style) so
+// downstream game logic can read it and analytics can correlate it with
+// demographics / behaviour.
+model MatchChoice {
+  id             String       @id @default(cuid())
+  playerInGameId String
+  key            String
+  value          String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  player         PlayerInGame @relation(fields: [playerInGameId], references: [id])
+
+  @@unique([playerInGameId, key])
 }
 
 model CountryTemplate {
@@ -108,6 +126,10 @@ model MatchCountry {
   ownerId       String?
   isCapital     Boolean         @default(false)
   armies        Int             @default(1)
+  // Max HP this territory can have. Mostly relevant for capitals where the
+  // player's pre-match choice (standard / risky) sets a different ceiling.
+  // Used by the HP-dot UI to render "current / max" without guessing.
+  maxArmies     Int             @default(1)
   points        Int             @default(200)
   gameSession   GameSession     @relation(fields: [gameSessionId], references: [id])
   owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])

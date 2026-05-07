@@ -4,6 +4,9 @@ import { getProfileSafe } from "../lib/auth";
 import { logout } from "../login/actions";
 import { createRoom, joinRoom } from "./actions";
 import CreateRoomButton from "./CreateRoomButton";
+import ProfileReminderBanner, {
+  hasDemographicData,
+} from "../components/ui/ProfileReminderBanner";
 
 export default async function Dashboard() {
   const profile = await getProfileSafe();
@@ -20,6 +23,7 @@ export default async function Dashboard() {
   );
 
   const initial = (profile?.nickname ?? "?").charAt(0).toUpperCase();
+  const showReminder = profile ? !hasDemographicData(profile) : false;
 
   return (
     <div className="min-h-screen text-white">
@@ -54,6 +58,8 @@ export default async function Dashboard() {
             </form>
           </div>
         </header>
+
+        {showReminder && <ProfileReminderBanner />}
 
         <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex items-center gap-6">
           <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-3xl font-bold shrink-0">

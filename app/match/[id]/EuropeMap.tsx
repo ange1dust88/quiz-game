@@ -230,11 +230,17 @@ export default function EuropeMap({
 
   // Compute capital marker positions (path centroids) once paths are mounted.
   const [capitalMarkers, setCapitalMarkers] = useState<
-    { svgId: string; cx: number; cy: number; hp: number }[]
+    { svgId: string; cx: number; cy: number; hp: number; maxHp: number }[]
   >([]);
   useEffect(() => {
     if (!svgRef.current) return;
-    const next: { svgId: string; cx: number; cy: number; hp: number }[] = [];
+    const next: {
+      svgId: string;
+      cx: number;
+      cy: number;
+      hp: number;
+      maxHp: number;
+    }[] = [];
     for (const c of countries) {
       if (!c.isCapital) continue;
       const el = svgRef.current.querySelector(
@@ -247,6 +253,7 @@ export default function EuropeMap({
         cx: bbox.x + bbox.width / 2,
         cy: bbox.y + bbox.height / 2,
         hp: c.armies ?? 3,
+        maxHp: c.maxArmies ?? 3,
       });
     }
     setCapitalMarkers(next);
@@ -667,8 +674,11 @@ export default function EuropeMap({
         <circle cx="521" cy="266.6" id="2"></circle>
 
         {capitalMarkers.map((m) => {
+          // Colour reflects damage relative to the capital's own max HP, so a
+          // risky 2/2 capital reads as full (white) just like a standard 3/3.
+          const damage = m.maxHp - m.hp;
           const ringColor =
-            m.hp >= 3 ? "#ffffff" : m.hp === 2 ? "#fbbf24" : "#ef4444";
+            damage <= 0 ? "#ffffff" : damage === 1 ? "#fbbf24" : "#ef4444";
           return (
             <g key={m.svgId} pointerEvents="none">
               <circle

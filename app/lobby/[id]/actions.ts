@@ -2,6 +2,7 @@
 
 import { getProfile } from "@/app/lib/auth";
 import { prisma } from "@/app/lib/prisma";
+import { isValidChoice } from "@/app/lib/matchChoices";
 import { redirect } from "next/navigation";
 
 export async function startGame(formData: FormData) {
@@ -47,6 +48,36 @@ export async function initializeMap(sessionId: string) {
   }));
 
   await prisma.matchCountry.createMany({ data: countriesData });
+}
+
+export async function setMatchChoice(
+  sessionId: string,
+  key: string,
+  value: string,
+) {
+  if (!isValidChoice(key, value)) return;
+
+  const profile = await getProfile();
+  const player = await prisma.playerInGame.findUnique({
+    where: {
+      gameSessionId_profileId: {
+        gameSessionId: sessionId,
+        profileId: profile.id,
+      },
+    },
+    include: { gameSession: true },
+  });
+  if (!player) return;
+  // Choices lock once the game starts so they can't be changed mid-match.
+  if (player.gameSession.status !== "waiting") return;
+
+  await prisma.matchChoice.upsert({
+    where: {
+      playerInGameId_key: { playerInGameId: player.id, key },
+    },
+    create: { playerInGameId: player.id, key, value },
+    update: { value },
+  });
 }
 
 export async function joinGame(sessionId: string) {

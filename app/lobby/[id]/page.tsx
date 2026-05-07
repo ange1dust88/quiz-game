@@ -37,6 +37,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
           profile: {
             select: { nickname: true },
           },
+          choices: { select: { key: true, value: true } },
         },
       },
       matchMap: true,
@@ -72,6 +73,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       profile: {
         nickname: p.profile.nickname,
       },
+      choices: p.choices.map((c) => ({ key: c.key, value: c.value })),
     })),
     countries: session.matchMap.map((c) => ({
       id: c.id,

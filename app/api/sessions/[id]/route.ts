@@ -16,6 +16,7 @@ export async function GET(
             profile: {
               select: { nickname: true },
             },
+            choices: { select: { key: true, value: true } },
           },
         },
       },

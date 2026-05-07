@@ -10,6 +10,9 @@ import {
   PERSONALITY_TRAITS,
   labelOf,
 } from "@/app/lib/profileOptions";
+import ProfileReminderBanner, {
+  hasDemographicData,
+} from "@/app/components/ui/ProfileReminderBanner";
 
 export default async function ProfilePage({
   params,
@@ -27,6 +30,7 @@ export default async function ProfilePage({
 
   const viewer = await getProfileSafe();
   const isOwnProfile = viewer?.id === profile.id;
+  const showReminder = isOwnProfile && !hasDemographicData(profile);
 
   const gamesPlayed = profile.gamesPlayed;
   const gamesWon = profile.gamesWon;
@@ -68,6 +72,8 @@ export default async function ProfilePage({
             </div>
           )}
         </header>
+
+        {showReminder && <ProfileReminderBanner />}
 
         <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex items-center gap-6">
           <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-3xl font-bold shrink-0">
@@ -194,7 +200,7 @@ function PersonalInfoSection({
 
       {!hasAny ? (
         <p className="text-sm text-gray-500">
-          You haven't filled out any personal info yet.{" "}
+          You haven&apos;t filled out any personal info yet.{" "}
           <Link
             href="/settings"
             className="text-blue-400 hover:underline"

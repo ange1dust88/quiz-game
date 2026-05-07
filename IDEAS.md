@@ -42,6 +42,16 @@
   - Avg input changes по категории вопроса
   - Демография: возраст / образование / пол
   - Пока без auth-гейта (на будущее — закрыть от обычных юзеров)
+- ✅ **Pre-match choices** — в лобби карточка "Capital style":
+  - 🛡️ Standard (3 HP / 1000 pts) vs ⚔️ Risky (2 HP / 1500 pts)
+  - Одинаковый stake, разный risk profile → психометрический сигнал
+  - Хранится в новой таблице `MatchChoice (playerInGameId, key, value)` —
+    расширяемо, легко добавлять новые карточки выбора через
+    [matchChoices.ts](app/lib/matchChoices.ts)
+  - Учитывается в `claimCapital`, `forceAutoCapital`, `devSkipStage`
+  - `MatchCountry.maxArmies` — новое поле, корректно рендерит HP-точки
+    для variable max (2 vs 3)
+  - Реалтайм-синхронизация в лобби: бейджик с выбором у каждого игрока
 - ✅ **Структурированные опции в /settings** + психометрия:
   - `occupation` — был free-text, теперь preset (14 категорий: tech /
     healthcare / education / arts / science / etc.)

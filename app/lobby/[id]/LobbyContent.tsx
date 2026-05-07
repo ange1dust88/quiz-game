@@ -7,6 +7,8 @@ import { StartGameButton } from "./StartGameButton";
 import { joinGame } from "./actions";
 import { useRouter } from "next/navigation";
 import ResultsView from "./ResultsView";
+import MatchChoicesPicker from "./MatchChoicesPicker";
+import { findChoiceOption } from "@/app/lib/matchChoices";
 
 interface Player {
   id: string;
@@ -15,6 +17,7 @@ interface Player {
   profile: {
     nickname: string;
   };
+  choices: { key: string; value: string }[];
 }
 
 interface Country {
@@ -68,7 +71,16 @@ export function LobbyContent({
   useEffect(() => {
     const supabase = createClient();
 
-    const channel = supabase
+    const refetch = async () => {
+      const response = await fetch(`/api/sessions/${sessionId}`);
+      const freshSession = await response.json();
+      setSession((prev) => ({ ...prev, ...freshSession }));
+    };
+
+    // Main lobby channel — drives game start, player joins, etc. Kept on
+    // tables that are already in the Supabase realtime publication so this
+    // flow can never be blocked by a misconfigured new table.
+    const main = supabase
       .channel(`room-${sessionId}`)
       .on(
         "postgres_changes",
@@ -78,11 +90,7 @@ export function LobbyContent({
           table: "PlayerInGame",
           filter: `gameSessionId=eq.${sessionId}`,
         },
-        async () => {
-          const response = await fetch(`/api/sessions/${sessionId}`);
-          const freshSession = await response.json();
-          setSession((prev) => ({ ...prev, ...freshSession }));
-        },
+        refetch,
       )
       .on(
         "postgres_changes",
@@ -102,8 +110,26 @@ export function LobbyContent({
       )
       .subscribe();
 
+    // Separate channel for pre-match choice sync. If `MatchChoice` isn't in
+    // the realtime publication yet, only this channel fails — the main lobby
+    // flow is unaffected.
+    const choices = supabase
+      .channel(`room-${sessionId}-choices`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "MatchChoice" },
+        refetch,
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "MatchChoice" },
+        refetch,
+      )
+      .subscribe();
+
     return () => {
-      channel.unsubscribe();
+      main.unsubscribe();
+      choices.unsubscribe();
     };
   }, [sessionId, router]);
   const host = session?.players?.find((p) => p.role === "host");
@@ -162,6 +188,12 @@ export function LobbyContent({
               <div className="flex flex-col gap-2">
                 {players.map((p) => {
                   const nick = p.profile?.nickname;
+                  const capStyle = p.choices.find(
+                    (c) => c.key === "capital_style",
+                  );
+                  const opt = capStyle
+                    ? findChoiceOption("capital_style", capStyle.value)
+                    : null;
                   return (
                     <div
                       key={p.id}
@@ -182,6 +214,14 @@ export function LobbyContent({
                         {p.role === "host" && (
                           <span className="text-yellow-400 text-sm">👑</span>
                         )}
+                        {opt && (
+                          <span
+                            className="text-[10px] bg-blue-500/15 text-blue-200 border border-blue-500/30 rounded-full px-2 py-0.5"
+                            title={opt.description}
+                          >
+                            {opt.emoji} {opt.label}
+                          </span>
+                        )}
                       </span>
                       <span className="text-xs text-[#8a8a8a]">
                         {p.role === "host" ? "Host" : "Player"}
@@ -194,6 +234,20 @@ export function LobbyContent({
               <p className="text-[#888]">No players connected</p>
             )}
           </div>
+
+          {session?.status === "waiting" && me && (
+            <div className="flex flex-col gap-2">
+              <h2 className="text-lg font-semibold text-white">
+                Pre-match choices
+              </h2>
+              <MatchChoicesPicker
+                sessionId={session.id}
+                initialSelections={Object.fromEntries(
+                  me.choices.map((c) => [c.key, c.value]),
+                )}
+              />
+            </div>
+          )}
 
           {session?.status === "waiting" && isHost && (
             <>

@@ -7,7 +7,9 @@ import {
   computeTieResult,
   computeWarRound,
   computeXpEarned,
+  MAX_HOVER_TRAIL,
   rankAnswers,
+  sanitizeHoverTrail,
   territoriesForPlace,
   warEndReason,
   winnerByLands,
@@ -368,5 +370,54 @@ describe("computeEloChanges", () => {
   it("returns zero deltas for a single-player session", () => {
     const delta = computeEloChanges([{ profileId: "a", elo: 1000 }], "a");
     expect(delta.get("a")).toBe(0);
+  });
+});
+
+describe("sanitizeHoverTrail", () => {
+  it("returns empty array for non-array input", () => {
+    expect(sanitizeHoverTrail(null)).toEqual([]);
+    expect(sanitizeHoverTrail(undefined)).toEqual([]);
+    expect(sanitizeHoverTrail("FR")).toEqual([]);
+    expect(sanitizeHoverTrail(42)).toEqual([]);
+    expect(sanitizeHoverTrail({})).toEqual([]);
+  });
+
+  it("filters out non-string entries", () => {
+    expect(sanitizeHoverTrail(["FR", 42, null, "DE", undefined])).toEqual([
+      "FR",
+      "DE",
+    ]);
+  });
+
+  it("trims whitespace and drops empty/blank strings", () => {
+    expect(sanitizeHoverTrail([" FR ", "", "  ", "DE\n"])).toEqual([
+      "FR",
+      "DE",
+    ]);
+  });
+
+  it("dedupes only consecutive duplicates (back-and-forth hovers preserved)", () => {
+    expect(
+      sanitizeHoverTrail(["FR", "FR", "FR", "DE", "FR", "DE", "DE"]),
+    ).toEqual(["FR", "DE", "FR", "DE"]);
+  });
+
+  it("caps the trail at MAX_HOVER_TRAIL entries", () => {
+    // Build a trail of unique ids longer than the cap.
+    const long = Array.from({ length: MAX_HOVER_TRAIL + 25 }, (_, i) => `C${i}`);
+    expect(sanitizeHoverTrail(long).length).toBe(MAX_HOVER_TRAIL);
+    expect(sanitizeHoverTrail(long)[0]).toBe("C0");
+    expect(sanitizeHoverTrail(long)[MAX_HOVER_TRAIL - 1]).toBe(
+      `C${MAX_HOVER_TRAIL - 1}`,
+    );
+  });
+
+  it("preserves order", () => {
+    expect(sanitizeHoverTrail(["C", "A", "B", "C"])).toEqual([
+      "C",
+      "A",
+      "B",
+      "C",
+    ]);
   });
 });

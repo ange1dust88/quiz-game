@@ -9,10 +9,25 @@ import {
   computeTieResult,
   computeXpEarned,
   rankAnswers,
+  sanitizeHoverTrail,
   territoriesForPlace,
   warEndReason,
   winnerByLands,
 } from "./gameLogic";
+import { capitalParamsForChoice } from "@/app/lib/matchChoices";
+
+// Reads a player's stored choice for a given key, or null if they haven't
+// picked one (defaults are applied by the caller via `capitalParamsForChoice`
+// etc.).
+async function getPlayerChoice(
+  playerInGameId: string,
+  key: string,
+): Promise<string | null> {
+  const choice = await prisma.matchChoice.findUnique({
+    where: { playerInGameId_key: { playerInGameId, key } },
+  });
+  return choice?.value ?? null;
+}
 
 const PICK_TIMER_MS = 15000;
 const CAPITAL_TIMER_MS = 20000;
@@ -35,23 +50,6 @@ async function logEvent(
   });
 }
 
-// Cleans the client-supplied hover trail before persisting it: filters out
-// non-strings, dedupes consecutive duplicates, and caps length to keep payloads
-// bounded. Used by claim/attack actions and the capture helper.
-const MAX_HOVER_TRAIL = 50;
-function sanitizeHoverTrail(input: unknown): string[] {
-  if (!Array.isArray(input)) return [];
-  const out: string[] = [];
-  for (const v of input) {
-    if (typeof v !== "string") continue;
-    const trimmed = v.trim();
-    if (!trimmed) continue;
-    if (out[out.length - 1] === trimmed) continue;
-    out.push(trimmed);
-    if (out.length >= MAX_HOVER_TRAIL) break;
-  }
-  return out;
-}
 
 // Settle player profile stats at the end of a match. Increments win/loss
 // counts, awards XP (with level-up), and adjusts ELO. Called once per match
@@ -135,6 +133,9 @@ export async function claimCapital(
   });
   if (!template) return;
 
+  const choice = await getPlayerChoice(playerId, "capital_style");
+  const capitalParams = capitalParamsForChoice(choice);
+
   // Atomic claim: only succeeds if this country isn't owned yet.
   const claim = await prisma.matchCountry.updateMany({
     where: {
@@ -142,7 +143,13 @@ export async function claimCapital(
       templateId: template.id,
       ownerId: null,
     },
-    data: { ownerId: playerId, isCapital: true, armies: 3, points: 1000 },
+    data: {
+      ownerId: playerId,
+      isCapital: true,
+      armies: capitalParams.armies,
+      maxArmies: capitalParams.armies,
+      points: capitalParams.points,
+    },
   });
   if (claim.count === 0) return;
 
@@ -150,6 +157,7 @@ export async function claimCapital(
     country: template.name,
     auto: false,
     hovered: sanitizeHoverTrail(hoveredBeforeClick),
+    capitalStyle: choice ?? "standard",
   });
 
   await advanceTurnAndStage(sessionId);
@@ -432,15 +440,24 @@ export async function forceAutoCapital(sessionId: string) {
   if (free.length === 0) return;
 
   const random = free[Math.floor(Math.random() * free.length)];
+  const choice = await getPlayerChoice(player.id, "capital_style");
+  const capitalParams = capitalParamsForChoice(choice);
   const update = await prisma.matchCountry.updateMany({
     where: { id: random.id, ownerId: null },
-    data: { ownerId: player.id, isCapital: true, armies: 3, points: 1000 },
+    data: {
+      ownerId: player.id,
+      isCapital: true,
+      armies: capitalParams.armies,
+      maxArmies: capitalParams.armies,
+      points: capitalParams.points,
+    },
   });
   if (update.count === 0) return;
 
   await logEvent(sessionId, "capital", player.id, {
     country: random.template.name,
     auto: true,
+    capitalStyle: choice ?? "standard",
   });
 
   await advanceTurnAndStage(sessionId);
@@ -1275,9 +1292,17 @@ export async function devSkipStage(
     const free = allCountries.filter((c) => !c.ownerId);
     if (free.length === 0) break;
     const random = free[Math.floor(Math.random() * free.length)];
+    const choice = await getPlayerChoice(player.id, "capital_style");
+    const capitalParams = capitalParamsForChoice(choice);
     await prisma.matchCountry.updateMany({
       where: { id: random.id, ownerId: null },
-      data: { ownerId: player.id, isCapital: true, armies: 3, points: 1000 },
+      data: {
+        ownerId: player.id,
+        isCapital: true,
+        armies: capitalParams.armies,
+        maxArmies: capitalParams.armies,
+        points: capitalParams.points,
+      },
     });
     random.ownerId = player.id;
     random.isCapital = true;

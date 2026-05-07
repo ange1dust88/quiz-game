@@ -194,3 +194,21 @@ export function applyExperience(
   }
   return { level, experience };
 }
+
+// Cleans the client-supplied map hover trail before persisting: filters out
+// non-strings / blanks, dedupes consecutive duplicates, and caps length so
+// MatchEvent payloads stay bounded. Used by claim/attack server actions.
+export const MAX_HOVER_TRAIL = 50;
+export function sanitizeHoverTrail(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const v of input) {
+    if (typeof v !== "string") continue;
+    const trimmed = v.trim();
+    if (!trimmed) continue;
+    if (out[out.length - 1] === trimmed) continue;
+    out.push(trimmed);
+    if (out.length >= MAX_HOVER_TRAIL) break;
+  }
+  return out;
+}
