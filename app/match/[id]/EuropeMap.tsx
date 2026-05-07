@@ -94,6 +94,23 @@ export default function EuropeMap({
   const start = useRef({ x: 0, y: 0 });
   const dragging = useRef(false);
 
+  // Trail of countries the player hovered before clicking. Used as a
+  // "planning behavior" signal in the diploma analysis. Reset after each
+  // commit so a single hover trail maps to a single decision.
+  const hoverTrailRef = useRef<string[]>([]);
+  const MAX_HOVER_TRAIL_CLIENT = 50;
+  const pushHover = useCallback((svgId: string) => {
+    const trail = hoverTrailRef.current;
+    if (trail[trail.length - 1] === svgId) return;
+    if (trail.length >= MAX_HOVER_TRAIL_CLIENT) return;
+    trail.push(svgId);
+  }, []);
+  const consumeHoverTrail = useCallback(() => {
+    const out = [...hoverTrailRef.current];
+    hoverTrailRef.current = [];
+    return out;
+  }, []);
+
   useEffect(() => {
     const supabase = createClient();
 
@@ -181,6 +198,7 @@ export default function EuropeMap({
     (svgId: string, e: React.MouseEvent) => {
       const c = map[svgId];
       if (!c) return;
+      pushHover(svgId);
       const owner = c.ownerId
         ? players.find((p) => p.id === c.ownerId)
         : null;
@@ -195,7 +213,7 @@ export default function EuropeMap({
         y: e.clientY,
       });
     },
-    [map, players, playerColorMap],
+    [map, players, playerColorMap, pushHover],
   );
   const handleLeave = useCallback(() => setHovered(null), []);
 
@@ -307,17 +325,29 @@ export default function EuropeMap({
 
       if (currentStage === "capitals") {
         if (country.ownerId) return;
-        claimCapital(sessionId, svgId, playerInGame.id);
+        claimCapital(sessionId, svgId, playerInGame.id, consumeHoverTrail());
       } else if (currentStage === "expand") {
         if (country.ownerId) return;
-        claimTerritory(sessionId, svgId, playerInGame.id);
+        claimTerritory(sessionId, svgId, playerInGame.id, consumeHoverTrail());
       } else if (currentStage === "war") {
         if (!country.ownerId) return;
         if (country.ownerId === playerInGame.id) return;
-        attackTerritory(sessionId, playerInGame.id, country.id);
+        attackTerritory(
+          sessionId,
+          playerInGame.id,
+          country.id,
+          consumeHoverTrail(),
+        );
       }
     },
-    [isMyTurnNow, map, currentStage, sessionId, playerInGame.id],
+    [
+      isMyTurnNow,
+      map,
+      currentStage,
+      sessionId,
+      playerInGame.id,
+      consumeHoverTrail,
+    ],
   );
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();

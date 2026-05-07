@@ -203,9 +203,12 @@ export default function ResultsView({
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-sm font-semibold truncate">
+                      <Link
+                        href={`/profile/${encodeURIComponent(row.player.profile.nickname)}`}
+                        className="text-sm font-semibold truncate hover:text-blue-400 hover:underline transition-colors"
+                      >
                         {row.player.profile.nickname}
-                      </span>
+                      </Link>
                       {isYou && (
                         <span className="text-[10px] text-gray-500">you</span>
                       )}

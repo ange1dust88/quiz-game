@@ -3,8 +3,11 @@
 import { prisma } from "@/app/lib/prisma";
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
+  applyExperience,
+  computeEloChanges,
   computePickOrder,
   computeTieResult,
+  computeXpEarned,
   rankAnswers,
   territoriesForPlace,
   warEndReason,
@@ -32,10 +35,91 @@ async function logEvent(
   });
 }
 
+// Cleans the client-supplied hover trail before persisting it: filters out
+// non-strings, dedupes consecutive duplicates, and caps length to keep payloads
+// bounded. Used by claim/attack actions and the capture helper.
+const MAX_HOVER_TRAIL = 50;
+function sanitizeHoverTrail(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const v of input) {
+    if (typeof v !== "string") continue;
+    const trimmed = v.trim();
+    if (!trimmed) continue;
+    if (out[out.length - 1] === trimmed) continue;
+    out.push(trimmed);
+    if (out.length >= MAX_HOVER_TRAIL) break;
+  }
+  return out;
+}
+
+// Settle player profile stats at the end of a match. Increments win/loss
+// counts, awards XP (with level-up), and adjusts ELO. Called once per match
+// from the atomic end-game claim in `advanceTurnAndStage`.
+async function updatePlayerStats(sessionId: string) {
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    include: {
+      players: { include: { profile: true } },
+      matchMap: true,
+    },
+  });
+  if (!session || session.players.length === 0) return;
+
+  // Aggregate points held per player at end of match. Used for XP scaling.
+  const pointsByPlayer = new Map<string, number>();
+  for (const c of session.matchMap) {
+    if (!c.ownerId) continue;
+    pointsByPlayer.set(
+      c.ownerId,
+      (pointsByPlayer.get(c.ownerId) ?? 0) + c.points,
+    );
+  }
+
+  const winner = session.winnerId
+    ? session.players.find((p) => p.id === session.winnerId) ?? null
+    : null;
+
+  const eloDeltaByProfile = computeEloChanges(
+    session.players.map((p) => ({
+      profileId: p.profileId,
+      elo: p.profile.elo,
+    })),
+    winner?.profileId ?? null,
+  );
+
+  for (const p of session.players) {
+    const isWinner = p.id === winner?.id;
+    const xpEarned = computeXpEarned(
+      isWinner,
+      pointsByPlayer.get(p.id) ?? 0,
+    );
+    const { level, experience } = applyExperience(
+      p.profile.level,
+      p.profile.experience,
+      xpEarned,
+    );
+    const eloDelta = eloDeltaByProfile.get(p.profileId) ?? 0;
+
+    await prisma.playerProfile.update({
+      where: { id: p.profileId },
+      data: {
+        gamesPlayed: { increment: 1 },
+        gamesWon: { increment: isWinner ? 1 : 0 },
+        gamesLost: { increment: !isWinner && winner !== null ? 1 : 0 },
+        experience,
+        level,
+        elo: { increment: eloDelta },
+      },
+    });
+  }
+}
+
 export async function claimCapital(
   sessionId: string,
   svgId: string,
   playerId: string,
+  hoveredBeforeClick: string[] = [],
 ) {
   if (!sessionId || !playerId || !svgId) return;
 
@@ -65,6 +149,7 @@ export async function claimCapital(
   await logEvent(sessionId, "capital", playerId, {
     country: template.name,
     auto: false,
+    hovered: sanitizeHoverTrail(hoveredBeforeClick),
   });
 
   await advanceTurnAndStage(sessionId);
@@ -74,6 +159,7 @@ export async function claimTerritory(
   sessionId: string,
   svgId: string,
   playerId: string,
+  hoveredBeforeClick: string[] = [],
 ) {
   if (!sessionId || !playerId || !svgId) return;
 
@@ -108,14 +194,16 @@ export async function claimTerritory(
   if (freeNeighborIds.length > 0 && !freeNeighborIds.includes(template.id))
     return;
 
-  await capture(country.id, playerId, sessionId);
+  await capture(country.id, playerId, sessionId, {
+    hovered: hoveredBeforeClick,
+  });
 }
 
 async function capture(
   countryId: string,
   playerId: string,
   sessionId: string,
-  opts: { auto?: boolean } = {},
+  opts: { auto?: boolean; hovered?: string[] } = {},
 ) {
   const country = await prisma.matchCountry.update({
     where: { id: countryId },
@@ -126,6 +214,7 @@ async function capture(
   await logEvent(sessionId, "territory", playerId, {
     country: country.template.name,
     auto: opts.auto ?? false,
+    hovered: sanitizeHoverTrail(opts.hovered),
   });
 
   const session = await prisma.gameSession.findUnique({
@@ -257,8 +346,10 @@ export async function advanceTurnAndStage(sessionId: string) {
             )
           : winnerByLands(session.players, points);
 
-      await prisma.gameSession.update({
-        where: { id: sessionId },
+      // Atomic claim — guarantees the end-game block (and the stats update
+      // that follows it) runs exactly once even if two callers race here.
+      const endClaim = await prisma.gameSession.updateMany({
+        where: { id: sessionId, status: { not: "completed" } },
         data: {
           status: "completed",
           stage: "ended",
@@ -271,11 +362,14 @@ export async function advanceTurnAndStage(sessionId: string) {
           currentAttackId: null,
         },
       });
+      if (endClaim.count === 0) return;
+
       await logEvent(sessionId, "game_over", winner?.id ?? null, {
         reason,
         pointsByWinner: points.get(winner?.id ?? "") ?? 0,
         landsByWinner: landsCount.get(winner?.id ?? "") ?? 0,
       });
+      await updatePlayerStats(sessionId);
       return;
     }
 
@@ -393,11 +487,29 @@ export async function submitAnswer(
   sessionId: string,
   playerId: string,
   answer: number,
+  telemetry?: {
+    firstInputAtMs: number | null;
+    inputChangeCount: number;
+  },
 ) {
   const activeQuestion = await prisma.matchQuestion.findFirst({
     where: { gameSessionId: sessionId, isActive: true },
   });
   if (!activeQuestion) return;
+
+  // Clamp telemetry into the question window so a wonky client clock can't
+  // poison aggregates. Null means "no typing happened" (e.g. auto-submit).
+  const firstInputAtMs =
+    telemetry && telemetry.firstInputAtMs !== null
+      ? Math.max(
+          0,
+          Math.min(QUESTION_TIMER_MS, Math.round(telemetry.firstInputAtMs)),
+        )
+      : null;
+  const inputChangeCount = Math.max(
+    0,
+    Math.min(1000, Math.round(telemetry?.inputChangeCount ?? 0)),
+  );
 
   await prisma.playerAnswer.upsert({
     where: {
@@ -406,10 +518,16 @@ export async function submitAnswer(
         playerId,
       },
     },
-    create: { matchQuestionId: activeQuestion.id, playerId, answer },
+    create: {
+      matchQuestionId: activeQuestion.id,
+      playerId,
+      answer,
+      firstInputAtMs,
+      inputChangeCount,
+    },
     // Refresh answeredAt on resubmit so the latest answer's timing wins
     // tiebreaks (matches how the user perceives "submitting" their answer).
-    update: { answer, answeredAt: new Date() },
+    update: { answer, answeredAt: new Date(), firstInputAtMs, inputChangeCount },
   });
 
   const session = await prisma.gameSession.findUnique({
@@ -636,6 +754,7 @@ export async function attackTerritory(
   sessionId: string,
   attackerId: string,
   countryId: string,
+  hoveredBeforeClick: string[] = [],
 ) {
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
@@ -681,6 +800,7 @@ export async function attackTerritory(
   await logEvent(sessionId, "attack_started", attackerId, {
     country: country.template.name,
     defenderId: country.ownerId,
+    hovered: sanitizeHoverTrail(hoveredBeforeClick),
   });
 }
 
@@ -688,6 +808,7 @@ export async function submitWarAnswer(
   attackId: string,
   playerId: string,
   isCorrect: boolean,
+  telemetry?: { submittedAtMs: number },
 ) {
   const attack = await prisma.warAttack.findUnique({
     where: { id: attackId },
@@ -695,10 +816,18 @@ export async function submitWarAnswer(
   if (!attack || !attack.isActive || attack.tieQuestionId) return;
   if (playerId !== attack.attackerId && playerId !== attack.defenderId) return;
 
+  const submittedAtMs =
+    telemetry?.submittedAtMs !== undefined
+      ? Math.max(
+          0,
+          Math.min(WAR_MC_TIMER_MS, Math.round(telemetry.submittedAtMs)),
+        )
+      : null;
+
   await prisma.warAnswer.upsert({
     where: { attackId_playerId: { attackId, playerId } },
-    create: { attackId, playerId, isCorrect },
-    update: { isCorrect },
+    create: { attackId, playerId, isCorrect, submittedAtMs },
+    update: { isCorrect, submittedAtMs },
   });
 
   const answers = await prisma.warAnswer.findMany({ where: { attackId } });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/app/lib/supabase/client";
 import { StartGameButton } from "./StartGameButton";
 import { joinGame } from "./actions";
@@ -159,22 +160,35 @@ export function LobbyContent({
           <div className="flex flex-col gap-2">
             {players.length > 0 ? (
               <div className="flex flex-col gap-2">
-                {players.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex justify-between items-center bg-[#242424] px-4 py-2 rounded-lg border border-[#333]"
-                  >
-                    <span className="flex items-center gap-2">
-                      {p.profile?.nickname || "No name"}
-                      {p.role === "host" && (
-                        <span className="text-yellow-400 text-sm">👑</span>
-                      )}
-                    </span>
-                    <span className="text-xs text-[#8a8a8a]">
-                      {p.role === "host" ? "Host" : "Player"}
-                    </span>
-                  </div>
-                ))}
+                {players.map((p) => {
+                  const nick = p.profile?.nickname;
+                  return (
+                    <div
+                      key={p.id}
+                      className="flex justify-between items-center bg-[#242424] px-4 py-2 rounded-lg border border-[#333]"
+                    >
+                      <span className="flex items-center gap-2">
+                        {nick ? (
+                          <Link
+                            href={`/profile/${encodeURIComponent(nick)}`}
+                            target="_blank"
+                            className="hover:text-blue-400 hover:underline transition-colors"
+                          >
+                            {nick}
+                          </Link>
+                        ) : (
+                          <span>No name</span>
+                        )}
+                        {p.role === "host" && (
+                          <span className="text-yellow-400 text-sm">👑</span>
+                        )}
+                      </span>
+                      <span className="text-xs text-[#8a8a8a]">
+                        {p.role === "host" ? "Host" : "Player"}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p className="text-[#888]">No players connected</p>

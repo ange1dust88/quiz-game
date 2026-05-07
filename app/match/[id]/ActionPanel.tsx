@@ -18,6 +18,7 @@ import {
 import { PLAYER_COLORS } from "@/app/lib/constants";
 import { parsePgDate } from "@/app/lib/dates";
 import { sounds } from "@/app/lib/sounds";
+import CategoryBadge from "@/app/components/ui/CategoryBadge";
 
 type Player = {
   id: string;
@@ -31,7 +32,7 @@ type PlayerInGame = {
 type ActiveQuestion = {
   id: string;
   expiresAt: string;
-  question: { text: string };
+  question: { text: string; category: string };
 };
 
 type Result = {
@@ -60,8 +61,8 @@ type ActiveAttack = {
   tieDefenderTimeMs: number | null;
   lastAttackerCorrect: boolean | null;
   lastDefenderCorrect: boolean | null;
-  question: { text: string; options: string[]; answer: string };
-  tieQuestion: { text: string; answer: number } | null;
+  question: { text: string; options: string[]; answer: string; category: string };
+  tieQuestion: { text: string; answer: number; category: string } | null;
   country: { template: { name: string } };
   answers: { playerId: string; isCorrect: boolean }[];
 };
@@ -174,6 +175,30 @@ export default function ActionPanel({
   useEffect(() => {
     tieAnswerRef.current = tieAnswer;
   }, [tieAnswer]);
+
+  // Behavioural telemetry refs — reset per question / war round.
+  const questionAppearedAtRef = useRef<number | null>(null);
+  const firstInputAtMsRef = useRef<number | null>(null);
+  const inputChangeCountRef = useRef(0);
+  const warQuestionAppearedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (activeQuestion) {
+      questionAppearedAtRef.current = Date.now();
+      firstInputAtMsRef.current = null;
+      inputChangeCountRef.current = 0;
+    } else {
+      questionAppearedAtRef.current = null;
+    }
+  }, [activeQuestion?.id]);
+
+  useEffect(() => {
+    if (activeAttack && activeAttack.questionId && !activeAttack.tieQuestionId) {
+      warQuestionAppearedAtRef.current = Date.now();
+    } else {
+      warQuestionAppearedAtRef.current = null;
+    }
+  }, [activeAttack?.id, activeAttack?.questionId, activeAttack?.tieQuestionId]);
 
   // GameSession subscription
   useEffect(() => {
@@ -621,6 +646,10 @@ export default function ActionPanel({
           sessionId,
           playerInGame.id,
           Number.isFinite(typed) ? typed : 0,
+          {
+            firstInputAtMs: firstInputAtMsRef.current,
+            inputChangeCount: inputChangeCountRef.current,
+          },
         );
       },
       Math.max(0, remaining),
@@ -693,7 +722,16 @@ export default function ActionPanel({
     const remaining = new Date(activeAttack.expiresAt).getTime() - Date.now();
     const timeout = setTimeout(() => {
       setWarSubmitted(true);
-      submitWarAnswer(activeAttack.id, playerInGame.id, false);
+      // Player ran out the clock — record submission time as full duration
+      // (proxy for "no decision made"). NULL would also be valid; this keeps
+      // the field uniformly filled for analytics.
+      const submittedAtMs =
+        warQuestionAppearedAtRef.current !== null
+          ? Date.now() - warQuestionAppearedAtRef.current
+          : 0;
+      submitWarAnswer(activeAttack.id, playerInGame.id, false, {
+        submittedAtMs,
+      });
     }, Math.max(0, remaining));
     return () => clearTimeout(timeout);
   }, [activeAttack, isWarInvolved, warSubmitted, playerInGame.id]);
@@ -981,13 +1019,29 @@ export default function ActionPanel({
     else sounds.defeat();
   }, [stage, winnerId, playerInGame.id]);
 
+  const handleAnswerChange = (value: string) => {
+    setAnswer(value);
+    inputChangeCountRef.current += 1;
+    if (
+      firstInputAtMsRef.current === null &&
+      value.length > 0 &&
+      questionAppearedAtRef.current !== null
+    ) {
+      firstInputAtMsRef.current =
+        Date.now() - questionAppearedAtRef.current;
+    }
+  };
+
   const handleSubmit = () => {
     if (!answer || submitted) return;
     const typed = parseFloat(answer);
     if (!Number.isFinite(typed)) return;
     setSubmitted(true);
     sounds.submit();
-    submitAnswer(sessionId, playerInGame.id, typed);
+    submitAnswer(sessionId, playerInGame.id, typed, {
+      firstInputAtMs: firstInputAtMsRef.current,
+      inputChangeCount: inputChangeCountRef.current,
+    });
   };
 
   const handleWarPick = (option: string) => {
@@ -996,7 +1050,13 @@ export default function ActionPanel({
     setWarSubmitted(true);
     sounds.submit();
     const isCorrect = option === activeAttack.question.answer;
-    submitWarAnswer(activeAttack.id, playerInGame.id, isCorrect);
+    const submittedAtMs =
+      warQuestionAppearedAtRef.current !== null
+        ? Date.now() - warQuestionAppearedAtRef.current
+        : 0;
+    submitWarAnswer(activeAttack.id, playerInGame.id, isCorrect, {
+      submittedAtMs,
+    });
   };
 
   const handleTieSubmit = () => {
@@ -1076,7 +1136,7 @@ export default function ActionPanel({
           question={activeQuestion}
           submitted={submitted}
           answer={answer}
-          setAnswer={setAnswer}
+          setAnswer={handleAnswerChange}
           onSubmit={handleSubmit}
           timer={timer}
         />
@@ -1214,8 +1274,11 @@ function QuestionView({
   return (
     <>
       <div className="flex items-start justify-between gap-3">
-        <div className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
-          Question
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
+            Question
+          </span>
+          <CategoryBadge category={question.question.category} />
         </div>
         <TimerBadge timer={timer} />
       </div>
@@ -1385,8 +1448,13 @@ function WarView({
     return (
       <>
         <div className="flex items-start justify-between gap-3">
-          <div className="text-[10px] uppercase tracking-widest text-amber-400 font-semibold">
-            Tie-breaker · {country}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] uppercase tracking-widest text-amber-400 font-semibold">
+              Tie-breaker · {country}
+            </span>
+            {attack.tieQuestion && (
+              <CategoryBadge category={attack.tieQuestion.category} />
+            )}
           </div>
           <TimerBadge timer={bothTieAnswered ? null : timer} />
         </div>
@@ -1458,13 +1526,16 @@ function WarView({
   return (
     <>
       <div className="flex items-start justify-between gap-3">
-        <div className="text-[10px] uppercase tracking-widest text-red-400 font-semibold">
-          {isAttacker
-            ? "You attack"
-            : isDefender
-              ? "You defend"
-              : "War"}{" "}
-          · {country}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-widest text-red-400 font-semibold">
+            {isAttacker
+              ? "You attack"
+              : isDefender
+                ? "You defend"
+                : "War"}{" "}
+            · {country}
+          </span>
+          <CategoryBadge category={attack.question.category} />
         </div>
         <TimerBadge timer={timer} />
       </div>

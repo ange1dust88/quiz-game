@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Input from "../components/ui/Input";
 import { getProfileSafe } from "../lib/auth";
 import { logout } from "../login/actions";
@@ -36,14 +37,22 @@ export default async function Dashboard() {
             </h1>
           </div>
 
-          <form action={logout}>
-            <button
-              type="submit"
+          <div className="flex items-center gap-3">
+            <Link
+              href="/analytics"
               className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors px-4 py-2 rounded-lg text-sm"
             >
-              Logout
-            </button>
-          </form>
+              Analytics
+            </Link>
+            <form action={logout}>
+              <button
+                type="submit"
+                className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors px-4 py-2 rounded-lg text-sm"
+              >
+                Logout
+              </button>
+            </form>
+          </div>
         </header>
 
         <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex items-center gap-6">
@@ -82,13 +91,21 @@ export default async function Dashboard() {
             </div>
           </div>
 
-          <div className="hidden sm:flex flex-col items-end shrink-0">
+          <div className="hidden sm:flex flex-col items-end shrink-0 gap-2">
             <span className="text-xs uppercase tracking-widest text-gray-400">
               ELO
             </span>
             <span className="text-3xl font-bold text-blue-400">
               {profile?.elo ?? 1000}
             </span>
+            {profile && (
+              <Link
+                href={`/profile/${encodeURIComponent(profile.nickname)}`}
+                className="text-xs text-gray-400 hover:text-white transition-colors px-3 py-1.5 border border-[#4f4f4f] rounded-lg"
+              >
+                View profile
+              </Link>
+            )}
           </div>
         </section>
 

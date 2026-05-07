@@ -128,3 +128,69 @@ export function attackerWonOutcome(country: {
   if (country.isCapital) return { type: "capital_falls" };
   return { type: "territory_taken" };
 }
+
+// Player stats helpers — pure, used by the post-game stats update.
+
+export const ELO_K_FACTOR = 32;
+
+// Pairwise ELO update for a multiplayer match with one winner.
+// Each loser pays the winner; losers don't exchange rating with each other.
+// Returns a map of profileId → rating delta, rounded to nearest integer.
+export function computeEloChanges(
+  players: { profileId: string; elo: number }[],
+  winnerProfileId: string | null,
+  k: number = ELO_K_FACTOR,
+): Map<string, number> {
+  const delta = new Map<string, number>();
+  for (const p of players) delta.set(p.profileId, 0);
+  if (!winnerProfileId || players.length < 2) return delta;
+
+  const winner = players.find((p) => p.profileId === winnerProfileId);
+  if (!winner) return delta;
+
+  for (const p of players) {
+    if (p.profileId === winner.profileId) continue;
+    const expectedWinner =
+      1 / (1 + Math.pow(10, (p.elo - winner.elo) / 400));
+    const expectedLoser =
+      1 / (1 + Math.pow(10, (winner.elo - p.elo) / 400));
+    delta.set(
+      winner.profileId,
+      (delta.get(winner.profileId) ?? 0) + k * (1 - expectedWinner),
+    );
+    delta.set(
+      p.profileId,
+      (delta.get(p.profileId) ?? 0) + k * (0 - expectedLoser),
+    );
+  }
+
+  for (const [id, d] of delta) delta.set(id, Math.round(d));
+  return delta;
+}
+
+// XP awarded for a single match. Base for participation, win bonus, and
+// performance scaling on points held at end of game.
+export function computeXpEarned(
+  isWinner: boolean,
+  pointsHeld: number,
+): number {
+  const BASE = 100;
+  const WIN_BONUS = 300;
+  return BASE + (isWinner ? WIN_BONUS : 0) + Math.floor(pointsHeld / 10);
+}
+
+// Apply earned XP, leveling up as long as the threshold is met.
+// Threshold for level N → N+1 is N * 1000 XP (matches dashboard progress bar).
+export function applyExperience(
+  currentLevel: number,
+  currentExp: number,
+  xpEarned: number,
+): { level: number; experience: number } {
+  let level = currentLevel;
+  let experience = currentExp + xpEarned;
+  while (experience >= level * 1000) {
+    experience -= level * 1000;
+    level += 1;
+  }
+  return { level, experience };
+}

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyExperience,
   attackerWonOutcome,
+  computeEloChanges,
   computePickOrder,
   computeTieResult,
   computeWarRound,
+  computeXpEarned,
   rankAnswers,
   territoriesForPlace,
   warEndReason,
@@ -240,5 +243,130 @@ describe("attackerWonOutcome", () => {
     expect(attackerWonOutcome({ isCapital: false, armies: 1 })).toEqual({
       type: "territory_taken",
     });
+  });
+});
+
+describe("computeXpEarned", () => {
+  it("awards base XP for participation", () => {
+    expect(computeXpEarned(false, 0)).toBe(100);
+  });
+
+  it("adds the win bonus on top of base", () => {
+    expect(computeXpEarned(true, 0)).toBe(400);
+  });
+
+  it("scales by 1 XP per 10 points held at end of game", () => {
+    expect(computeXpEarned(false, 3000)).toBe(100 + 300);
+    expect(computeXpEarned(true, 3000)).toBe(400 + 300);
+  });
+
+  it("floors fractional point contributions", () => {
+    expect(computeXpEarned(false, 9)).toBe(100);
+    expect(computeXpEarned(false, 19)).toBe(101);
+  });
+});
+
+describe("applyExperience", () => {
+  it("accumulates without level-up below the threshold", () => {
+    expect(applyExperience(1, 200, 300)).toEqual({
+      level: 1,
+      experience: 500,
+    });
+  });
+
+  it("levels up when XP reaches the level * 1000 threshold", () => {
+    expect(applyExperience(1, 800, 300)).toEqual({
+      level: 2,
+      experience: 100,
+    });
+  });
+
+  it("levels up multiple times for big XP gains", () => {
+    // 1 → 2 needs 1000, 2 → 3 needs 2000. Starting at 0 with 3500 XP gained:
+    // 3500 - 1000 = 2500 (level 2), 2500 - 2000 = 500 (level 3).
+    expect(applyExperience(1, 0, 3500)).toEqual({
+      level: 3,
+      experience: 500,
+    });
+  });
+
+  it("respects the current level when computing the threshold", () => {
+    // At level 3, the next threshold is 3 * 1000 = 3000.
+    expect(applyExperience(3, 2500, 600)).toEqual({
+      level: 4,
+      experience: 100,
+    });
+  });
+});
+
+describe("computeEloChanges", () => {
+  it("symmetric 1v1 with equal ratings: ±K/2", () => {
+    const delta = computeEloChanges(
+      [
+        { profileId: "a", elo: 1000 },
+        { profileId: "b", elo: 1000 },
+      ],
+      "a",
+    );
+    expect(delta.get("a")).toBe(16);
+    expect(delta.get("b")).toBe(-16);
+  });
+
+  it("higher-rated winner gains less than they would against a peer", () => {
+    const delta = computeEloChanges(
+      [
+        { profileId: "fav", elo: 1500 },
+        { profileId: "underdog", elo: 1000 },
+      ],
+      "fav",
+    );
+    expect(delta.get("fav")!).toBeLessThan(16);
+    expect(delta.get("fav")!).toBeGreaterThan(0);
+    // Pre-rounding the deltas are exactly opposite; rounding keeps them so
+    // for this rating gap.
+    expect(delta.get("underdog")).toBe(-delta.get("fav")!);
+  });
+
+  it("no winner means no rating change", () => {
+    const delta = computeEloChanges(
+      [
+        { profileId: "a", elo: 1000 },
+        { profileId: "b", elo: 1000 },
+      ],
+      null,
+    );
+    expect(delta.get("a")).toBe(0);
+    expect(delta.get("b")).toBe(0);
+  });
+
+  it("multiplayer: winner accumulates against every loser", () => {
+    const delta = computeEloChanges(
+      [
+        { profileId: "a", elo: 1000 },
+        { profileId: "b", elo: 1000 },
+        { profileId: "c", elo: 1000 },
+      ],
+      "a",
+    );
+    expect(delta.get("a")).toBe(32);
+    expect(delta.get("b")).toBe(-16);
+    expect(delta.get("c")).toBe(-16);
+  });
+
+  it("returns zero deltas when winner is not in the players list", () => {
+    const delta = computeEloChanges(
+      [
+        { profileId: "a", elo: 1000 },
+        { profileId: "b", elo: 1000 },
+      ],
+      "ghost",
+    );
+    expect(delta.get("a")).toBe(0);
+    expect(delta.get("b")).toBe(0);
+  });
+
+  it("returns zero deltas for a single-player session", () => {
+    const delta = computeEloChanges([{ profileId: "a", elo: 1000 }], "a");
+    expect(delta.get("a")).toBe(0);
   });
 });

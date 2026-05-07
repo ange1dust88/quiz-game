@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/app/lib/supabase/client";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 
@@ -152,9 +153,13 @@ export default function PlayerPanel({
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-semibold truncate">
+                  <Link
+                    href={`/profile/${encodeURIComponent(p.profile.nickname)}`}
+                    target="_blank"
+                    className="text-sm font-semibold truncate hover:text-blue-400 hover:underline transition-colors"
+                  >
                     {p.profile.nickname}
-                  </span>
+                  </Link>
                   {isYou && (
                     <span className="text-[10px] text-gray-500">you</span>
                   )}
