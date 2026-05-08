@@ -139,6 +139,59 @@ export default function EuropeMap({
     };
   }, [sessionId]);
 
+  // Polling fallback for MatchCountry updates — Supabase Realtime drops
+  // packets occasionally and the map can otherwise freeze on a stale
+  // ownership snapshot until the user refreshes. Every 4s we reconcile
+  // the current map state with the server. Functional setState merges
+  // diffs without clobbering local pulse animations.
+  useEffect(() => {
+    let cancelled = false;
+    const reconcile = async () => {
+      try {
+        const res = await fetch(`/api/match/${sessionId}/countries`);
+        if (cancelled || !res.ok) return;
+        const fresh: Array<{
+          id: string;
+          ownerId: string | null;
+          isCapital: boolean;
+          armies: number;
+          maxArmies: number;
+          points: number;
+        }> = await res.json();
+        if (cancelled) return;
+        setCountries((prev) => {
+          // Build a map for O(1) lookup; only patch fields that changed
+          // to avoid re-creating array entries (preserves React keys).
+          const byId = new Map(fresh.map((f) => [f.id, f]));
+          let changed = false;
+          const next = prev.map((c) => {
+            const f = byId.get(c.id);
+            if (!f) return c;
+            if (
+              f.ownerId === c.ownerId &&
+              f.isCapital === c.isCapital &&
+              f.armies === c.armies &&
+              f.maxArmies === c.maxArmies &&
+              f.points === c.points
+            ) {
+              return c;
+            }
+            changed = true;
+            return { ...c, ...f };
+          });
+          return changed ? next : prev;
+        });
+      } catch {
+        // Network blip — try again next tick.
+      }
+    };
+    const interval = setInterval(reconcile, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [sessionId]);
+
   useEffect(() => {
     const supabase = createClient();
 

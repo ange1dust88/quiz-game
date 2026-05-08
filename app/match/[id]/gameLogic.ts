@@ -212,3 +212,67 @@ export function sanitizeHoverTrail(input: unknown): string[] {
   }
   return out;
 }
+
+// State invariants that must hold for a healthy session. Run as a tripwire
+// after every state mutation — violations indicate a race or logic bug.
+export type SessionInvariantInput = {
+  pickOrder: string[];
+  picksRemaining: number;
+  stage: string;
+  status: string;
+  currentAttackId: string | null;
+  countries: { ownerId: string | null; isCapital: boolean }[];
+  activeAttackIds: string[];
+};
+
+export function checkSessionInvariants(s: SessionInvariantInput): string[] {
+  const violations: string[] = [];
+
+  // Each player can hold at most one capital. Two capitals → race in
+  // claimCapital / forceAutoCapital that bypassed the atomic guard.
+  const capitalsByOwner = new Map<string, number>();
+  for (const c of s.countries) {
+    if (c.isCapital && c.ownerId) {
+      capitalsByOwner.set(
+        c.ownerId,
+        (capitalsByOwner.get(c.ownerId) ?? 0) + 1,
+      );
+    }
+  }
+  for (const [pid, n] of capitalsByOwner) {
+    if (n > 1) violations.push(`player_${pid}_has_${n}_capitals`);
+  }
+
+  // At most one war attack is active per session and it must be the one
+  // referenced by `currentAttackId`. Multiples mean a race in attackTerritory
+  // / forceAutoAttack created an orphan.
+  if (s.activeAttackIds.length > 1) {
+    violations.push(`active_attacks_${s.activeAttackIds.length}`);
+  }
+  if (
+    s.currentAttackId &&
+    !s.activeAttackIds.includes(s.currentAttackId)
+  ) {
+    violations.push("current_attack_id_orphan");
+  }
+  if (!s.currentAttackId && s.activeAttackIds.length > 0) {
+    violations.push("active_attack_without_session_ref");
+  }
+
+  // `picksRemaining` is just a denormalised length of `pickOrder` — they
+  // must match. Drift here means a code path updated one without the other.
+  if (s.pickOrder.length !== s.picksRemaining) {
+    violations.push(
+      `pick_order_${s.pickOrder.length}_vs_remaining_${s.picksRemaining}`,
+    );
+  }
+
+  // The "ended" stage is terminal and only reachable via the end-game claim
+  // which sets status=completed in the same UPDATE. Mismatch means someone
+  // wrote one without the other.
+  if (s.stage === "ended" && s.status !== "completed") {
+    violations.push(`stage_ended_but_status_${s.status}`);
+  }
+
+  return violations;
+}

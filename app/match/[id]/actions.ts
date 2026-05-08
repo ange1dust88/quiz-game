@@ -1,9 +1,11 @@
 "use server";
 
 import { prisma } from "@/app/lib/prisma";
+import { authorizePlayer } from "@/app/lib/auth";
 import type { Prisma } from "@/app/generated/prisma/client";
 import {
   applyExperience,
+  checkSessionInvariants,
   computeEloChanges,
   computePickOrder,
   computeTieResult,
@@ -28,6 +30,49 @@ async function getPlayerChoice(
     where: { playerInGameId_key: { playerInGameId, key } },
   });
   return choice?.value ?? null;
+}
+
+// Tripwire: re-reads the session post-mutation and runs `checkSessionInvariants`.
+// On violations, logs to console.error and persists an `invariant_violated`
+// MatchEvent so we can later query for races. Failures are swallowed so the
+// validator never breaks gameplay.
+async function validateSession(sessionId: string) {
+  try {
+    const session = await prisma.gameSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        matchMap: { select: { ownerId: true, isCapital: true } },
+        attacks: { where: { isActive: true }, select: { id: true } },
+      },
+    });
+    if (!session) return;
+
+    const violations = checkSessionInvariants({
+      pickOrder: session.pickOrder,
+      picksRemaining: session.picksRemaining,
+      stage: session.stage,
+      status: session.status,
+      currentAttackId: session.currentAttackId,
+      countries: session.matchMap,
+      activeAttackIds: session.attacks.map((a) => a.id),
+    });
+    if (violations.length === 0) return;
+
+    console.error(
+      `[validate] session ${sessionId} violated invariants:`,
+      violations,
+    );
+    await prisma.matchEvent.create({
+      data: {
+        gameSessionId: sessionId,
+        type: "invariant_violated",
+        actorId: null,
+        payload: { violations },
+      },
+    });
+  } catch (err) {
+    console.error(`[validate] error during validation:`, err);
+  }
 }
 
 const PICK_TIMER_MS = 15000;
@@ -119,6 +164,7 @@ export async function claimCapital(
   hoveredBeforeClick: string[] = [],
 ) {
   if (!sessionId || !playerId || !svgId) return;
+  if (!(await authorizePlayer(sessionId, playerId))) return;
 
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
@@ -135,22 +181,30 @@ export async function claimCapital(
   const choice = await getPlayerChoice(playerId, "capital_style");
   const capitalParams = capitalParamsForChoice(choice);
 
-  // Atomic claim: only succeeds if this country isn't owned yet.
-  const claim = await prisma.matchCountry.updateMany({
-    where: {
-      gameSessionId: sessionId,
-      templateId: template.id,
-      ownerId: null,
-    },
-    data: {
-      ownerId: playerId,
-      isCapital: true,
-      armies: capitalParams.armies,
-      maxArmies: capitalParams.armies,
-      points: capitalParams.points,
-    },
-  });
-  if (claim.count === 0) return;
+  // Atomic claim — combines two guards in a single UPDATE so the racy
+  // "click two countries fast" pattern can't grant a player two capitals:
+  //   1. Country still unowned (ownerId IS NULL)
+  //   2. This player doesn't already own a capital in this session
+  // Both checks run inside Postgres, so concurrent clicks serialise and
+  // only one wins.
+  const claim = await prisma.$executeRaw`
+    UPDATE "MatchCountry"
+    SET "ownerId" = ${playerId},
+        "isCapital" = true,
+        "armies" = ${capitalParams.armies},
+        "maxArmies" = ${capitalParams.armies},
+        "points" = ${capitalParams.points}
+    WHERE "gameSessionId" = ${sessionId}
+      AND "templateId" = ${template.id}
+      AND "ownerId" IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "MatchCountry" mc2
+        WHERE mc2."gameSessionId" = ${sessionId}
+          AND mc2."ownerId" = ${playerId}
+          AND mc2."isCapital" = true
+      )
+  `;
+  if (claim === 0) return;
 
   await logEvent(sessionId, "capital", playerId, {
     country: template.name,
@@ -169,6 +223,7 @@ export async function claimTerritory(
   hoveredBeforeClick: string[] = [],
 ) {
   if (!sessionId || !playerId || !svgId) return;
+  if (!(await authorizePlayer(sessionId, playerId))) return;
 
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
@@ -212,11 +267,43 @@ async function capture(
   sessionId: string,
   opts: { auto?: boolean; hovered?: string[] } = {},
 ) {
-  const country = await prisma.matchCountry.update({
+  // Atomically pop the head of pickOrder + claim the country in a single
+  // transaction. Two concurrent claims by the same player (e.g. fast double
+  // click on different territories) used to both pass the read-then-act
+  // guard and award two territories. With the SQL-level pop guarded by
+  // `"pickOrder"[1] = ${playerId}`, only one transaction wins; the other
+  // sees an unchanged head and bails.
+  const won = await prisma
+    .$transaction(async (tx) => {
+      const popped = await tx.$executeRaw`
+        UPDATE "GameSession"
+        SET "pickOrder" = "pickOrder"[2:],
+            "picksRemaining" = GREATEST("picksRemaining" - 1, 0)
+        WHERE id = ${sessionId} AND "pickOrder"[1] = ${playerId}
+      `;
+      if (popped === 0) return false;
+
+      // Country claim is atomic too — bails if the country was taken
+      // between the click validation and now (rare, but possible).
+      const claimed = await tx.matchCountry.updateMany({
+        where: { id: countryId, ownerId: null },
+        data: { ownerId: playerId },
+      });
+      if (claimed.count === 0) {
+        // Roll back the pop so the player doesn't lose a slot for nothing.
+        throw new Error("country already taken");
+      }
+      return true;
+    })
+    .catch(() => false);
+
+  if (!won) return;
+
+  const country = await prisma.matchCountry.findUnique({
     where: { id: countryId },
-    data: { ownerId: playerId },
     include: { template: true },
   });
+  if (!country) return;
 
   await logEvent(sessionId, "territory", playerId, {
     country: country.template.name,
@@ -224,11 +311,11 @@ async function capture(
     hovered: sanitizeHoverTrail(opts.hovered),
   });
 
+  // Read post-commit state — pickOrder was already updated atomically above.
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
   });
-
-  const newPickOrder = session!.pickOrder.slice(1);
+  if (!session) return;
 
   const allCountries = await prisma.matchCountry.findMany({
     where: { gameSessionId: sessionId },
@@ -268,25 +355,24 @@ async function capture(
         winnerId: null,
       },
     });
+    await validateSession(sessionId);
     return;
   }
 
-  if (newPickOrder.length === 0) {
+  if (session.pickOrder.length === 0) {
     await prisma.gameSession.update({
       where: { id: sessionId },
-      data: { pickOrder: [], picksRemaining: 0, pickExpiresAt: null },
+      data: { pickExpiresAt: null },
     });
     await startQuestion(sessionId);
   } else {
     await prisma.gameSession.update({
       where: { id: sessionId },
-      data: {
-        pickOrder: newPickOrder,
-        picksRemaining: newPickOrder.length,
-        pickExpiresAt: new Date(Date.now() + PICK_TIMER_MS),
-      },
+      data: { pickExpiresAt: new Date(Date.now() + PICK_TIMER_MS) },
     });
   }
+
+  await validateSession(sessionId);
 }
 
 export async function advanceTurnAndStage(sessionId: string) {
@@ -377,6 +463,7 @@ export async function advanceTurnAndStage(sessionId: string) {
         landsByWinner: landsCount.get(winner?.id ?? "") ?? 0,
       });
       await updatePlayerStats(sessionId);
+      await validateSession(sessionId);
       return;
     }
 
@@ -389,6 +476,7 @@ export async function advanceTurnAndStage(sessionId: string) {
         capitalExpiresAt: null,
       },
     });
+    await validateSession(sessionId);
     return;
   }
 
@@ -410,6 +498,8 @@ export async function advanceTurnAndStage(sessionId: string) {
           : null,
     },
   });
+
+  await validateSession(sessionId);
 }
 
 export async function forceAutoCapital(sessionId: string) {
@@ -508,6 +598,8 @@ export async function submitAnswer(
     inputChangeCount: number;
   },
 ) {
+  if (!(await authorizePlayer(sessionId, playerId))) return;
+
   const activeQuestion = await prisma.matchQuestion.findFirst({
     where: { gameSessionId: sessionId, isActive: true },
   });
@@ -697,6 +789,8 @@ async function resolveQuestion(sessionId: string, matchQuestionId: string) {
       nextQuestionAt: null,
     },
   });
+
+  await validateSession(sessionId);
 }
 
 export async function forceResolveQuestion(sessionId: string) {
@@ -772,6 +866,8 @@ export async function attackTerritory(
   countryId: string,
   hoveredBeforeClick: string[] = [],
 ) {
+  if (!(await authorizePlayer(sessionId, attackerId))) return;
+
   const session = await prisma.gameSession.findUnique({
     where: { id: sessionId },
     include: { players: true },
@@ -808,16 +904,25 @@ export async function attackTerritory(
     },
   });
 
-  await prisma.gameSession.update({
-    where: { id: sessionId },
+  // Atomic check-and-set: only one concurrent caller can plant their attack
+  // into `currentAttackId`. If the slot was already taken (rapid double-click
+  // or a forceAutoAttack racing us), undo the orphaned attack we just created.
+  const claim = await prisma.gameSession.updateMany({
+    where: { id: sessionId, currentAttackId: null },
     data: { currentAttackId: attack.id, warTurnExpiresAt: null },
   });
+  if (claim.count === 0) {
+    await prisma.warAttack.delete({ where: { id: attack.id } });
+    return;
+  }
 
   await logEvent(sessionId, "attack_started", attackerId, {
     country: country.template.name,
     defenderId: country.ownerId,
     hovered: sanitizeHoverTrail(hoveredBeforeClick),
   });
+
+  await validateSession(sessionId);
 }
 
 export async function submitWarAnswer(
@@ -831,6 +936,7 @@ export async function submitWarAnswer(
   });
   if (!attack || !attack.isActive || attack.tieQuestionId) return;
   if (playerId !== attack.attackerId && playerId !== attack.defenderId) return;
+  if (!(await authorizePlayer(attack.gameSessionId, playerId))) return;
 
   const submittedAtMs =
     telemetry?.submittedAtMs !== undefined
@@ -862,6 +968,7 @@ export async function submitWarTieBreaker(
   });
   if (!attack || !attack.isActive || !attack.tieQuestionId) return;
   if (playerId !== attack.attackerId && playerId !== attack.defenderId) return;
+  if (!(await authorizePlayer(attack.gameSessionId, playerId))) return;
 
   // Time spent on the tie question, in ms since the tie phase started.
   // tieExpiresAt is still set here (resolveTiePhase hasn't atomically cleared

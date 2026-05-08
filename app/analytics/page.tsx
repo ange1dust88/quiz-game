@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { prisma } from "@/app/lib/prisma";
+import { getProfileSafe } from "@/app/lib/auth";
 
 const CATEGORY_LABELS: Record<string, string> = {
   geography: "Geography",
@@ -31,7 +33,28 @@ function ageBucket(age: number): (typeof AGE_BUCKETS)[number] {
   return "45+";
 }
 
+function parseAdminEmails(): string[] {
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export default async function AnalyticsPage() {
+  // Admin gate. Researcher/admin emails are configured via the ADMIN_EMAILS
+  // env var (comma-separated). Anyone else — including logged-in players —
+  // is redirected to the dashboard so they don't see aggregated data.
+  const profile = await getProfileSafe();
+  if (!profile) redirect("/login");
+  const adminEmails = parseAdminEmails();
+  const user = await prisma.user.findUnique({
+    where: { id: profile.userId },
+    select: { email: true },
+  });
+  if (!user || !adminEmails.includes(user.email.toLowerCase())) {
+    redirect("/dashboard");
+  }
+
   // Pull raw rows in parallel; aggregation happens in JS below. Dataset is
   // small for now (diploma-scale); when it grows we'll switch the heavy ones
   // to SQL aggregates.

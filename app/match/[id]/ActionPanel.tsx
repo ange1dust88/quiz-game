@@ -305,12 +305,23 @@ export default function ActionPanel({
     return () => void channel.unsubscribe();
   }, [sessionId]);
 
+  // Tracks the id of the question we currently render. The realtime
+  // delivery order between an old question's "isActive=false" UPDATE and
+  // a new question's INSERT is NOT guaranteed, so we use this ref to
+  // ignore stale UPDATE events that target a question we've already moved
+  // past — otherwise the old question's UPDATE blanks out the new one,
+  // causing the "flashes and disappears" bug.
+  const activeQuestionIdRef = useRef<string | null>(null);
+
   // MatchQuestion subscription + initial fetch
   useEffect(() => {
     const fetchActive = async () => {
       const res = await fetch(`/api/sessions/${sessionId}/question`);
       const data = await res.json();
-      if (data) setActiveQuestion(data);
+      if (data) {
+        activeQuestionIdRef.current = data.id;
+        setActiveQuestion(data);
+      }
     };
     fetchActive();
 
@@ -328,6 +339,9 @@ export default function ActionPanel({
         async () => {
           const res = await fetch(`/api/sessions/${sessionId}/question`);
           const data = await res.json();
+          // Bump the ref FIRST so any in-flight UPDATE for the previous
+          // question fails its "is this our active one?" check below.
+          activeQuestionIdRef.current = data?.id ?? null;
           setActiveQuestion(data);
           setResults(null);
           setSubmitted(false);
@@ -343,11 +357,15 @@ export default function ActionPanel({
           filter: `gameSessionId=eq.${sessionId}`,
         },
         (payload) => {
-          if (!payload.new.isActive) {
-            setActiveQuestion(null);
-            const r = payload.new.results as Result[] | null;
-            if (r && r.length > 0) setResults(r);
-          }
+          // Only react to deactivation of the question we're currently
+          // showing. A delayed UPDATE for a previous question must NOT
+          // wipe out a newer activeQuestion the INSERT handler just set.
+          if (payload.new.isActive) return;
+          if (payload.new.id !== activeQuestionIdRef.current) return;
+          activeQuestionIdRef.current = null;
+          setActiveQuestion(null);
+          const r = payload.new.results as Result[] | null;
+          if (r && r.length > 0) setResults(r);
         },
       )
       .subscribe();
@@ -694,6 +712,7 @@ export default function ActionPanel({
         if (!data) {
           // Question resolved server-side → clear immediately so the
           // timer disappears without waiting for realtime.
+          activeQuestionIdRef.current = null;
           setActiveQuestion(null);
           return;
         }
@@ -709,6 +728,46 @@ export default function ActionPanel({
       if (timer) clearTimeout(timer);
     };
   }, [activeQuestion, submitted, sessionId]);
+
+  // Polling watchdog for the *next* expand question. Fires while we're in
+  // expand with no active question and no pending picks — i.e. specifically
+  // the gap right before the next round. Defends against a missed
+  // MatchQuestion INSERT event (Supabase Realtime occasionally drops them)
+  // which would otherwise leave the client stuck on "Question incoming".
+  useEffect(() => {
+    if (stage !== "expand") return;
+    if (activeQuestion) return;
+    if (pickOrder.length > 0) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/question`);
+        if (cancelled || !res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data && data.id !== activeQuestionIdRef.current) {
+          activeQuestionIdRef.current = data.id;
+          setActiveQuestion(data);
+          setResults(null);
+          setSubmitted(false);
+          setAnswer("");
+          return;
+        }
+      } catch {
+        // ignore — next tick.
+      }
+      if (!cancelled) timer = setTimeout(poll, 2000);
+    };
+
+    timer = setTimeout(poll, 2000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [stage, activeQuestion, pickOrder.length, sessionId]);
 
   // War MC auto-submit on timer expiry (defaults to wrong)
   const isWarInvolved =

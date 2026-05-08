@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyExperience,
   attackerWonOutcome,
+  checkSessionInvariants,
   computeEloChanges,
   computePickOrder,
   computeTieResult,
@@ -419,5 +420,113 @@ describe("sanitizeHoverTrail", () => {
       "B",
       "C",
     ]);
+  });
+});
+
+describe("checkSessionInvariants", () => {
+  const baseline = {
+    pickOrder: [],
+    picksRemaining: 0,
+    stage: "capitals",
+    status: "active",
+    currentAttackId: null,
+    countries: [] as { ownerId: string | null; isCapital: boolean }[],
+    activeAttackIds: [] as string[],
+  };
+
+  it("clean state has no violations", () => {
+    expect(checkSessionInvariants(baseline)).toEqual([]);
+  });
+
+  it("flags two capitals owned by the same player", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      countries: [
+        { ownerId: "p1", isCapital: true },
+        { ownerId: "p1", isCapital: true },
+        { ownerId: "p2", isCapital: true },
+      ],
+    });
+    expect(v.some((m) => m.includes("p1") && m.includes("2_capitals"))).toBe(
+      true,
+    );
+  });
+
+  it("does not flag two players with one capital each", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      countries: [
+        { ownerId: "p1", isCapital: true },
+        { ownerId: "p2", isCapital: true },
+      ],
+    });
+    expect(v).toEqual([]);
+  });
+
+  it("flags multiple active war attacks", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      currentAttackId: "a1",
+      activeAttackIds: ["a1", "a2"],
+    });
+    expect(v).toContain("active_attacks_2");
+  });
+
+  it("flags currentAttackId pointing at a non-active attack (orphan)", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      currentAttackId: "ghost",
+      activeAttackIds: ["a1"],
+    });
+    expect(v).toContain("current_attack_id_orphan");
+  });
+
+  it("flags an active attack with no session reference", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      currentAttackId: null,
+      activeAttackIds: ["a1"],
+    });
+    expect(v).toContain("active_attack_without_session_ref");
+  });
+
+  it("flags pickOrder length mismatch with picksRemaining", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      pickOrder: ["p1", "p2"],
+      picksRemaining: 3,
+    });
+    expect(v.some((m) => m.startsWith("pick_order_2_vs_remaining_3"))).toBe(
+      true,
+    );
+  });
+
+  it("flags stage=ended without status=completed", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      stage: "ended",
+      status: "active",
+    });
+    expect(v.some((m) => m.startsWith("stage_ended_but_status_"))).toBe(true);
+  });
+
+  it("does not flag stage=ended when status=completed", () => {
+    expect(
+      checkSessionInvariants({
+        ...baseline,
+        stage: "ended",
+        status: "completed",
+      }),
+    ).toEqual([]);
+  });
+
+  it("aggregates multiple violations into one list", () => {
+    const v = checkSessionInvariants({
+      ...baseline,
+      pickOrder: ["a"],
+      picksRemaining: 3,
+      activeAttackIds: ["a1", "a2"],
+    });
+    expect(v.length).toBeGreaterThanOrEqual(2);
   });
 });
