@@ -54,6 +54,10 @@ export type ActiveAttackMirror = {
   tieExpiresAt: number;
   lastAttackerCorrect: boolean;
   lastDefenderCorrect: boolean;
+  attackerOption: string;
+  defenderOption: string;
+  correctOption: string;
+  resolveRevealEndsAt: number;
 };
 
 export type RoundResult = {
@@ -181,6 +185,10 @@ function snapshot(s: any): GameStateMirror {
           tieExpiresAt: aa.tieExpiresAt,
           lastAttackerCorrect: aa.lastAttackerCorrect,
           lastDefenderCorrect: aa.lastDefenderCorrect,
+          attackerOption: aa.attackerOption ?? "",
+          defenderOption: aa.defenderOption ?? "",
+          correctOption: aa.correctOption ?? "",
+          resolveRevealEndsAt: aa.resolveRevealEndsAt ?? 0,
         }
       : null;
 

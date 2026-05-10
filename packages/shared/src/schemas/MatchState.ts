@@ -105,6 +105,7 @@ export class ActiveAttack extends Schema {
   declare countryId: string;
   declare questionId: number;
   declare questionText: string;
+  declare correctOption: string;
   declare options: ArraySchema<string>;
   declare category: string;
   declare expiresAt: number;
@@ -113,6 +114,11 @@ export class ActiveAttack extends Schema {
   declare tieExpiresAt: number;
   declare lastAttackerCorrect: boolean;
   declare lastDefenderCorrect: boolean;
+  declare attackerOption: string;
+  declare defenderOption: string;
+  // While > now, server is holding the result on screen so clients can
+  // show a "X picked Y, correct was Z" reveal before the next phase.
+  declare resolveRevealEndsAt: number;
 
   constructor() {
     super();
@@ -122,6 +128,7 @@ export class ActiveAttack extends Schema {
     this.countryId = "";
     this.questionId = 0;
     this.questionText = "";
+    this.correctOption = "";
     this.options = new ArraySchema<string>();
     this.category = "general";
     this.expiresAt = 0;
@@ -130,6 +137,9 @@ export class ActiveAttack extends Schema {
     this.tieExpiresAt = 0;
     this.lastAttackerCorrect = false;
     this.lastDefenderCorrect = false;
+    this.attackerOption = "";
+    this.defenderOption = "";
+    this.resolveRevealEndsAt = 0;
   }
 }
 defineTypes(ActiveAttack, {
@@ -139,6 +149,7 @@ defineTypes(ActiveAttack, {
   countryId: "string",
   questionId: "number",
   questionText: "string",
+  correctOption: "string",
   options: ["string"],
   category: "string",
   expiresAt: "number",
@@ -147,6 +158,9 @@ defineTypes(ActiveAttack, {
   tieExpiresAt: "number",
   lastAttackerCorrect: "boolean",
   lastDefenderCorrect: "boolean",
+  attackerOption: "string",
+  defenderOption: "string",
+  resolveRevealEndsAt: "number",
 });
 
 export class MatchState extends Schema {

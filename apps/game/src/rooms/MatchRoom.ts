@@ -60,6 +60,7 @@ const PHASE_DELAY_MS = 3_500;
 const WAR_TURN_TIMER_MS = 20_000;
 const WAR_MC_TIMER_MS = 15_000;
 const WAR_TIE_TIMER_MS = 15_000;
+const WAR_REVEAL_MS = 3_500;
 const MAX_WAR_ROUNDS = 5;
 const TICK_INTERVAL_MS = 250;
 
@@ -103,7 +104,10 @@ export class MatchRoom extends Room<MatchState> {
     questionRowId: number;
     correctOption: string;
     mcStartedAtMs: number;
-    answers: Map<string, { isCorrect: boolean; submittedAtMs: number }>;
+    answers: Map<
+      string,
+      { option: string; isCorrect: boolean; submittedAtMs: number }
+    >;
     tieQuestionRowId?: number;
     tieCorrectAnswer?: number;
     tieStartedAtMs?: number;
@@ -423,9 +427,12 @@ export class MatchRoom extends Room<MatchState> {
         this.autoAttack();
       }
       // MC question expired without both answers → resolve with whatever.
+      // Skip if we're already in the reveal window (resolveWarMc set
+      // expiresAt=0 there, but defensive double-check).
       if (
         this.state.activeAttack &&
         !this.state.activeAttack.tieQuestionId &&
+        this.state.activeAttack.resolveRevealEndsAt === 0 &&
         this.state.activeAttack.expiresAt > 0 &&
         now >= this.state.activeAttack.expiresAt
       ) {
@@ -951,7 +958,11 @@ export class MatchRoom extends Room<MatchState> {
       0,
       Math.min(WAR_MC_TIMER_MS, payload.submittedAtMs ?? Date.now() - ca.mcStartedAtMs),
     );
-    ca.answers.set(playerId, { isCorrect, submittedAtMs });
+    ca.answers.set(playerId, {
+      option: payload.option,
+      isCorrect,
+      submittedAtMs,
+    });
 
     this.telemetry.warAnswers.push({
       playerId,
@@ -972,22 +983,40 @@ export class MatchRoom extends Room<MatchState> {
     const ca = this.currentAttack;
     const aa = this.state.activeAttack;
     if (!ca || !aa) return;
+    // Idempotency — if the reveal phase is already running, ignore further
+    // calls (e.g. timer + last submission both racing in).
+    if (aa.resolveRevealEndsAt > 0) return;
 
-    const attackerCorrect = ca.answers.get(ca.attackerId)?.isCorrect ?? false;
-    const defenderCorrect = ca.answers.get(ca.defenderId)?.isCorrect ?? false;
+    const attackerEntry = ca.answers.get(ca.attackerId);
+    const defenderEntry = ca.answers.get(ca.defenderId);
+    const attackerCorrect = attackerEntry?.isCorrect ?? false;
+    const defenderCorrect = defenderEntry?.isCorrect ?? false;
     aa.lastAttackerCorrect = attackerCorrect;
     aa.lastDefenderCorrect = defenderCorrect;
+    aa.attackerOption = attackerEntry?.option ?? "";
+    aa.defenderOption = defenderEntry?.option ?? "";
+    aa.correctOption = ca.correctOption;
+    // Stop ticking the question deadline so the timer doesn't reach 0
+    // mid-reveal.
+    aa.expiresAt = 0;
+    aa.resolveRevealEndsAt = Date.now() + WAR_REVEAL_MS;
 
-    if (attackerCorrect && defenderCorrect) {
-      void this.startTieBreaker();
-      return;
-    }
+    let nextOutcome: "tie" | "attacker_won" | "defender_held" | "no_change";
+    if (attackerCorrect && defenderCorrect) nextOutcome = "tie";
+    else if (attackerCorrect) nextOutcome = "attacker_won";
+    else if (defenderCorrect) nextOutcome = "defender_held";
+    else nextOutcome = "no_change";
 
-    let outcome: "attacker_won" | "defender_held" | "no_change";
-    if (attackerCorrect && !defenderCorrect) outcome = "attacker_won";
-    else if (!attackerCorrect && defenderCorrect) outcome = "defender_held";
-    else outcome = "no_change";
-    this.endAttack(outcome);
+    this.clock.setTimeout(() => {
+      // Could have been replaced/cancelled while we were waiting (e.g. room
+      // disposed). Ignore stale callbacks.
+      if (this.currentAttack !== ca) return;
+      if (nextOutcome === "tie") {
+        void this.startTieBreaker();
+      } else {
+        this.endAttack(nextOutcome);
+      }
+    }, WAR_REVEAL_MS);
   }
 
   private async startTieBreaker(): Promise<void> {
@@ -1012,6 +1041,10 @@ export class MatchRoom extends Room<MatchState> {
     aa.tieQuestionText = q.text;
     aa.tieExpiresAt = Date.now() + WAR_TIE_TIMER_MS;
     aa.expiresAt = 0;
+    aa.resolveRevealEndsAt = 0;
+    aa.attackerOption = "";
+    aa.defenderOption = "";
+    aa.correctOption = "";
 
     ca.tieQuestionRowId = q.id;
     ca.tieCorrectAnswer = q.answer;
@@ -1144,6 +1177,10 @@ export class MatchRoom extends Room<MatchState> {
     aa.tieExpiresAt = 0;
     aa.lastAttackerCorrect = false;
     aa.lastDefenderCorrect = false;
+    aa.attackerOption = "";
+    aa.defenderOption = "";
+    aa.correctOption = "";
+    aa.resolveRevealEndsAt = 0;
 
     ca.questionRowId = wq.id;
     ca.correctOption = wq.answer;
