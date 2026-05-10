@@ -181,11 +181,13 @@ function WarView({
   const [tieSubmitted, setTieSubmitted] = useState(false);
   const startedAt = useRef(Date.now());
 
-  // Reset when entering tie-breaker or new attack id
+  // Reset when a new MC round starts — either a brand-new attack (different
+  // attack.id) or the same attack continuing into a new siege round (same
+  // attack.id but new questionId).
   useEffect(() => {
     setPicked(null);
     startedAt.current = Date.now();
-  }, [attack.id]);
+  }, [attack.id, attack.questionId]);
   useEffect(() => {
     if (attack.tieQuestionId) {
       setTieValue("");
