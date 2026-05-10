@@ -1,7 +1,6 @@
-# fly.toml app configuration file generated for europe-quiz on 2026-05-10T22:07:59Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# Fly.io config for the Colyseus game server.
+# Build context = repo root (where this file lives), so the Dockerfile can
+# pull in the workspace packages.
 
 app = 'europe-quiz'
 primary_region = 'fra'
@@ -13,7 +12,10 @@ primary_region = 'fra'
   PORT = '2567'
 
 [http_service]
-  internal_port = 8080
+  # MUST equal the PORT env var above — Fly forwards external 80/443 to
+  # this internal port, and our server listens on $PORT (= 2567). Earlier
+  # mismatch (internal_port=8080 / PORT=2567) was why health checks timed out.
+  internal_port = 2567
   force_https = true
   auto_stop_machines = 'off'
   auto_start_machines = true

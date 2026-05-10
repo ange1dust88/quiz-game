@@ -11,8 +11,7 @@
     "typecheck": "pnpm -r exec tsc --noEmit",
     "db:push": "pnpm --filter @quiz/db exec prisma db push",
     "db:generate": "pnpm --filter @quiz/db exec prisma generate",
-    "db:studio": "pnpm --filter @quiz/db exec prisma studio",
-    "postinstall": "pnpm --filter @quiz/db exec prisma generate"
+    "db:studio": "pnpm --filter @quiz/db exec prisma studio"
   },
   "devDependencies": {
     "typescript": "^5",
