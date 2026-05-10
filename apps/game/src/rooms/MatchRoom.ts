@@ -15,13 +15,19 @@
 
 import { Client, Room } from "colyseus";
 import { prisma } from "@quiz/db";
+import { ArraySchema } from "@colyseus/schema";
 import {
+  attackerWonOutcome,
   capitalParamsForChoice,
   computePickOrder,
+  computeTieResult,
   rankAnswers,
   verifyJwt,
+  warEndReason,
+  winnerByLands,
 } from "@quiz/shared";
 import {
+  ActiveAttack,
   ActiveQuestion,
   Country,
   MatchState,
@@ -84,6 +90,25 @@ export class MatchRoom extends Room<MatchState> {
     answers: Map<string, AnswerEntry>; // keyed by playerInGameId
   } | null = null;
 
+  // Per-attack working state for war stage (kept off-state so the correct
+  // answer doesn't leak before the reveal).
+  private currentAttack: {
+    attackerId: string;
+    defenderId: string;
+    countryId: string; // schema country id
+    questionRowId: number;
+    correctOption: string;
+    mcStartedAtMs: number;
+    answers: Map<string, { isCorrect: boolean; submittedAtMs: number }>;
+    tieQuestionRowId?: number;
+    tieCorrectAnswer?: number;
+    tieStartedAtMs?: number;
+    tieAnswers: Map<
+      string,
+      { value: number; receivedAtMs: number; firstInputAtMs: number | null }
+    >;
+  } | null = null;
+
   // Telemetry batched and persisted in the final MatchSnapshot at game_over.
   private telemetry: {
     numericAnswers: Array<{
@@ -107,10 +132,27 @@ export class MatchRoom extends Room<MatchState> {
       svgId: string;
       auto: boolean;
     }>;
+    warAnswers: Array<{
+      playerId: string;
+      attackId: string;
+      questionId: number;
+      category: string;
+      isCorrect: boolean;
+      submittedAtMs: number;
+    }>;
+    attacks: Array<{
+      attackerId: string;
+      defenderId: string;
+      countryId: string;
+      outcome: string;
+      auto: boolean;
+    }>;
   } = {
     numericAnswers: [],
     capitalPicks: [],
     territoryPicks: [],
+    warAnswers: [],
+    attacks: [],
   };
 
   override async onCreate(options: CreateOptions): Promise<void> {
@@ -158,6 +200,39 @@ export class MatchRoom extends Room<MatchState> {
         const auth = client.auth as AuthInfo | undefined;
         if (!auth) return;
         this.handleClaimTerritory(auth.playerInGameId, payload?.svgId, false);
+      },
+    );
+
+    this.onMessage(
+      "attack",
+      (client, payload: { svgId: string }) => {
+        const auth = client.auth as AuthInfo | undefined;
+        if (!auth) return;
+        void this.handleAttack(auth.playerInGameId, payload?.svgId, false);
+      },
+    );
+
+    this.onMessage(
+      "war_answer",
+      (
+        client,
+        payload: { option: string; submittedAtMs?: number },
+      ) => {
+        const auth = client.auth as AuthInfo | undefined;
+        if (!auth) return;
+        this.handleWarAnswer(auth.playerInGameId, payload);
+      },
+    );
+
+    this.onMessage(
+      "war_tie",
+      (
+        client,
+        payload: { value: number; firstInputAtMs?: number | null },
+      ) => {
+        const auth = client.auth as AuthInfo | undefined;
+        if (!auth) return;
+        this.handleWarTie(auth.playerInGameId, payload);
       },
     );
 
@@ -329,6 +404,36 @@ export class MatchRoom extends Room<MatchState> {
         this.state.pickOrder.length > 0
       ) {
         this.autoPickTerritory();
+      }
+      return;
+    }
+    if (this.state.stage === "war") {
+      // No active attack and turn deadline expired → auto-attack.
+      if (
+        !this.state.activeAttack &&
+        this.state.warTurnExpiresAt > 0 &&
+        now >= this.state.warTurnExpiresAt
+      ) {
+        this.state.warTurnExpiresAt = 0;
+        this.autoAttack();
+      }
+      // MC question expired without both answers → resolve with whatever.
+      if (
+        this.state.activeAttack &&
+        !this.state.activeAttack.tieQuestionId &&
+        this.state.activeAttack.expiresAt > 0 &&
+        now >= this.state.activeAttack.expiresAt
+      ) {
+        this.resolveWarMc();
+      }
+      // Tie question expired → resolve with whatever.
+      if (
+        this.state.activeAttack &&
+        this.state.activeAttack.tieQuestionId &&
+        this.state.activeAttack.tieExpiresAt > 0 &&
+        now >= this.state.activeAttack.tieExpiresAt
+      ) {
+        this.resolveWarTie();
       }
       return;
     }
@@ -752,6 +857,414 @@ export class MatchRoom extends Room<MatchState> {
       if (!c.ownerId && neighborIds.has(c.templateId)) out.add(c.svgId);
     });
     return out;
+  }
+
+  // --- War stage --------------------------------------------------------
+
+  private async handleAttack(
+    attackerId: string,
+    svgId: string | undefined,
+    auto: boolean,
+  ): Promise<void> {
+    if (this.state.stage !== "war") return;
+    if (this.state.activeAttack) return;
+    if (!svgId) return;
+    const attacker = this.state.players.get(attackerId);
+    if (!attacker) return;
+    if (attacker.turnOrder !== this.state.turnIndex) return;
+
+    let target: Country | undefined;
+    this.state.countries.forEach((c) => {
+      if (c.svgId === svgId) target = c;
+    });
+    if (!target) return;
+    if (!target.ownerId || target.ownerId === attackerId) return;
+
+    // Must be an enemy neighbor
+    const enemyNeighbors = this.enemyNeighborSvgIds(attackerId);
+    if (!enemyNeighbors.has(svgId)) return;
+
+    const wqCount = await prisma.warQuestion.count();
+    if (wqCount === 0) {
+      console.warn(`[match ${this.roomId}] no WarQuestion rows`);
+      return;
+    }
+    const wq = await prisma.warQuestion.findFirst({
+      skip: Math.floor(Math.random() * wqCount),
+    });
+    if (!wq) return;
+
+    const aa = new ActiveAttack();
+    aa.id = `${wq.id}-${Date.now()}`;
+    aa.attackerId = attackerId;
+    aa.defenderId = target.ownerId;
+    aa.countryId = target.id;
+    aa.questionId = wq.id;
+    aa.questionText = wq.text;
+    aa.options = new ArraySchema<string>(...wq.options);
+    aa.category = wq.category;
+    aa.expiresAt = Date.now() + WAR_MC_TIMER_MS;
+    this.state.activeAttack = aa;
+    this.state.warTurnExpiresAt = 0;
+
+    this.currentAttack = {
+      attackerId,
+      defenderId: target.ownerId,
+      countryId: target.id,
+      questionRowId: wq.id,
+      correctOption: wq.answer,
+      mcStartedAtMs: Date.now(),
+      answers: new Map(),
+      tieAnswers: new Map(),
+    };
+
+    this.telemetry.attacks.push({
+      attackerId,
+      defenderId: target.ownerId,
+      countryId: target.id,
+      outcome: "started",
+      auto,
+    });
+
+    console.log(
+      `[match ${this.roomId}] attack: ${attacker.nickname} → ${target.svgId}${auto ? " (auto)" : ""}`,
+    );
+  }
+
+  private handleWarAnswer(
+    playerId: string,
+    payload: { option: string; submittedAtMs?: number },
+  ): void {
+    const ca = this.currentAttack;
+    if (!ca) return;
+    if (this.state.activeAttack?.tieQuestionId) return; // in tie phase
+    if (playerId !== ca.attackerId && playerId !== ca.defenderId) return;
+    if (typeof payload.option !== "string") return;
+
+    const isCorrect = payload.option === ca.correctOption;
+    const submittedAtMs = Math.max(
+      0,
+      Math.min(WAR_MC_TIMER_MS, payload.submittedAtMs ?? Date.now() - ca.mcStartedAtMs),
+    );
+    ca.answers.set(playerId, { isCorrect, submittedAtMs });
+
+    this.telemetry.warAnswers.push({
+      playerId,
+      attackId: this.state.activeAttack?.id ?? "",
+      questionId: ca.questionRowId,
+      category: this.state.activeAttack?.category ?? "general",
+      isCorrect,
+      submittedAtMs,
+    });
+
+    // Both answered? resolve.
+    if (ca.answers.size >= 2) {
+      this.resolveWarMc();
+    }
+  }
+
+  private resolveWarMc(): void {
+    const ca = this.currentAttack;
+    const aa = this.state.activeAttack;
+    if (!ca || !aa) return;
+
+    const attackerCorrect = ca.answers.get(ca.attackerId)?.isCorrect ?? false;
+    const defenderCorrect = ca.answers.get(ca.defenderId)?.isCorrect ?? false;
+    aa.lastAttackerCorrect = attackerCorrect;
+    aa.lastDefenderCorrect = defenderCorrect;
+
+    if (attackerCorrect && defenderCorrect) {
+      void this.startTieBreaker();
+      return;
+    }
+
+    let outcome: "attacker_won" | "defender_held" | "no_change";
+    if (attackerCorrect && !defenderCorrect) outcome = "attacker_won";
+    else if (!attackerCorrect && defenderCorrect) outcome = "defender_held";
+    else outcome = "no_change";
+    this.endAttack(outcome);
+  }
+
+  private async startTieBreaker(): Promise<void> {
+    const ca = this.currentAttack;
+    const aa = this.state.activeAttack;
+    if (!ca || !aa) return;
+
+    const count = await prisma.question.count();
+    if (count === 0) {
+      this.endAttack("no_change");
+      return;
+    }
+    const q = await prisma.question.findFirst({
+      skip: Math.floor(Math.random() * count),
+    });
+    if (!q) {
+      this.endAttack("no_change");
+      return;
+    }
+
+    aa.tieQuestionId = q.id;
+    aa.tieQuestionText = q.text;
+    aa.tieExpiresAt = Date.now() + WAR_TIE_TIMER_MS;
+    aa.expiresAt = 0;
+
+    ca.tieQuestionRowId = q.id;
+    ca.tieCorrectAnswer = q.answer;
+    ca.tieStartedAtMs = Date.now();
+    ca.tieAnswers = new Map();
+  }
+
+  private handleWarTie(
+    playerId: string,
+    payload: { value: number; firstInputAtMs?: number | null },
+  ): void {
+    const ca = this.currentAttack;
+    const aa = this.state.activeAttack;
+    if (!ca || !aa || !aa.tieQuestionId) return;
+    if (playerId !== ca.attackerId && playerId !== ca.defenderId) return;
+
+    const value = Number(payload.value);
+    if (!Number.isFinite(value)) return;
+
+    ca.tieAnswers.set(playerId, {
+      value,
+      receivedAtMs: Date.now(),
+      firstInputAtMs:
+        typeof payload.firstInputAtMs === "number"
+          ? Math.max(0, Math.min(WAR_TIE_TIMER_MS, payload.firstInputAtMs))
+          : null,
+    });
+
+    if (ca.tieAnswers.size >= 2) {
+      this.resolveWarTie();
+    }
+  }
+
+  private resolveWarTie(): void {
+    const ca = this.currentAttack;
+    if (!ca || ca.tieCorrectAnswer === undefined || !ca.tieStartedAtMs) return;
+
+    const att = ca.tieAnswers.get(ca.attackerId);
+    const def = ca.tieAnswers.get(ca.defenderId);
+    const outcome = computeTieResult(
+      ca.tieCorrectAnswer,
+      att?.value ?? null,
+      def?.value ?? null,
+      att ? att.receivedAtMs - ca.tieStartedAtMs : null,
+      def ? def.receivedAtMs - ca.tieStartedAtMs : null,
+    );
+    this.endAttack(outcome);
+  }
+
+  private endAttack(
+    outcome: "attacker_won" | "defender_held" | "no_change",
+  ): void {
+    const ca = this.currentAttack;
+    const aa = this.state.activeAttack;
+    if (!ca || !aa) return;
+
+    const country = this.state.countries.get(ca.countryId);
+    if (!country) {
+      this.cleanupAttack();
+      return;
+    }
+
+    if (outcome === "attacker_won") {
+      const out = attackerWonOutcome({
+        isCapital: country.isCapital,
+        armies: country.armies,
+      });
+      if (out.type === "siege_continues") {
+        // Capital damaged, siege keeps going — restart MC phase with a
+        // fresh question. Keep the active attack live.
+        country.armies = out.remainingHp;
+        void this.continueAttack();
+        return;
+      } else if (out.type === "capital_falls") {
+        // Defender's whole empire transfers; captured capital becomes a
+        // regular territory but keeps its (1000/1500) point value.
+        const defenderId = ca.defenderId;
+        const attackerId = ca.attackerId;
+        country.ownerId = attackerId;
+        country.isCapital = false;
+        country.armies = 1;
+        this.state.countries.forEach((c) => {
+          if (c.ownerId === defenderId) c.ownerId = attackerId;
+        });
+      } else {
+        country.ownerId = ca.attackerId;
+        country.armies = 1;
+      }
+    } else if (outcome === "defender_held") {
+      country.points += 100; // successful defence bonus
+    }
+    // no_change → no mutation
+
+    this.telemetry.attacks.push({
+      attackerId: ca.attackerId,
+      defenderId: ca.defenderId,
+      countryId: ca.countryId,
+      outcome,
+      auto: false,
+    });
+
+    this.cleanupAttack();
+    this.advanceWarTurn();
+  }
+
+  private async continueAttack(): Promise<void> {
+    const ca = this.currentAttack;
+    const aa = this.state.activeAttack;
+    if (!ca || !aa) return;
+
+    const wqCount = await prisma.warQuestion.count();
+    if (wqCount === 0) {
+      this.cleanupAttack();
+      this.advanceWarTurn();
+      return;
+    }
+    const wq = await prisma.warQuestion.findFirst({
+      skip: Math.floor(Math.random() * wqCount),
+    });
+    if (!wq) return;
+
+    // Reset tie state, restart MC with new question.
+    aa.questionId = wq.id;
+    aa.questionText = wq.text;
+    aa.options = new ArraySchema<string>(...wq.options);
+    aa.category = wq.category;
+    aa.expiresAt = Date.now() + WAR_MC_TIMER_MS;
+    aa.tieQuestionId = 0;
+    aa.tieQuestionText = "";
+    aa.tieExpiresAt = 0;
+    aa.lastAttackerCorrect = false;
+    aa.lastDefenderCorrect = false;
+
+    ca.questionRowId = wq.id;
+    ca.correctOption = wq.answer;
+    ca.mcStartedAtMs = Date.now();
+    ca.answers.clear();
+    ca.tieAnswers.clear();
+    ca.tieQuestionRowId = undefined;
+    ca.tieCorrectAnswer = undefined;
+    ca.tieStartedAtMs = undefined;
+  }
+
+  private cleanupAttack(): void {
+    this.state.activeAttack = null;
+    this.currentAttack = null;
+  }
+
+  private advanceWarTurn(): void {
+    // Increment warTurns. Compute end-of-game first.
+    this.state.warTurns += 1;
+
+    const counts = new Map<string, number>();
+    const points = new Map<string, number>();
+    this.state.countries.forEach((c) => {
+      if (c.ownerId) {
+        counts.set(c.ownerId, (counts.get(c.ownerId) ?? 0) + 1);
+        points.set(c.ownerId, (points.get(c.ownerId) ?? 0) + c.points);
+      }
+    });
+    const playersWithLand = Array.from(counts.values()).filter((n) => n > 0)
+      .length;
+    const reason = warEndReason(
+      this.state.warTurns,
+      this.state.players.size,
+      MAX_WAR_ROUNDS,
+      playersWithLand,
+    );
+
+    if (reason !== null) {
+      this.endGame(reason, points, counts);
+      return;
+    }
+
+    // Advance turn (skip players with no lands? old code didn't). Just
+    // round-robin.
+    this.state.turnIndex =
+      (this.state.turnIndex + 1) % Math.max(1, this.state.players.size);
+    this.state.warTurnExpiresAt = Date.now() + WAR_TURN_TIMER_MS;
+  }
+
+  private autoAttack(): void {
+    const player = this.playerByTurnOrder(this.state.turnIndex);
+    if (!player) return;
+    const enemies = this.enemyNeighborSvgIds(player.id);
+    if (enemies.size === 0) {
+      // No reachable enemy — skip this turn.
+      this.state.warTurnExpiresAt = 0;
+      this.advanceWarTurn();
+      return;
+    }
+    const arr = Array.from(enemies);
+    const target = arr[Math.floor(Math.random() * arr.length)];
+    void this.handleAttack(player.id, target, true);
+  }
+
+  // Set of svgIds of enemy-owned countries that border any of the given
+  // player's countries.
+  private enemyNeighborSvgIds(playerId: string): Set<string> {
+    const myTids = new Set<number>();
+    this.state.countries.forEach((c) => {
+      if (c.ownerId === playerId) myTids.add(c.templateId);
+    });
+    const neighborTids = new Set<number>();
+    for (const tid of myTids) {
+      const ns = this.templateNeighbors.get(tid);
+      if (ns) ns.forEach((n: number) => neighborTids.add(n));
+    }
+    const out = new Set<string>();
+    this.state.countries.forEach((c) => {
+      if (
+        c.ownerId &&
+        c.ownerId !== playerId &&
+        neighborTids.has(c.templateId)
+      )
+        out.add(c.svgId);
+    });
+    return out;
+  }
+
+  // --- Game end ---------------------------------------------------------
+
+  private endGame(
+    _reason: "sole_survivor" | "rounds_exhausted",
+    points: Map<string, number>,
+    counts: Map<string, number>,
+  ): void {
+    // Winner — most points among alive players (sole_survivor) or among
+    // everyone (rounds_exhausted). winnerByLands ranks by counts (we feed
+    // it the points map for a tie-friendly ranking).
+    const playerArr: Player[] = [];
+    this.state.players.forEach((p) => {
+      if (
+        _reason === "sole_survivor"
+          ? (counts.get(p.id) ?? 0) > 0
+          : true
+      ) {
+        playerArr.push(p);
+      }
+    });
+    const winner = winnerByLands(playerArr, points);
+    this.state.winnerId = winner?.id ?? "";
+    this.state.stage = "ended";
+    this.state.status = "completed";
+    this.state.warTurnExpiresAt = 0;
+    this.state.activeQuestion = null;
+    this.state.activeAttack = null;
+
+    console.log(
+      `[match ${this.roomId}] game_over (reason=${_reason}, winner=${winner?.nickname ?? "none"})`,
+    );
+
+    // MatchSnapshot persistence happens in Phase 3.6 — wired right here.
+    void this.persistFinalSnapshot();
+  }
+
+  private async persistFinalSnapshot(): Promise<void> {
+    // Phase 3.6 — to be implemented.
   }
 
   // --- Stage transitions -----------------------------------------------
