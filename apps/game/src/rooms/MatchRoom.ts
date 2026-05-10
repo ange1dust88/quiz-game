@@ -17,10 +17,13 @@ import { Client, Room } from "colyseus";
 import { prisma } from "@quiz/db";
 import { ArraySchema } from "@colyseus/schema";
 import {
+  applyExperience,
   attackerWonOutcome,
   capitalParamsForChoice,
+  computeEloChanges,
   computePickOrder,
   computeTieResult,
+  computeXpEarned,
   rankAnswers,
   verifyJwt,
   warEndReason,
@@ -75,6 +78,7 @@ export class MatchRoom extends Room<MatchState> {
   // Set in onCreate. Used by handlers to look up DB rows and write back at
   // game_over.
   private sessionId = "";
+  private startedAtMs = 0;
 
   // Cache of CountryTemplate.neighbors so adjacency lookups don't hit the
   // DB during gameplay. Populated once at hydration.
@@ -160,6 +164,7 @@ export class MatchRoom extends Room<MatchState> {
     if (!this.sessionId) {
       throw new Error("MatchRoom requires a sessionId in create options");
     }
+    this.startedAtMs = Date.now();
 
     this.state = new MatchState();
     this.maxClients = 4;
@@ -1264,7 +1269,155 @@ export class MatchRoom extends Room<MatchState> {
   }
 
   private async persistFinalSnapshot(): Promise<void> {
-    // Phase 3.6 — to be implemented.
+    const duration = Date.now() - this.startedAtMs;
+
+    // Snapshot a plain-JS view of the schema for storage. Including only
+    // analysis-relevant fields keeps the JSON small and decoupled from the
+    // exact schema layout (which may evolve).
+    const players: Array<{
+      id: string;
+      profileId: string;
+      nickname: string;
+      turnOrder: number;
+      capitalStyle: string;
+    }> = [];
+    this.state.players.forEach((p) => {
+      players.push({
+        id: p.id,
+        profileId: p.profileId,
+        nickname: p.nickname,
+        turnOrder: p.turnOrder,
+        capitalStyle: p.capitalStyle,
+      });
+    });
+    const countries: Array<{
+      svgId: string;
+      templateId: number;
+      ownerId: string | null;
+      isCapital: boolean;
+      armies: number;
+      maxArmies: number;
+      points: number;
+    }> = [];
+    this.state.countries.forEach((c) => {
+      countries.push({
+        svgId: c.svgId,
+        templateId: c.templateId,
+        ownerId: c.ownerId || null,
+        isCapital: c.isCapital,
+        armies: c.armies,
+        maxArmies: c.maxArmies,
+        points: c.points,
+      });
+    });
+    const finalState = {
+      stage: this.state.stage,
+      status: this.state.status,
+      winnerId: this.state.winnerId || null,
+      warTurns: this.state.warTurns,
+      players,
+      countries,
+    };
+
+    try {
+      await prisma.matchSnapshot.upsert({
+        where: { sessionId: this.sessionId },
+        create: {
+          sessionId: this.sessionId,
+          winnerId: this.state.winnerId || null,
+          duration,
+          finalState,
+          telemetry: this.telemetry,
+        },
+        update: {
+          winnerId: this.state.winnerId || null,
+          duration,
+          finalState,
+          telemetry: this.telemetry,
+        },
+      });
+
+      await prisma.gameSession.update({
+        where: { id: this.sessionId },
+        data: {
+          status: "completed",
+          stage: "ended",
+          winnerId: this.state.winnerId || null,
+        },
+      });
+
+      await this.updatePlayerStats();
+
+      console.log(
+        `[match ${this.roomId}] snapshot persisted (duration=${duration}ms)`,
+      );
+    } catch (err) {
+      console.error(`[match ${this.roomId}] snapshot persist failed:`, err);
+    }
+  }
+
+  private async updatePlayerStats(): Promise<void> {
+    const playerArr: Player[] = [];
+    this.state.players.forEach((p) => playerArr.push(p));
+    if (playerArr.length === 0) return;
+
+    // Pull current ELO so we can do the pairwise update.
+    const profiles = await prisma.playerProfile.findMany({
+      where: { id: { in: playerArr.map((p) => p.profileId) } },
+      select: { id: true, elo: true, level: true, experience: true },
+    });
+    const profileById = new Map(profiles.map((p) => [p.id, p]));
+
+    const winnerProfileId =
+      this.state.winnerId
+        ? this.state.players.get(this.state.winnerId)?.profileId ?? null
+        : null;
+
+    // Aggregate points held per player at end of match (used for XP scaling).
+    const pointsByPlayer = new Map<string, number>();
+    this.state.countries.forEach((c) => {
+      if (c.ownerId)
+        pointsByPlayer.set(
+          c.ownerId,
+          (pointsByPlayer.get(c.ownerId) ?? 0) + c.points,
+        );
+    });
+
+    const eloDelta = computeEloChanges(
+      playerArr.map((p) => ({
+        profileId: p.profileId,
+        elo: profileById.get(p.profileId)?.elo ?? 1000,
+      })),
+      winnerProfileId,
+    );
+
+    for (const p of playerArr) {
+      const profile = profileById.get(p.profileId);
+      if (!profile) continue;
+      const isWinner = p.id === this.state.winnerId;
+      const points = pointsByPlayer.get(p.id) ?? 0;
+      const xpEarned = computeXpEarned(isWinner, points);
+      const { level, experience } = applyExperience(
+        profile.level,
+        profile.experience,
+        xpEarned,
+      );
+      const delta = eloDelta.get(p.profileId) ?? 0;
+
+      await prisma.playerProfile.update({
+        where: { id: p.profileId },
+        data: {
+          gamesPlayed: { increment: 1 },
+          gamesWon: { increment: isWinner ? 1 : 0 },
+          gamesLost: {
+            increment: !isWinner && winnerProfileId !== null ? 1 : 0,
+          },
+          experience,
+          level,
+          elo: { increment: delta },
+        },
+      });
+    }
   }
 
   // --- Stage transitions -----------------------------------------------

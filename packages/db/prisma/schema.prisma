@@ -50,6 +50,24 @@ model PlayerProfile {
   user        User           @relation(fields: [userId], references: [id])
 }
 
+// Per-match record persisted by Colyseus at game_over. Replaces the
+// granular live tables (MatchCountry / MatchEvent / MatchQuestion /
+// PlayerAnswer / WarAttack / WarAnswer) which are no longer touched
+// during gameplay. Both `finalState` and `telemetry` are JSON blobs —
+// schemas inferred at analysis time, not enforced here, since the live
+// schema may still evolve.
+model MatchSnapshot {
+  id          String      @id @default(cuid())
+  sessionId   String      @unique
+  winnerId    String?
+  duration    Int         // ms from room create to game_over
+  finalState  Json
+  telemetry   Json
+  createdAt   DateTime    @default(now())
+
+  session     GameSession @relation(fields: [sessionId], references: [id])
+}
+
 model GameSession {
   id                String          @id @default(cuid())
   status            String          @default("waiting")
@@ -63,6 +81,7 @@ model GameSession {
   nextQuestionAt    DateTime?
   capitalExpiresAt  DateTime?
   warTurnExpiresAt  DateTime?
+  snapshot          MatchSnapshot?
   warTurns          Int             @default(0)
   winnerId          String?
   matchMap          MatchCountry[]
