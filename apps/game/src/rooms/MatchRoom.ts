@@ -15,8 +15,18 @@
 
 import { Client, Room } from "colyseus";
 import { prisma } from "@quiz/db";
-import { capitalParamsForChoice, verifyJwt } from "@quiz/shared";
-import { Country, MatchState, Player } from "@quiz/shared/schemas";
+import {
+  capitalParamsForChoice,
+  computePickOrder,
+  rankAnswers,
+  verifyJwt,
+} from "@quiz/shared";
+import {
+  ActiveQuestion,
+  Country,
+  MatchState,
+  Player,
+} from "@quiz/shared/schemas";
 
 type AuthInfo = {
   userId: string;
@@ -35,12 +45,73 @@ type JoinOptions = {
 
 // Stage timers — keep aligned with the old code so UX feels the same.
 const CAPITAL_TIMER_MS = 20_000;
+const QUESTION_TIMER_MS = 10_000;
+const PICK_TIMER_MS = 15_000;
+const PHASE_DELAY_MS = 3_500;
+const WAR_TURN_TIMER_MS = 20_000;
+const WAR_MC_TIMER_MS = 15_000;
+const WAR_TIE_TIMER_MS = 15_000;
+const MAX_WAR_ROUNDS = 5;
 const TICK_INTERVAL_MS = 250;
+
+// Per-question telemetry collected from clients while the question is live.
+// Held outside the synced state so other players can't see opponents'
+// answers in flight.
+type AnswerEntry = {
+  playerId: string;
+  value: number;
+  receivedAtMs: number;
+  firstInputAtMs: number | null;
+  inputChangeCount: number;
+};
 
 export class MatchRoom extends Room<MatchState> {
   // Set in onCreate. Used by handlers to look up DB rows and write back at
   // game_over.
   private sessionId = "";
+
+  // Cache of CountryTemplate.neighbors so adjacency lookups don't hit the
+  // DB during gameplay. Populated once at hydration.
+  private templateNeighbors = new Map<number, number[]>();
+
+  // Per-question state held off-state so opponents can't see in-flight
+  // answers via the synced schema. Reset between questions.
+  private currentQuestion: {
+    matchQuestionLocalId: string; // ephemeral id to dedupe stale UPDATE handlers on client
+    questionRowId: number;
+    correctAnswer: number;
+    startedAtMs: number;
+    answers: Map<string, AnswerEntry>; // keyed by playerInGameId
+  } | null = null;
+
+  // Telemetry batched and persisted in the final MatchSnapshot at game_over.
+  private telemetry: {
+    numericAnswers: Array<{
+      playerId: string;
+      questionId: number;
+      category: string;
+      value: number;
+      diff: number;
+      timeMs: number;
+      firstInputAtMs: number | null;
+      inputChangeCount: number;
+    }>;
+    capitalPicks: Array<{
+      playerId: string;
+      svgId: string;
+      auto: boolean;
+      capitalStyle: string;
+    }>;
+    territoryPicks: Array<{
+      playerId: string;
+      svgId: string;
+      auto: boolean;
+    }>;
+  } = {
+    numericAnswers: [],
+    capitalPicks: [],
+    territoryPicks: [],
+  };
 
   override async onCreate(options: CreateOptions): Promise<void> {
     this.sessionId = options?.sessionId ?? "";
@@ -62,8 +133,33 @@ export class MatchRoom extends Room<MatchState> {
     this.onMessage("claim_capital", (client, payload: { svgId: string }) => {
       const auth = client.auth as AuthInfo | undefined;
       if (!auth) return;
-      this.handleClaimCapital(auth.playerInGameId, payload?.svgId);
+      this.handleClaimCapital(auth.playerInGameId, payload?.svgId, false);
     });
+
+    this.onMessage(
+      "submit_answer",
+      (
+        client,
+        payload: {
+          value: number;
+          firstInputAtMs?: number | null;
+          inputChangeCount?: number;
+        },
+      ) => {
+        const auth = client.auth as AuthInfo | undefined;
+        if (!auth) return;
+        this.handleSubmitAnswer(auth.playerInGameId, payload);
+      },
+    );
+
+    this.onMessage(
+      "claim_territory",
+      (client, payload: { svgId: string }) => {
+        const auth = client.auth as AuthInfo | undefined;
+        if (!auth) return;
+        this.handleClaimTerritory(auth.playerInGameId, payload?.svgId, false);
+      },
+    );
 
     // Single ticker drives all deadline-based transitions. Cheaper than a
     // separate setTimeout per phase, and easy to reason about.
@@ -187,6 +283,7 @@ export class MatchRoom extends Room<MatchState> {
       c.svgId = t.svgId;
       c.templateId = t.id;
       this.state.countries.set(c.id, c);
+      this.templateNeighbors.set(t.id, t.neighbors);
     }
 
     this.state.stage = "capitals";
@@ -197,12 +294,43 @@ export class MatchRoom extends Room<MatchState> {
   // --- Tick (deadline driver) -------------------------------------------
 
   private tick(): void {
-    if (
-      this.state.stage === "capitals" &&
-      this.state.capitalExpiresAt > 0 &&
-      Date.now() >= this.state.capitalExpiresAt
-    ) {
-      this.autoPickCapital();
+    const now = Date.now();
+    if (this.state.stage === "capitals") {
+      if (
+        this.state.capitalExpiresAt > 0 &&
+        now >= this.state.capitalExpiresAt
+      ) {
+        this.autoPickCapital();
+      }
+      return;
+    }
+    if (this.state.stage === "expand") {
+      // Time to start the next question?
+      if (
+        this.state.nextQuestionAt > 0 &&
+        now >= this.state.nextQuestionAt &&
+        !this.state.activeQuestion &&
+        this.state.pickOrder.length === 0
+      ) {
+        this.state.nextQuestionAt = 0;
+        void this.startQuestion();
+      }
+      // Active question expired → resolve with whatever answers we have.
+      if (
+        this.state.activeQuestion &&
+        now >= this.state.activeQuestion.expiresAt
+      ) {
+        this.resolveQuestion();
+      }
+      // Pick window expired → auto-pick for whoever's at head.
+      if (
+        this.state.pickExpiresAt > 0 &&
+        now >= this.state.pickExpiresAt &&
+        this.state.pickOrder.length > 0
+      ) {
+        this.autoPickTerritory();
+      }
+      return;
     }
   }
 
@@ -247,7 +375,11 @@ export class MatchRoom extends Room<MatchState> {
    *
    * Called from both the client message handler and the auto-pick path.
    */
-  private handleClaimCapital(playerId: string, svgId: string | undefined): void {
+  private handleClaimCapital(
+    playerId: string,
+    svgId: string | undefined,
+    auto: boolean,
+  ): void {
     if (this.state.stage !== "capitals") return;
     if (!svgId) return;
 
@@ -269,8 +401,15 @@ export class MatchRoom extends Room<MatchState> {
     country.maxArmies = params.armies;
     country.points = params.points;
 
+    this.telemetry.capitalPicks.push({
+      playerId,
+      svgId: country.svgId,
+      auto,
+      capitalStyle: player.capitalStyle,
+    });
+
     console.log(
-      `[match ${this.roomId}] ${player.nickname} → capital ${country.svgId}`,
+      `[match ${this.roomId}] ${player.nickname} → capital ${country.svgId}${auto ? " (auto)" : ""}`,
     );
 
     this.advanceCapitalTurn();
@@ -298,7 +437,7 @@ export class MatchRoom extends Room<MatchState> {
     console.log(
       `[match ${this.roomId}] auto-pick: ${player.nickname} → ${pick.svgId}`,
     );
-    this.handleClaimCapital(player.id, pick.svgId);
+    this.handleClaimCapital(player.id, pick.svgId, true);
   }
 
   private advanceCapitalTurn(): void {
@@ -315,9 +454,334 @@ export class MatchRoom extends Room<MatchState> {
     this.state.stage = "expand";
     this.state.capitalExpiresAt = 0;
     this.state.turnIndex = 0;
-    // Question scheduling happens in Phase 3.4. For now the state just
-    // settles in expand with no active question — clients see the new
-    // stage but no UI-driven actions until 3.4 is wired up.
+    // Schedule the first question after a short delay so the UI has time
+    // to render the stage change before the question pops in.
+    this.state.nextQuestionAt = Date.now() + PHASE_DELAY_MS;
     console.log(`[match ${this.roomId}] → stage=expand`);
+  }
+
+  // --- Expand stage -----------------------------------------------------
+
+  private async startQuestion(): Promise<void> {
+    if (this.state.stage !== "expand") return;
+    if (this.state.activeQuestion) return;
+    if (this.state.pickOrder.length > 0) return;
+
+    const count = await prisma.question.count();
+    if (count === 0) {
+      console.warn(`[match ${this.roomId}] no Question rows in DB`);
+      return;
+    }
+    const question = await prisma.question.findFirst({
+      skip: Math.floor(Math.random() * count),
+    });
+    if (!question) return;
+
+    const aq = new ActiveQuestion();
+    aq.id = `${question.id}-${Date.now()}`;
+    aq.questionId = question.id;
+    aq.text = question.text;
+    aq.category = question.category;
+    aq.expiresAt = Date.now() + QUESTION_TIMER_MS;
+    this.state.activeQuestion = aq;
+    this.state.nextQuestionAt = 0;
+
+    this.currentQuestion = {
+      matchQuestionLocalId: aq.id,
+      questionRowId: question.id,
+      correctAnswer: question.answer,
+      startedAtMs: Date.now(),
+      answers: new Map(),
+    };
+
+    console.log(
+      `[match ${this.roomId}] question ${question.id} (${question.category}): "${question.text}"`,
+    );
+  }
+
+  private handleSubmitAnswer(
+    playerId: string,
+    payload: {
+      value: number;
+      firstInputAtMs?: number | null;
+      inputChangeCount?: number;
+    },
+  ): void {
+    if (this.state.stage !== "expand") return;
+    if (!this.currentQuestion) return;
+    if (!this.state.players.has(playerId)) return;
+
+    const value = Number(payload?.value);
+    if (!Number.isFinite(value)) return;
+
+    const firstInputAtMs =
+      typeof payload.firstInputAtMs === "number"
+        ? Math.max(0, Math.min(QUESTION_TIMER_MS, payload.firstInputAtMs))
+        : null;
+    const inputChangeCount = Math.max(
+      0,
+      Math.min(1000, Math.round(payload.inputChangeCount ?? 0)),
+    );
+
+    // Upsert — last submission wins (matches old behaviour).
+    this.currentQuestion.answers.set(playerId, {
+      playerId,
+      value,
+      receivedAtMs: Date.now(),
+      firstInputAtMs,
+      inputChangeCount,
+    });
+
+    if (this.currentQuestion.answers.size >= this.state.players.size) {
+      this.resolveQuestion();
+    }
+  }
+
+  private resolveQuestion(): void {
+    if (!this.currentQuestion) return;
+    const cq = this.currentQuestion;
+    this.currentQuestion = null;
+
+    const totalPlayers = this.state.players.size;
+    const submissions = Array.from(cq.answers.values()).map((a) => ({
+      playerId: a.playerId,
+      answer: a.value,
+      answeredAtMs: a.receivedAtMs,
+    }));
+
+    const sorted = rankAnswers(submissions, cq.correctAnswer);
+    let pickOrder: string[] = [];
+
+    type Result = {
+      playerId: string;
+      nickname: string;
+      answer: number | null;
+      diff: number;
+      place: number;
+      timeMs: number | null;
+    };
+    let results: Result[] = [];
+
+    if (sorted.length === 0 && totalPlayers > 0) {
+      // Nobody answered — random lucky pick so the game doesn't stall.
+      const playerIds: string[] = [];
+      this.state.players.forEach((p) => playerIds.push(p.id));
+      const lucky = playerIds[Math.floor(Math.random() * playerIds.length)];
+      pickOrder = computePickOrder([lucky], totalPlayers);
+      results = playerIds.map((pid, i) => {
+        const p = this.state.players.get(pid)!;
+        return {
+          playerId: pid,
+          nickname: p.nickname,
+          answer: null,
+          diff: 0,
+          place: pid === lucky ? 1 : i + 2,
+          timeMs: null,
+        };
+      });
+    } else {
+      pickOrder = computePickOrder(
+        sorted.map((s) => s.playerId),
+        totalPlayers,
+      );
+
+      const ranked: Result[] = sorted.map((s, i) => {
+        const p = this.state.players.get(s.playerId)!;
+        return {
+          playerId: s.playerId,
+          nickname: p.nickname,
+          answer: s.answer,
+          diff: Math.abs(s.answer - cq.correctAnswer),
+          place: i + 1,
+          timeMs: Math.max(0, s.answeredAtMs - cq.startedAtMs),
+        };
+      });
+      const answeredSet = new Set(ranked.map((r) => r.playerId));
+      const missing: Result[] = [];
+      this.state.players.forEach((p, pid) => {
+        if (!answeredSet.has(pid)) {
+          missing.push({
+            playerId: pid,
+            nickname: p.nickname,
+            answer: null,
+            diff: 0,
+            place: ranked.length + missing.length + 1,
+            timeMs: null,
+          });
+        }
+      });
+      results = [...ranked, ...missing];
+    }
+
+    // Telemetry — store one row per submitted answer.
+    for (const a of cq.answers.values()) {
+      this.telemetry.numericAnswers.push({
+        playerId: a.playerId,
+        questionId: cq.questionRowId,
+        category: this.state.activeQuestion?.category ?? "general",
+        value: a.value,
+        diff: Math.abs(a.value - cq.correctAnswer),
+        timeMs: Math.max(0, a.receivedAtMs - cq.startedAtMs),
+        firstInputAtMs: a.firstInputAtMs,
+        inputChangeCount: a.inputChangeCount,
+      });
+    }
+
+    // Push results message — ephemeral; clients render briefly then hide.
+    this.broadcast("round_results", { results, correctAnswer: cq.correctAnswer });
+
+    // Clear active question, install pick queue + deadline.
+    this.state.activeQuestion = null;
+    this.state.pickOrder.clear();
+    pickOrder.forEach((id) => this.state.pickOrder.push(id));
+    this.state.pickExpiresAt =
+      pickOrder.length > 0 ? Date.now() + PICK_TIMER_MS : 0;
+
+    console.log(
+      `[match ${this.roomId}] question resolved, pickOrder=[${pickOrder.length}]`,
+    );
+  }
+
+  private handleClaimTerritory(
+    playerId: string,
+    svgId: string | undefined,
+    auto: boolean,
+  ): void {
+    if (this.state.stage !== "expand") return;
+    if (!svgId) return;
+    if (this.state.pickOrder.length === 0) return;
+    if (this.state.pickOrder[0] !== playerId) return;
+
+    let country: Country | undefined;
+    this.state.countries.forEach((c) => {
+      if (c.svgId === svgId) country = c;
+    });
+    if (!country || country.ownerId) return;
+
+    // Must be a free neighbor of one of the player's existing countries
+    // (matches the old constraint). If the player owns no countries yet
+    // (edge case), allow any free country.
+    const myTemplateIds = new Set<number>();
+    this.state.countries.forEach((c) => {
+      if (c.ownerId === playerId) myTemplateIds.add(c.templateId);
+    });
+    if (myTemplateIds.size > 0) {
+      const free = this.freeNeighborSvgIds(playerId);
+      if (free.size > 0 && !free.has(svgId)) return;
+    }
+
+    country.ownerId = playerId;
+    this.telemetry.territoryPicks.push({
+      playerId,
+      svgId: country.svgId,
+      auto,
+    });
+
+    const player = this.state.players.get(playerId);
+    console.log(
+      `[match ${this.roomId}] ${player?.nickname} → territory ${country.svgId}${auto ? " (auto)" : ""}`,
+    );
+
+    this.advanceTerritoryPick();
+  }
+
+  private advanceTerritoryPick(): void {
+    // Pop the head of pickOrder (the one we just consumed).
+    if (this.state.pickOrder.length > 0) {
+      this.state.pickOrder.shift();
+    }
+
+    // Are all countries now owned? → war.
+    let allOwned = true;
+    this.state.countries.forEach((c) => {
+      if (!c.ownerId) allOwned = false;
+    });
+    if (allOwned) {
+      this.transitionToWar();
+      return;
+    }
+
+    if (this.state.pickOrder.length === 0) {
+      // Queue empty — schedule the next question.
+      this.state.pickExpiresAt = 0;
+      this.state.nextQuestionAt = Date.now() + PHASE_DELAY_MS;
+    } else {
+      // Refresh deadline for the next picker.
+      this.state.pickExpiresAt = Date.now() + PICK_TIMER_MS;
+    }
+  }
+
+  private autoPickTerritory(): void {
+    const playerId = this.state.pickOrder[0];
+    if (!playerId) return;
+    const free = this.freeNeighborSvgIds(playerId);
+    if (free.size === 0) {
+      // No reachable free country — pop their slot and move on.
+      this.state.pickOrder.shift();
+      if (this.state.pickOrder.length === 0) {
+        this.state.pickExpiresAt = 0;
+        this.state.nextQuestionAt = Date.now() + PHASE_DELAY_MS;
+      } else {
+        this.state.pickExpiresAt = Date.now() + PICK_TIMER_MS;
+      }
+      return;
+    }
+    const arr = Array.from(free);
+    const pick = arr[Math.floor(Math.random() * arr.length)];
+    this.handleClaimTerritory(playerId, pick, true);
+  }
+
+  // Returns set of svgIds of unowned countries that are neighbors of any
+  // country the player owns. Uses the templateId neighbor list cached in
+  // CountryTemplate (read once at hydration → already in state via Country).
+  private freeNeighborSvgIds(playerId: string): Set<string> {
+    const myTemplateIds = new Set<number>();
+    this.state.countries.forEach((c) => {
+      if (c.ownerId === playerId) myTemplateIds.add(c.templateId);
+    });
+    // Build neighbor template ID set by scanning country templates for owned
+    // countries' neighbors. Since we don't keep neighbor data on Country
+    // schema, fetch from cached `templateNeighbors` (populated in hydration).
+    const neighborIds = new Set<number>();
+    for (const tid of myTemplateIds) {
+      const ns = this.templateNeighbors.get(tid);
+      if (ns) ns.forEach((n: number) => neighborIds.add(n));
+    }
+    const out = new Set<string>();
+    this.state.countries.forEach((c) => {
+      if (!c.ownerId && neighborIds.has(c.templateId)) out.add(c.svgId);
+    });
+    return out;
+  }
+
+  // --- Stage transitions -----------------------------------------------
+
+  private transitionToWar(): void {
+    this.state.stage = "war";
+    this.state.pickOrder.clear();
+    this.state.pickExpiresAt = 0;
+    this.state.activeQuestion = null;
+    this.state.nextQuestionAt = 0;
+
+    // Leader (most lands) attacks first.
+    let leader = "";
+    let maxLands = -1;
+    const counts = new Map<string, number>();
+    this.state.countries.forEach((c) => {
+      if (c.ownerId) counts.set(c.ownerId, (counts.get(c.ownerId) ?? 0) + 1);
+    });
+    this.state.players.forEach((p) => {
+      const n = counts.get(p.id) ?? 0;
+      if (n > maxLands) {
+        maxLands = n;
+        leader = p.id;
+      }
+    });
+    const leaderPlayer = this.state.players.get(leader);
+    if (leaderPlayer) this.state.turnIndex = leaderPlayer.turnOrder;
+
+    this.state.warTurnExpiresAt = Date.now() + WAR_TURN_TIMER_MS;
+    this.state.warTurns = 0;
+    console.log(`[match ${this.roomId}] → stage=war (leader=${leader})`);
   }
 }
