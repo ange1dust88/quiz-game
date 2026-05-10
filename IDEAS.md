@@ -147,6 +147,34 @@ Subjective vs objective — fairness perception.
 
 ---
 
+## Замечено при аудите — обсудить вместе
+
+### UX полиш (не критично)
+- **Звуковые эффекты** — старый код имел tick / submit / capture / capitalFall / victory / defeat sounds через `app/lib/sounds.ts` (Web Audio synthesizer). В новом UI всё тихо. Можно перенести.
+- **Animations on capture** — старый `EuropeMap` пульсировал захваченную страну (`country-captured` class на 750мс). Можно добавить через diff между prev/current `countries` в store.
+- **Event feed** — старый матч имел правую панель с лентой "X took Poland", "Capital fell". В новом UI нет. Можно добавить из `MatchEvent` (которой уже нет) или генерировать клиентом из state diffs.
+- **Карта pan/zoom** — старая поддерживала колесо/драг для зума и панорамы. Новая статичная. Если на маленьком экране — может быть проблемой.
+- **Tooltip на hover** — старая показывала плашку рядом с курсором (страна, владелец, очки, HP). Новая использует SVG `<title>` (хуже UX, появляется только через ~1с).
+- **Анимация капитала падает** — звук + красная вспышка по всей карте. Лоудно показать масштаб события.
+
+### Геймплей
+- **Reconnect UI** — сейчас сервер держит слот 30с но клиент не показывает "X is reconnecting...". Можно добавить badge/индикатор.
+- **Surrender/leave button** — нет способа выйти из идущего матча кроме закрытия вкладки. Может быть нужен "Concede" с подтверждением.
+- **Spectator mode** — сейчас onAuth отбрасывает не-участников. Может стоить пускать как "watch only"?
+- **Player stats during match** — в шапке показывается только stage. Можно добавить: кто-то-побеждает по очкам, твой rank среди игроков.
+
+### Аналитика / для дипломки
+- **Реал-тайм dashboard для админа** — пока матчи идут, видеть что происходит. Не критично, но красиво.
+- **Кросс-табы** — `MBTI × accuracy by category`, `age × reaction time`, `education × winrate`. Сейчас аналитика показывает каждое измерение отдельно. Кросс-табы — главный инсайт диплома.
+- **K-means clustering** — сделать в Jupyter notebook с экспортом из MatchSnapshot.telemetry. Это академический вклад.
+- **Калибровка self-rating vs actual** — сейчас в settings нет self-rating экспертизы по категориям. Если добавить — Dunning-Kruger график.
+
+### Стабильность / прод
+- **Rate limit на Colyseus matchmaking** — кто-то может спамить joinOrCreate. Не критично для дипломки.
+- **Health endpoint** — `/health` на game сервере для Railway healthchecks.
+- **Graceful shutdown** — на SIGTERM не сохраняем state in-flight матчей. Если game-server рестартует, активные матчи теряются. Не критично для дипломки.
+- **MatchSnapshot retention** — telemetry JSON растёт. Если 1000 игр × 50KB = 50MB. Не проблема, но через год понадобится cleanup.
+
 ## Открытые вопросы
 
 - Как и где хранить агрегаты? Денормализованная `PlayerFeatures` таблица

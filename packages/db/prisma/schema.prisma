@@ -1,0 +1,282 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  passwordHash String
+  createdAt    DateTime       @default(now())
+  profile      PlayerProfile?
+}
+
+model PlayerProfile {
+  id          String         @id @default(uuid())
+  userId      String         @unique
+  nickname    String         @unique
+  avatarUrl   String?
+  level       Int            @default(1)
+  experience  Int            @default(0)
+  elo         Int            @default(1000)
+  country     String?
+  gamesPlayed Int            @default(0)
+  gamesWon    Int            @default(0)
+  gamesLost   Int            @default(0)
+
+  // Demographic fields — used as features for behavioural inference / clustering.
+  // All optional so registration stays lightweight; populated via /settings.
+  // Strictly categorical/numeric — free-text fields were dropped because the
+  // simple analytical model can't usefully consume them.
+  birthYear         Int?
+  gender            String?
+  city              String?
+  education         String?
+  occupation        String?
+
+  // Self-reported psychometric data — high-signal features for clustering
+  // game behaviour against player personality.
+  mbti              String?       // one of 16 MBTI codes (e.g. "INTJ")
+  iqScore           Int?          // self-reported IQ if known
+  personalityTraits String[]       @default([])
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  games       PlayerInGame[]
+  user        User           @relation(fields: [userId], references: [id])
+}
+
+// Per-match record persisted by Colyseus at game_over. Replaces the
+// granular live tables (MatchCountry / MatchEvent / MatchQuestion /
+// PlayerAnswer / WarAttack / WarAnswer) which are no longer touched
+// during gameplay. Both `finalState` and `telemetry` are JSON blobs —
+// schemas inferred at analysis time, not enforced here, since the live
+// schema may still evolve.
+model MatchSnapshot {
+  id          String      @id @default(cuid())
+  sessionId   String      @unique
+  winnerId    String?
+  duration    Int         // ms from room create to game_over
+  finalState  Json
+  telemetry   Json
+  createdAt   DateTime    @default(now())
+
+  session     GameSession @relation(fields: [sessionId], references: [id])
+}
+
+model GameSession {
+  id                String          @id @default(cuid())
+  status            String          @default("waiting")
+  createdAt         DateTime        @default(now())
+  stage             String          @default("capitals")
+  turnIndex         Int             @default(0)
+  currentQuestionId String?
+  pickOrder         String[]
+  picksRemaining    Int             @default(0)
+  pickExpiresAt     DateTime?
+  nextQuestionAt    DateTime?
+  capitalExpiresAt  DateTime?
+  warTurnExpiresAt  DateTime?
+  snapshot          MatchSnapshot?
+  warTurns          Int             @default(0)
+  winnerId          String?
+  matchMap          MatchCountry[]
+  questions         MatchQuestion[]
+  players           PlayerInGame[]
+  currentAttackId   String?
+  attacks           WarAttack[]
+  events            MatchEvent[]
+}
+
+model PlayerInGame {
+  id             String         @id @default(cuid())
+  gameSessionId  String
+  profileId      String
+  joinedAt       DateTime       @default(now())
+  role           String         @default("player")
+  turnOrder      Int?
+  ownedCountries MatchCountry[]
+  answers        PlayerAnswer[]
+  gameSession    GameSession    @relation(fields: [gameSessionId], references: [id])
+  profile        PlayerProfile  @relation(fields: [profileId], references: [id])
+
+  attacksAsAttacker  WarAttack[] @relation("attacker")
+  attacksAsDefender  WarAttack[] @relation("defender")
+  warAnswers         WarAnswer[]
+  events             MatchEvent[]
+  choices            MatchChoice[]
+
+  @@unique([gameSessionId, profileId])
+}
+
+// Pre-match strategic choices — one row per (player, choice key).
+// Captures the player's selection on a binary card (e.g. capital style) so
+// downstream game logic can read it and analytics can correlate it with
+// demographics / behaviour.
+model MatchChoice {
+  id             String       @id @default(cuid())
+  playerInGameId String
+  key            String
+  value          String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  player         PlayerInGame @relation(fields: [playerInGameId], references: [id])
+
+  @@unique([playerInGameId, key])
+}
+
+model CountryTemplate {
+  id        Int            @id
+  name      String
+  neighbors Int[]
+  svgId     String
+  matches   MatchCountry[]
+}
+
+model MatchCountry {
+  id            String          @id @default(cuid())
+  gameSessionId String
+  templateId    Int
+  ownerId       String?
+  isCapital     Boolean         @default(false)
+  armies        Int             @default(1)
+  // Max HP this territory can have. Mostly relevant for capitals where the
+  // player's pre-match choice (standard / risky) sets a different ceiling.
+  // Used by the HP-dot UI to render "current / max" without guessing.
+  maxArmies     Int             @default(1)
+  points        Int             @default(200)
+  gameSession   GameSession     @relation(fields: [gameSessionId], references: [id])
+  owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])
+  template      CountryTemplate @relation(fields: [templateId], references: [id])
+  attacks   WarAttack[]  
+
+  @@unique([gameSessionId, templateId])
+}
+
+enum QuestionCategory {
+  geography
+  history
+  math
+  science
+  sports
+  pop_culture
+  language
+  general
+}
+
+model Question {
+  id         Int              @id @default(autoincrement())
+  text       String
+  answer     Float
+  category   QuestionCategory @default(general)
+  matches    MatchQuestion[]
+  warAttacks WarAttack[]
+}
+
+model MatchQuestion {
+  id            String         @id @default(cuid())
+  gameSessionId String
+  questionId    Int
+  isActive      Boolean        @default(true)
+  expiresAt     DateTime
+  results       Json?
+  gameSession   GameSession    @relation(fields: [gameSessionId], references: [id])
+  question      Question       @relation(fields: [questionId], references: [id])
+  answers       PlayerAnswer[]
+}
+
+model PlayerAnswer {
+  id              String        @id @default(cuid())
+  matchQuestionId String
+  playerId        String
+  answer          Float
+  answeredAt      DateTime      @default(now())
+
+  // Behavioural telemetry — ms relative to question start.
+  // firstInputAtMs = "thinking time before typing"
+  // inputChangeCount = onChange events (proxy for hesitation/corrections)
+  firstInputAtMs   Int?
+  inputChangeCount Int           @default(0)
+
+  matchQuestion   MatchQuestion @relation(fields: [matchQuestionId], references: [id])
+  player          PlayerInGame  @relation(fields: [playerId], references: [id])
+
+  @@unique([matchQuestionId, playerId])
+}
+
+model WarAttack {
+  id            String    @id @default(cuid())
+  gameSessionId String
+  attackerId    String
+  defenderId    String
+  countryId     String
+  isActive      Boolean   @default(true)
+  expiresAt     DateTime?
+
+  // Snapshot of who was right on the most recent MC round (overwritten each
+  // siege round). Drives the reveal banner on clients.
+  lastAttackerCorrect Boolean?
+  lastDefenderCorrect Boolean?
+
+  // Tie-breaker (used when both got the multiple-choice question right)
+  tieQuestionId      Int?
+  tieExpiresAt       DateTime?
+  tieAttackerAnswer  Float?
+  tieDefenderAnswer  Float?
+  // Time spent thinking, in milliseconds since the tie phase started.
+  // Used both as a tiebreak (faster wins on equal diffs) and for display.
+  tieAttackerTimeMs  Int?
+  tieDefenderTimeMs  Int?
+
+  gameSession   GameSession  @relation(fields: [gameSessionId], references: [id])
+  attacker      PlayerInGame @relation("attacker", fields: [attackerId], references: [id])
+  defender      PlayerInGame @relation("defender", fields: [defenderId], references: [id])
+  country       MatchCountry @relation(fields: [countryId], references: [id])
+  answers       WarAnswer[]
+  questionId    Int?
+  question      WarQuestion? @relation(fields: [questionId], references: [id])
+  tieQuestion   Question?    @relation(fields: [tieQuestionId], references: [id])
+}
+
+model WarAnswer {
+  id          String    @id @default(cuid())
+  attackId    String
+  playerId    String
+  isCorrect   Boolean
+
+  // Behavioural telemetry — ms since the MC question started.
+  submittedAtMs Int?
+
+  attack      WarAttack    @relation(fields: [attackId], references: [id])
+  player      PlayerInGame @relation(fields: [playerId], references: [id])
+
+  @@unique([attackId, playerId])
+}
+
+model WarQuestion {
+  id       Int              @id @default(autoincrement())
+  text     String
+  options  String[]
+  answer   String
+  category QuestionCategory @default(general)
+  attacks  WarAttack[]
+}
+
+model MatchEvent {
+  id            String        @id @default(cuid())
+  gameSessionId String
+  createdAt     DateTime      @default(now())
+  type          String
+  actorId       String?
+  payload       Json
+
+  gameSession   GameSession   @relation(fields: [gameSessionId], references: [id])
+  actor         PlayerInGame? @relation(fields: [actorId], references: [id])
+
+  @@index([gameSessionId, createdAt])
+}
