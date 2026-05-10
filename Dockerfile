@@ -20,8 +20,13 @@ WORKDIR /app
 # Copy the whole monorepo. .dockerignore keeps secrets / node_modules out.
 COPY . .
 
-# Install workspace deps + run postinstall (which generates Prisma client).
+# Install workspace deps.
 RUN pnpm install --frozen-lockfile
+
+# Generate Prisma client. Done as an explicit step (not a postinstall hook)
+# so the install works the same whether the wrapping runtime is pnpm or
+# npm — important for Fly's auto-builders.
+RUN pnpm --filter @quiz/db exec prisma generate
 
 EXPOSE 2567
 

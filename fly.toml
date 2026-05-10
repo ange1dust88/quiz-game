@@ -2,7 +2,7 @@
 # Build context = repo root (where this file lives), so the Dockerfile can
 # pull in the workspace packages.
 
-app = "quiz-game-server"
+app = "europe-quiz"
 primary_region = "ams"
 
 [build]
