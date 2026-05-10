@@ -15,7 +15,7 @@
 
 import { Client, Room } from "colyseus";
 import { prisma } from "@quiz/db";
-import { verifyJwt } from "@quiz/shared";
+import { capitalParamsForChoice, verifyJwt } from "@quiz/shared";
 import { Country, MatchState, Player } from "@quiz/shared/schemas";
 
 type AuthInfo = {
@@ -32,6 +32,10 @@ type JoinOptions = {
   sessionId: string;
   jwt: string;
 };
+
+// Stage timers — keep aligned with the old code so UX feels the same.
+const CAPITAL_TIMER_MS = 20_000;
+const TICK_INTERVAL_MS = 250;
 
 export class MatchRoom extends Room<MatchState> {
   // Set in onCreate. Used by handlers to look up DB rows and write back at
@@ -50,9 +54,23 @@ export class MatchRoom extends Room<MatchState> {
 
     await this.hydrateFromDb();
 
+    // --- Message handlers ---
     this.onMessage("ping", (client, payload) => {
       client.send("pong", { ts: Date.now(), echo: payload });
     });
+
+    this.onMessage("claim_capital", (client, payload: { svgId: string }) => {
+      const auth = client.auth as AuthInfo | undefined;
+      if (!auth) return;
+      this.handleClaimCapital(auth.playerInGameId, payload?.svgId);
+    });
+
+    // Single ticker drives all deadline-based transitions. Cheaper than a
+    // separate setTimeout per phase, and easy to reason about.
+    this.clock.setInterval(() => this.tick(), TICK_INTERVAL_MS);
+
+    // Kick off the capitals phase: first player at turnOrder=0 starts.
+    this.startCapitalTurn();
 
     console.log(
       `[match ${this.roomId}] created for session ${this.sessionId} ` +
@@ -171,11 +189,135 @@ export class MatchRoom extends Room<MatchState> {
       this.state.countries.set(c.id, c);
     }
 
-    // Mirror the lifecycle fields from the existing GameSession row so the
-    // new room continues from where the old code left off (or from defaults
-    // if this is the first run after migration).
     this.state.stage = "capitals";
     this.state.status = "active";
     this.state.turnIndex = 0;
+  }
+
+  // --- Tick (deadline driver) -------------------------------------------
+
+  private tick(): void {
+    if (
+      this.state.stage === "capitals" &&
+      this.state.capitalExpiresAt > 0 &&
+      Date.now() >= this.state.capitalExpiresAt
+    ) {
+      this.autoPickCapital();
+    }
+  }
+
+  // --- Capitals stage ---------------------------------------------------
+
+  private startCapitalTurn(): void {
+    this.state.capitalExpiresAt = Date.now() + CAPITAL_TIMER_MS;
+  }
+
+  private playerByTurnOrder(idx: number): Player | undefined {
+    let found: Player | undefined;
+    this.state.players.forEach((p) => {
+      if (p.turnOrder === idx) found = p;
+    });
+    return found;
+  }
+
+  private playerHasCapital(playerId: string): boolean {
+    let has = false;
+    this.state.countries.forEach((c) => {
+      if (c.ownerId === playerId && c.isCapital) has = true;
+    });
+    return has;
+  }
+
+  private capitalsPlaced(): number {
+    let n = 0;
+    this.state.countries.forEach((c) => {
+      if (c.isCapital) n += 1;
+    });
+    return n;
+  }
+
+  /**
+   * Apply a capital pick. Validates that:
+   *   - we're in the capitals stage
+   *   - the requesting player IS the current turn
+   *   - the requested country exists and is unowned
+   *   - the player doesn't already have a capital (defensive)
+   * On success, mutates the country and advances the turn (or transitions
+   * to expand if everyone has placed).
+   *
+   * Called from both the client message handler and the auto-pick path.
+   */
+  private handleClaimCapital(playerId: string, svgId: string | undefined): void {
+    if (this.state.stage !== "capitals") return;
+    if (!svgId) return;
+
+    const player = this.state.players.get(playerId);
+    if (!player) return;
+    if (player.turnOrder !== this.state.turnIndex) return;
+    if (this.playerHasCapital(playerId)) return;
+
+    let country: Country | undefined;
+    this.state.countries.forEach((c) => {
+      if (c.svgId === svgId) country = c;
+    });
+    if (!country || country.ownerId) return;
+
+    const params = capitalParamsForChoice(player.capitalStyle);
+    country.ownerId = playerId;
+    country.isCapital = true;
+    country.armies = params.armies;
+    country.maxArmies = params.armies;
+    country.points = params.points;
+
+    console.log(
+      `[match ${this.roomId}] ${player.nickname} → capital ${country.svgId}`,
+    );
+
+    this.advanceCapitalTurn();
+  }
+
+  private autoPickCapital(): void {
+    const player = this.playerByTurnOrder(this.state.turnIndex);
+    if (!player) return;
+    if (this.playerHasCapital(player.id)) {
+      // Shouldn't happen, but defensive: skip ahead.
+      this.advanceCapitalTurn();
+      return;
+    }
+
+    const free: Country[] = [];
+    this.state.countries.forEach((c) => {
+      if (!c.ownerId) free.push(c);
+    });
+    if (free.length === 0) {
+      this.advanceCapitalTurn();
+      return;
+    }
+
+    const pick = free[Math.floor(Math.random() * free.length)];
+    console.log(
+      `[match ${this.roomId}] auto-pick: ${player.nickname} → ${pick.svgId}`,
+    );
+    this.handleClaimCapital(player.id, pick.svgId);
+  }
+
+  private advanceCapitalTurn(): void {
+    if (this.capitalsPlaced() >= this.state.players.size) {
+      this.transitionToExpand();
+      return;
+    }
+    this.state.turnIndex =
+      (this.state.turnIndex + 1) % Math.max(1, this.state.players.size);
+    this.state.capitalExpiresAt = Date.now() + CAPITAL_TIMER_MS;
+  }
+
+  private transitionToExpand(): void {
+    this.state.stage = "expand";
+    this.state.capitalExpiresAt = 0;
+    this.state.turnIndex = 0;
+    // Question scheduling happens in Phase 3.4. For now the state just
+    // settles in expand with no active question — clients see the new
+    // stage but no UI-driven actions until 3.4 is wired up.
+    console.log(`[match ${this.roomId}] → stage=expand`);
   }
 }
