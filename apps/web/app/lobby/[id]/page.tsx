@@ -2,9 +2,14 @@
 
 import { prisma } from "@quiz/db";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { decrypt } from "@/app/lib/session";
 import { LobbyContent } from "./LobbyContent";
 import { MAX_WAR_ROUNDS } from "@/app/lib/constants";
+
+function redirectToMatch(sessionId: string): never {
+  redirect(`/match-new/${sessionId}`);
+}
 
 const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
   const { id } = await params;
@@ -48,6 +53,14 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
 
   if (!session) {
     return <div>No room found</div>;
+  }
+
+  // If the match is already running, drop the player straight into it. This
+  // catches the case where someone joined a session whose host had already
+  // hit Start — without this they'd see a stale "waiting" lobby.
+  const myPlayer = session.players.find((p) => p.profileId === profile.id);
+  if (myPlayer && session.status === "active") {
+    return redirectToMatch(id);
   }
 
   const totalPlayers = session.players.length;

@@ -81,6 +81,12 @@ export class MatchRoom extends Room<MatchState> {
   private sessionId = "";
   private startedAtMs = 0;
 
+  // Counts active client sessions per playerInGameId. A player can have
+  // multiple tabs open; we only flip player.connected=false when ALL of
+  // their tabs have closed. Refreshing one tab no longer "disconnects"
+  // the player from the room's perspective.
+  private clientsPerPlayer = new Map<string, number>();
+
   // Cache of CountryTemplate.neighbors so adjacency lookups don't hit the
   // DB during gameplay. Populated once at hydration.
   private templateNeighbors = new Map<number, number[]>();
@@ -301,22 +307,71 @@ export class MatchRoom extends Room<MatchState> {
     if (playerId) {
       const player = this.state.players.get(playerId);
       if (player) player.connected = true;
+      this.clientsPerPlayer.set(
+        playerId,
+        (this.clientsPerPlayer.get(playerId) ?? 0) + 1,
+      );
     }
     console.log(
       `[match ${this.roomId}] ${client.sessionId} joined (player=${playerId ?? "?"})`,
     );
   }
 
-  override onLeave(client: Client): void {
+  override async onLeave(
+    client: Client,
+    consented?: boolean,
+  ): Promise<void> {
     const auth = client.auth as AuthInfo | undefined;
     const playerId = auth?.playerInGameId;
-    if (playerId) {
-      const player = this.state.players.get(playerId);
-      if (player) player.connected = false;
+    if (!playerId) return;
+
+    // Decrement tab counter. Only flip connected=false when ALL of this
+    // player's tabs are gone.
+    const remaining = (this.clientsPerPlayer.get(playerId) ?? 1) - 1;
+    if (remaining > 0) {
+      this.clientsPerPlayer.set(playerId, remaining);
+      console.log(
+        `[match ${this.roomId}] ${client.sessionId} left (player=${playerId}, ${remaining} tabs remain)`,
+      );
+      return;
     }
+    this.clientsPerPlayer.delete(playerId);
+    const player = this.state.players.get(playerId);
+    if (player) player.connected = false;
+
+    if (consented) {
+      // Player explicitly clicked Leave — don't try to reconnect.
+      console.log(
+        `[match ${this.roomId}] ${client.sessionId} left consented (player=${playerId})`,
+      );
+      return;
+    }
+
+    // Hold the slot for 30s — closing the tab / refreshing / brief network
+    // blip doesn't kill the match for them. If they come back within the
+    // window, allowReconnection resolves and we mark them connected again.
     console.log(
-      `[match ${this.roomId}] ${client.sessionId} left (player=${playerId ?? "?"})`,
+      `[match ${this.roomId}] ${client.sessionId} disconnected (player=${playerId}), holding slot for reconnect`,
     );
+    try {
+      const reconnected = await this.allowReconnection(client, 30);
+      if (reconnected) {
+        const p = this.state.players.get(playerId);
+        if (p) p.connected = true;
+        this.clientsPerPlayer.set(
+          playerId,
+          (this.clientsPerPlayer.get(playerId) ?? 0) + 1,
+        );
+        console.log(
+          `[match ${this.roomId}] ${client.sessionId} reconnected (player=${playerId})`,
+        );
+      }
+    } catch {
+      // Window expired or room disposed — nothing to do.
+      console.log(
+        `[match ${this.roomId}] reconnect window expired for ${playerId}`,
+      );
+    }
   }
 
   override onDispose(): void {
