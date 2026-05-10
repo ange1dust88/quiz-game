@@ -3,7 +3,7 @@
 // configuration and the same generated types.
 
 // MUST come first — populates DATABASE_URL before PrismaPg reads it.
-import "./loadEnv.js";
+import "./loadEnv";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
 
