@@ -1,0 +1,33 @@
+# Anything we don't want shipped into the Docker image.
+
+# Dependencies are reinstalled inside the container.
+node_modules
+**/node_modules
+
+# Build outputs
+.next
+**/.next
+**/dist
+**/.tsbuildinfo
+**/coverage
+
+# Env files — secrets come from `fly secrets set ...`, never the image.
+.env
+.env.*
+
+# Git / IDE / hosting metadata
+.git
+.gitignore
+.vercel
+.fly
+.vscode
+.idea
+.DS_Store
+
+# Generated Prisma client — re-generated inside the image at install time
+# via the root postinstall hook.
+packages/db/generated
+
+# Markdown / docs aren't needed at runtime
+*.md
+docs/
