@@ -1,44 +1,22 @@
 {
-  "name": "diploma",
+  "name": "quiz-game",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "prisma generate && next build",
-    "start": "next start",
-    "lint": "eslint",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "postinstall": "prisma generate"
-  },
-  "dependencies": {
-    "@prisma/adapter-pg": "^7.4.2",
-    "@prisma/client": "^7.4.2",
-    "@supabase/ssr": "^0.9.0",
-    "@supabase/supabase-js": "^2.99.1",
-    "bcrypt": "^6.0.0",
-    "dotenv": "^17.3.1",
-    "framer-motion": "^12.35.1",
-    "jose": "^6.1.3",
-    "next": "^16.2.5",
-    "pg": "^8.19.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
+    "dev:web": "pnpm --filter @quiz/web dev",
+    "dev:game": "pnpm --filter @quiz/game dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "db:push": "pnpm --filter @quiz/db exec prisma db push",
+    "db:generate": "pnpm --filter @quiz/db exec prisma generate",
+    "db:studio": "pnpm --filter @quiz/db exec prisma studio",
+    "postinstall": "pnpm --filter @quiz/db exec prisma generate"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/bcrypt": "^6.0.0",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.6",
-    "prisma": "^7.8.0",
-    "tailwindcss": "^4",
-    "tsx": "^4.21.0",
     "typescript": "^5",
-    "vitest": "^4.1.5"
-  }
+    "tsx": "^4.21.0"
+  },
+  "packageManager": "pnpm@9.0.0"
 }

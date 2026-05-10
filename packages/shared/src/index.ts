@@ -1,0 +1,4 @@
+// Shared module — pure game logic helpers, match choice catalogue, and
+// (later) Colyseus state schemas. Used by both apps/web and apps/game.
+export * from "./gameLogic.js";
+export * from "./matchChoices.js";
