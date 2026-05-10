@@ -1,65 +1,132 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository.
+
+## Architecture overview
+
+The project is a **pnpm monorepo** with a split between Next.js (HTTP/UI) and
+a Colyseus authoritative game server (live match WebSocket). Postgres is the
+single source of truth for persistence, accessed by both apps via a shared
+Prisma client.
+
+```
+quiz-game/
+├── apps/
+│   ├── web/         Next.js 16 (auth, lobby, profile, settings,
+│   │                analytics, match-new — connects to Colyseus)
+│   └── game/        Colyseus 0.16 game server (authoritative state)
+├── packages/
+│   ├── db/          Shared Prisma client + schema
+│   └── shared/      Pure game logic, schemas, JWT helper
+```
+
+The legacy `apps/web/app/match/[id]` route + `actions.ts` etc. (Supabase
+Realtime + Postgres-as-message-queue) is still in the codebase but **not
+routed to from the lobby**. New flow uses `/match-new/[id]`.
 
 ## Commands
 
-- `npm run dev` — start Next.js dev server on http://localhost:3000
-- `npm run build` — production build
-- `npm run start` — run production build
-- `npm run lint` — run ESLint (uses `eslint-config-next` core-web-vitals + typescript)
-- `npx prisma generate` — regenerate the Prisma client into [app/generated/prisma/](app/generated/prisma/) (this directory is git-ignored)
-- `npx prisma migrate dev` — apply migrations against `DIRECT_URL` (see [prisma.config.ts](prisma.config.ts))
-- `npx prisma db seed` — runs `tsx prisma/seed.ts` (note: a `seed.ts` does not currently exist)
-
-There is no test runner configured.
+Run from repo root:
+- `pnpm dev:web` — Next.js dev on http://localhost:3000
+- `pnpm dev:game` — Colyseus dev on ws://localhost:2567
+- `pnpm typecheck` — TypeScript across all packages
+- `pnpm test` — vitest (apps/web has 120 tests for pure helpers)
+- `pnpm db:push` — push schema changes to Postgres
+- `pnpm db:generate` — regenerate Prisma client into `packages/db/generated/`
+- `pnpm db:studio` — open Prisma Studio
 
 ## Environment
 
-- `DATABASE_URL` — pooled Postgres connection used by the runtime Prisma client (via `@prisma/adapter-pg` in [app/lib/prisma.ts](app/lib/prisma.ts))
-- `DIRECT_URL` — direct Postgres connection used by Prisma CLI for migrations
-- `SESSION_SECRET` — HMAC key for JWT session cookies ([app/lib/session.ts](app/lib/session.ts))
-- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase project credentials. Supabase is used **only for Realtime** (Postgres change subscriptions); all reads/writes go through Prisma against the same Postgres database.
+Root `.env` / `.env.local` (symlinked into `apps/web/` for Next.js auto-load):
+- `DATABASE_URL` — pooled Postgres connection (runtime)
+- `DIRECT_URL` — direct Postgres connection (Prisma CLI for migrations)
+- `SESSION_SECRET` — HMAC key for JWT session cookies. **Must be the same
+  on Next.js and Colyseus** (both verify via `verifyJwt` in
+  `@quiz/shared/auth`)
+- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` — used by the
+  lobby for player-list realtime sync. Live match no longer touches Supabase
+  Realtime — Colyseus owns it
+- `NEXT_PUBLIC_GAME_SERVER_URL` — WebSocket URL of the Colyseus server
+  (defaults to `ws://localhost:2567` in dev). Set to `wss://...` in prod
+- `ADMIN_EMAILS` — comma-separated emails allowed to view `/analytics`
 
-## Architecture
+## Architecture details
 
-This is a Next.js 16 App Router project (React 19, Tailwind v4) implementing a Risk-style multiplayer quiz game on a map of Europe. It is the author's diploma project (`package.json` name: `diploma`).
+### Live match — Colyseus authoritative
 
-### Data flow: Prisma writes, Supabase Realtime fans out
+`apps/game/src/rooms/MatchRoom.ts` owns the entire game state in memory.
+Lifecycle:
 
-The same Postgres database is accessed two ways:
+1. **onCreate(options)** — receives `sessionId`, hydrates `MatchState` from
+   Postgres (PlayerInGame rows + their MatchChoice → schema players;
+   CountryTemplate rows → schema countries). The `MatchCountry` Postgres
+   table is no longer touched during the live match.
+2. **onAuth(client, options)** — verifies JWT cookie via `@quiz/shared`,
+   confirms `PlayerInGame` exists for this session, rejects otherwise.
+3. **Stage handlers** mutate state in place. @colyseus/schema diffs and
+   broadcasts only the changes to all connected clients.
+4. **At game_over** — writes a single `MatchSnapshot` row with finalState
+   + telemetry as JSON. Updates PlayerProfile stats (ELO, XP, level)
+   via the same pure helpers as before.
 
-1. **Server-side mutations** go through Prisma server actions (`"use server"` files like [app/match/[id]/actions.ts](app/match/[id]/actions.ts), [app/lobby/[id]/actions.ts](app/lobby/[id]/actions.ts), [app/dashboard/actions.ts](app/dashboard/actions.ts)) and route handlers under [app/api/](app/api/).
-2. **Client components subscribe to `postgres_changes`** via Supabase Realtime channels keyed per session — e.g. `map-${sessionId}`, `game-${sessionId}`, `questions-${sessionId}`, `phase-${sessionId}`. When a server action updates a row (e.g. `MatchCountry`, `GameSession`, `MatchQuestion`), all clients receive the change and refetch via the API routes.
+Stages: `capitals → expand → war → ended`. Same rules as the legacy code,
+but driven by a single tick interval (250ms) instead of dozens of
+client-side timers + atomic SQL claims. No race conditions — the room
+runs single-threaded.
 
-This means: **schema/table/column renames break realtime filters silently** — the filter strings reference exact table names like `MatchCountry` and `gameSessionId`. After Prisma schema changes, audit every Supabase channel subscription.
+### Frontend — Zustand bridge
 
-### Game state machine
+`apps/web/app/lib/gameStore.ts` wraps the Colyseus Room in a Zustand store
+that mirrors the synced state as a plain JS object. React components
+subscribe via narrow selectors (`useStage`, `useCountries`, `usePlayers`,
+`useActiveQuestion`, etc.) — no whole-tree rerenders on every state tick.
 
-`GameSession.stage` progresses `capitals` → `expand` → `war`. Stage transitions are computed in [app/match/[id]/actions.ts](app/match/[id]/actions.ts) (`advanceTurnAndStage`) — and **also recomputed defensively in [app/match/[id]/page.tsx](app/match/[id]/page.tsx)** before render. Both code paths must agree on transition conditions.
+Match UI lives in `apps/web/app/match-new/[id]/`:
+- `page.tsx` — server component, verifies cookie + PlayerInGame, passes
+  JWT + sessionId + myPlayerId to MatchClient
+- `MatchClient.tsx` — connects on mount, renders skeleton + 3-pane layout
+- `MapPanel.tsx` — SVG map (paths in `apps/web/app/lib/europeSvg.ts`),
+  click → store action
+- `ActionPanel.tsx` — questions / war attacks / results banner
+- `PlayerPanel.tsx` — sidebar with stats, capital HP, turn highlight
 
-- **capitals**: each player picks one capital in `turnIndex` order. Action: `claimCapital`.
-- **expand**: a question is broadcast (`MatchQuestion`, 10s expiry). All players submit a numeric answer; `resolveQuestion` ranks by `|answer - correctAnswer|` and assigns `pickOrder` (1st place picks 2 territories with 3+ players, 2nd picks 1; with 2 players only 1st picks 1). Players then claim free *neighbors* of their existing territories. If a pick isn't made within 15s, `startPickTimer` auto-picks a random free neighbor. Action: `claimTerritory`.
-- **war**: players attack neighbor enemy territories (`WarAttack` + `WarQuestion` with multiple-choice options). Both attacker and defender answer; `resolveAttack` settles ownership/armies. `GameSession.currentAttackId` enforces that only one attack can be live per session.
+### Persistence — single MatchSnapshot row per game
 
-`GameSession.pickOrder` is the **queue of upcoming pickers** (a `String[]` of `PlayerInGame.id`s), not a fixed turn rotation — `pickOrder[0]` is whoever must pick next, and `capture` shifts the head after each pick.
+`MatchSnapshot { sessionId, finalState: Json, telemetry: Json, duration }`.
+The legacy granular tables (`MatchCountry`, `MatchEvent`, `MatchQuestion`,
+`PlayerAnswer`, `WarAttack`, `WarAnswer`) are not written to during the live
+match. They still exist in the schema for compatibility but should be
+considered deprecated.
 
-### Map data
+`MatchSnapshot.telemetry` shape:
+- `numericAnswers[]` — per Expand answer: value, diff, timeMs,
+  firstInputAtMs, inputChangeCount, category
+- `warAnswers[]` — per War MC answer: isCorrect, submittedAtMs, category
+- `capitalPicks[]`, `territoryPicks[]`, `attacks[]` — basic event log
 
-`CountryTemplate` is a static seed table (id, name, neighbors `Int[]`, `svgId`). When a game starts, [app/lobby/[id]/actions.ts](app/lobby/[id]/actions.ts):`initializeMap` clones every template into `MatchCountry` rows for that session. Neighbor adjacency is resolved by joining `MatchCountry → CountryTemplate.neighbors` (see `getFreeNeighbors` / `getEnemyNeighbors`).
+`/analytics` reads aggregates from MatchSnapshot.telemetry across the most
+recent 200 completed matches.
 
-The frontend SVG map ([app/match/[id]/EuropeMap.tsx](app/match/[id]/EuropeMap.tsx)) maps countries by `template.svgId`; server actions look templates up by `svgId` to translate clicks into `MatchCountry` updates.
+### Auth (unchanged)
 
-### Auth
-
-Custom JWT sessions, not Supabase Auth. [app/lib/session.ts](app/lib/session.ts) signs/verifies a `session` cookie with `jose`; [proxy.ts](proxy.ts) is the Next middleware that gates `/dashboard` and bounces logged-in users away from `/login`/`/register`. Server actions/pages call [app/lib/auth.ts](app/lib/auth.ts):`getProfile`/`getProfileSafe` to load the `PlayerProfile` for the current cookie.
-
-> Note: the middleware file is named `proxy.ts` (not `middleware.ts`). Next.js 16 supports both names.
-
-### Prisma client location
-
-The generator outputs to [app/generated/prisma/](app/generated/prisma/) (configured in [prisma/schema.prisma](prisma/schema.prisma)), not `node_modules/@prisma/client`. Imports go through [app/lib/prisma.ts](app/lib/prisma.ts), which wires the `@prisma/adapter-pg` driver adapter. The generated directory is git-ignored — `npx prisma generate` must be run after fresh clone.
+Custom JWT in cookie, signed with `SESSION_SECRET` via `jose`. Next.js
+middleware `proxy.ts` gates `/dashboard`, `/settings`, `/analytics`.
+Colyseus `onAuth` verifies the same token.
 
 ### Path aliases
 
-`@/*` maps to the repo root, so server-side imports use `@/app/lib/...`.
+- `@/*` → `apps/web/*`
+- `@quiz/db` → `packages/db/src/index.ts`
+- `@quiz/shared`, `@quiz/shared/schemas`, etc → `packages/shared/src/...`
+
+### Deploy
+
+- Vercel for `apps/web` (root: `apps/web`)
+- Railway/Fly.io for `apps/game` (long-running Node process — Vercel
+  serverless can't host WebSockets)
+- Supabase Postgres for both
+
+Same `SESSION_SECRET` env var must be configured on both Vercel and
+Railway. `NEXT_PUBLIC_GAME_SERVER_URL` on Vercel points at the Railway
+WebSocket URL.

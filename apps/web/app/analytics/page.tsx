@@ -40,10 +40,34 @@ function parseAdminEmails(): string[] {
     .filter(Boolean);
 }
 
+// Telemetry shapes — JSON-serialised by Colyseus at game_over.
+type NumericAnswerT = {
+  playerId: string;
+  questionId: number;
+  category: string;
+  value: number;
+  diff: number;
+  timeMs: number;
+  firstInputAtMs: number | null;
+  inputChangeCount: number;
+};
+type WarAnswerT = {
+  playerId: string;
+  attackId: string;
+  questionId: number;
+  category: string;
+  isCorrect: boolean;
+  submittedAtMs: number;
+};
+type SnapshotTelemetry = {
+  numericAnswers?: NumericAnswerT[];
+  warAnswers?: WarAnswerT[];
+};
+type FinalStateT = {
+  players?: Array<{ id: string; profileId: string; nickname: string }>;
+};
+
 export default async function AnalyticsPage() {
-  // Admin gate. Researcher/admin emails are configured via the ADMIN_EMAILS
-  // env var (comma-separated). Anyone else — including logged-in players —
-  // is redirected to the dashboard so they don't see aggregated data.
   const profile = await getProfileSafe();
   if (!profile) redirect("/login");
   const adminEmails = parseAdminEmails();
@@ -55,72 +79,64 @@ export default async function AnalyticsPage() {
     redirect("/dashboard");
   }
 
-  // Pull raw rows in parallel; aggregation happens in JS below. Dataset is
-  // small for now (diploma-scale); when it grows we'll switch the heavy ones
-  // to SQL aggregates.
-  const [
-    playerCount,
-    gameCount,
-    answerCount,
-    warAnswerCount,
-    profiles,
-    warAnswers,
-    playerAnswers,
-  ] = await Promise.all([
+  const [playerCount, snapshotCount, snapshots, profiles] = await Promise.all([
     prisma.playerProfile.count(),
-    prisma.gameSession.count({ where: { status: "completed" } }),
-    prisma.playerAnswer.count(),
-    prisma.warAnswer.count(),
+    prisma.matchSnapshot.count(),
+    prisma.matchSnapshot.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    }),
     prisma.playerProfile.findMany({
-      select: { birthYear: true, education: true, gender: true },
-    }),
-    prisma.warAnswer.findMany({
-      include: {
-        attack: { include: { question: { select: { category: true } } } },
-      },
-    }),
-    prisma.playerAnswer.findMany({
-      include: {
-        matchQuestion: {
-          include: { question: { select: { category: true } } },
-        },
-        player: {
-          include: { profile: { select: { education: true } } },
-        },
-      },
+      select: { id: true, birthYear: true, education: true, gender: true },
     }),
   ]);
 
-  // War MC accuracy per category.
-  const warAccByCat = new Map<string, { correct: number; total: number }>();
-  for (const wa of warAnswers) {
-    const cat = wa.attack.question?.category;
-    if (!cat) continue;
-    const e = warAccByCat.get(cat) ?? { correct: 0, total: 0 };
-    e.total += 1;
-    if (wa.isCorrect) e.correct += 1;
-    warAccByCat.set(cat, e);
+  // Build (playerInGameId → profileId) lookup from finalState across all
+  // snapshots so we can join answer rows back to demographics.
+  const profileByPlayer = new Map<string, string>();
+  let totalNumericAnswers = 0;
+  let totalWarAnswers = 0;
+  for (const snap of snapshots) {
+    const fs = (snap.finalState ?? {}) as FinalStateT;
+    fs.players?.forEach((p) => profileByPlayer.set(p.id, p.profileId));
+    const t = (snap.telemetry ?? {}) as SnapshotTelemetry;
+    totalNumericAnswers += t.numericAnswers?.length ?? 0;
+    totalWarAnswers += t.warAnswers?.length ?? 0;
   }
 
-  // Avg first-input delay per education + avg input change count per category.
+  const eduByProfile = new Map<string, string>();
+  profiles.forEach((p) => {
+    if (p.education) eduByProfile.set(p.id, p.education);
+  });
+
+  const warAccByCat = new Map<string, { correct: number; total: number }>();
   const inputByEdu = new Map<string, { sum: number; count: number }>();
   const changesByCat = new Map<string, { sum: number; count: number }>();
-  for (const pa of playerAnswers) {
-    if (pa.firstInputAtMs !== null) {
-      const edu = pa.player.profile?.education ?? "unspecified";
-      const e = inputByEdu.get(edu) ?? { sum: 0, count: 0 };
-      e.sum += pa.firstInputAtMs;
-      e.count += 1;
-      inputByEdu.set(edu, e);
+
+  for (const snap of snapshots) {
+    const t = (snap.telemetry ?? {}) as SnapshotTelemetry;
+    for (const wa of t.warAnswers ?? []) {
+      const e = warAccByCat.get(wa.category) ?? { correct: 0, total: 0 };
+      e.total += 1;
+      if (wa.isCorrect) e.correct += 1;
+      warAccByCat.set(wa.category, e);
     }
-    const cat = pa.matchQuestion.question.category;
-    const c = changesByCat.get(cat) ?? { sum: 0, count: 0 };
-    c.sum += pa.inputChangeCount;
-    c.count += 1;
-    changesByCat.set(cat, c);
+    for (const na of t.numericAnswers ?? []) {
+      const profileId = profileByPlayer.get(na.playerId);
+      const edu = profileId ? eduByProfile.get(profileId) : undefined;
+      if (na.firstInputAtMs !== null && edu) {
+        const e = inputByEdu.get(edu) ?? { sum: 0, count: 0 };
+        e.sum += na.firstInputAtMs;
+        e.count += 1;
+        inputByEdu.set(edu, e);
+      }
+      const c = changesByCat.get(na.category) ?? { sum: 0, count: 0 };
+      c.sum += na.inputChangeCount;
+      c.count += 1;
+      changesByCat.set(na.category, c);
+    }
   }
 
-  // Demographic distributions.
   const currentYear = new Date().getFullYear();
   const ageGroups = new Map<string, number>();
   const eduDist = new Map<string, number>();
@@ -130,12 +146,9 @@ export default async function AnalyticsPage() {
       const bucket = ageBucket(currentYear - p.birthYear);
       ageGroups.set(bucket, (ageGroups.get(bucket) ?? 0) + 1);
     }
-    if (p.education) {
+    if (p.education)
       eduDist.set(p.education, (eduDist.get(p.education) ?? 0) + 1);
-    }
-    if (p.gender) {
-      genderDist.set(p.gender, (genderDist.get(p.gender) ?? 0) + 1);
-    }
+    if (p.gender) genderDist.set(p.gender, (genderDist.get(p.gender) ?? 0) + 1);
   }
 
   const warAccArr = Array.from(warAccByCat.entries())
@@ -192,8 +205,8 @@ export default async function AnalyticsPage() {
             <h1 className="text-3xl font-bold mt-1">Research dashboard</h1>
             <p className="text-sm text-gray-500 mt-2 max-w-2xl">
               Aggregate behavioural and demographic data across all players.
-              Source for the diploma analysis. Numbers update on each page
-              load.
+              Telemetry comes from MatchSnapshot rows written by the Colyseus
+              game server at game_over.
             </p>
           </div>
           <Link
@@ -206,9 +219,9 @@ export default async function AnalyticsPage() {
 
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard label="Players" value={playerCount} />
-          <StatCard label="Completed games" value={gameCount} />
-          <StatCard label="Numeric answers" value={answerCount} />
-          <StatCard label="War answers" value={warAnswerCount} />
+          <StatCard label="Completed games" value={snapshotCount} />
+          <StatCard label="Numeric answers" value={totalNumericAnswers} />
+          <StatCard label="War answers" value={totalWarAnswers} />
         </section>
 
         <BarSection
@@ -241,7 +254,11 @@ export default async function AnalyticsPage() {
         <section>
           <h2 className="text-lg font-semibold mb-4">Player demographics</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <SmallBarCard title="Age groups" data={ageArr} color="bg-pink-400" />
+            <SmallBarCard
+              title="Age groups"
+              data={ageArr}
+              color="bg-pink-400"
+            />
             <SmallBarCard
               title="Education"
               data={eduArr}
@@ -288,9 +305,7 @@ function BarSection({
     <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-4">
       <div>
         <h2 className="text-base font-semibold">{title}</h2>
-        {subtitle && (
-          <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
-        )}
+        {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
       </div>
       {data.length === 0 ? (
         <p className="text-sm text-gray-500 italic">{empty}</p>
