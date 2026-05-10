@@ -31,9 +31,11 @@ export async function startGame(formData: FormData) {
       capitalExpiresAt: new Date(Date.now() + 20000),
     },
   });
-  await initializeMap(sessionId);
+  // No initializeMap call — Colyseus hydrates from CountryTemplate at room
+  // creation. The legacy MatchCountry table is no longer used during the
+  // live match (final state is persisted in MatchSnapshot at game_over).
 
-  redirect(`/match/${sessionId}`);
+  redirect(`/match-new/${sessionId}`);
 }
 
 export async function initializeMap(sessionId: string) {
