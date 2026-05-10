@@ -1,0 +1,24 @@
+# Fly.io config for the Colyseus game server.
+# Build context = repo root (where this file lives), so the Dockerfile can
+# pull in the workspace packages.
+
+app = "quiz-game-server"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "2567"
+
+[http_service]
+  internal_port = 2567
+  force_https = true
+  # Always-on so WebSocket clients don't hit cold starts mid-match.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
