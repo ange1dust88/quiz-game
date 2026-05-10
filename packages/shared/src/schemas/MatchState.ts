@@ -1,6 +1,8 @@
 // Colyseus state schema for an active match. Defined via the functional
-// `defineTypes()` API instead of decorators because tsx/esbuild's handling
-// of TS legacy decorators is fragile across runtimes.
+// `defineTypes()` API. Initial values are assigned in constructors instead
+// of via class field initializers — class fields run BEFORE the schema's
+// generated getters/setters are installed by defineTypes(), so initializer
+// values get shadowed and never reach the wire.
 //
 // Schema is mutated in place by the server; @colyseus/schema diffs and
 // broadcasts only the changes to all connected clients.
@@ -13,14 +15,26 @@ import {
 } from "@colyseus/schema";
 
 export class Country extends Schema {
-  id: string = "";
-  svgId: string = "";
-  ownerId: string | null = null;
-  isCapital: boolean = false;
-  armies: number = 1;
-  maxArmies: number = 1;
-  points: number = 200;
-  templateId: number = 0;
+  declare id: string;
+  declare svgId: string;
+  declare ownerId: string;
+  declare isCapital: boolean;
+  declare armies: number;
+  declare maxArmies: number;
+  declare points: number;
+  declare templateId: number;
+
+  constructor() {
+    super();
+    this.id = "";
+    this.svgId = "";
+    this.ownerId = "";
+    this.isCapital = false;
+    this.armies = 1;
+    this.maxArmies = 1;
+    this.points = 200;
+    this.templateId = 0;
+  }
 }
 defineTypes(Country, {
   id: "string",
@@ -34,12 +48,22 @@ defineTypes(Country, {
 });
 
 export class Player extends Schema {
-  id: string = ""; // PlayerInGame.id from DB
-  profileId: string = "";
-  nickname: string = "";
-  turnOrder: number = 0;
-  capitalStyle: string = "standard";
-  connected: boolean = false;
+  declare id: string;
+  declare profileId: string;
+  declare nickname: string;
+  declare turnOrder: number;
+  declare capitalStyle: string;
+  declare connected: boolean;
+
+  constructor() {
+    super();
+    this.id = "";
+    this.profileId = "";
+    this.nickname = "";
+    this.turnOrder = 0;
+    this.capitalStyle = "standard";
+    this.connected = false;
+  }
 }
 defineTypes(Player, {
   id: "string",
@@ -51,11 +75,20 @@ defineTypes(Player, {
 });
 
 export class ActiveQuestion extends Schema {
-  id: string = "";
-  questionId: number = 0;
-  text: string = "";
-  category: string = "general";
-  expiresAt: number = 0; // ms epoch
+  declare id: string;
+  declare questionId: number;
+  declare text: string;
+  declare category: string;
+  declare expiresAt: number;
+
+  constructor() {
+    super();
+    this.id = "";
+    this.questionId = 0;
+    this.text = "";
+    this.category = "general";
+    this.expiresAt = 0;
+  }
 }
 defineTypes(ActiveQuestion, {
   id: "string",
@@ -66,22 +99,38 @@ defineTypes(ActiveQuestion, {
 });
 
 export class ActiveAttack extends Schema {
-  id: string = "";
-  attackerId: string = "";
-  defenderId: string = "";
-  countryId: string = "";
-  questionId: number = 0;
-  questionText: string = "";
-  options: ArraySchema<string> = new ArraySchema<string>();
-  category: string = "general";
-  expiresAt: number = 0;
-  // Tie-breaker fields
-  tieQuestionId: number = 0;
-  tieQuestionText: string = "";
-  tieExpiresAt: number = 0;
-  // Reveal flags after MC round resolves
-  lastAttackerCorrect: boolean = false;
-  lastDefenderCorrect: boolean = false;
+  declare id: string;
+  declare attackerId: string;
+  declare defenderId: string;
+  declare countryId: string;
+  declare questionId: number;
+  declare questionText: string;
+  declare options: ArraySchema<string>;
+  declare category: string;
+  declare expiresAt: number;
+  declare tieQuestionId: number;
+  declare tieQuestionText: string;
+  declare tieExpiresAt: number;
+  declare lastAttackerCorrect: boolean;
+  declare lastDefenderCorrect: boolean;
+
+  constructor() {
+    super();
+    this.id = "";
+    this.attackerId = "";
+    this.defenderId = "";
+    this.countryId = "";
+    this.questionId = 0;
+    this.questionText = "";
+    this.options = new ArraySchema<string>();
+    this.category = "general";
+    this.expiresAt = 0;
+    this.tieQuestionId = 0;
+    this.tieQuestionText = "";
+    this.tieExpiresAt = 0;
+    this.lastAttackerCorrect = false;
+    this.lastDefenderCorrect = false;
+  }
 }
 defineTypes(ActiveAttack, {
   id: "string",
@@ -101,29 +150,38 @@ defineTypes(ActiveAttack, {
 });
 
 export class MatchState extends Schema {
-  // Lifecycle
-  stage: string = "capitals"; // capitals | expand | war | ended
-  status: string = "active"; // active | completed
-  winnerId: string | null = null;
+  declare stage: string;
+  declare status: string;
+  declare winnerId: string;
+  declare turnIndex: number;
+  declare pickOrder: ArraySchema<string>;
+  declare capitalExpiresAt: number;
+  declare pickExpiresAt: number;
+  declare nextQuestionAt: number;
+  declare warTurnExpiresAt: number;
+  declare warTurns: number;
+  declare players: MapSchema<Player>;
+  declare countries: MapSchema<Country>;
+  declare activeQuestion: ActiveQuestion | null;
+  declare activeAttack: ActiveAttack | null;
 
-  // Turn / pick state
-  turnIndex: number = 0;
-  pickOrder: ArraySchema<string> = new ArraySchema<string>();
-
-  // Deadlines (ms epoch). 0 = no active deadline.
-  capitalExpiresAt: number = 0;
-  pickExpiresAt: number = 0;
-  nextQuestionAt: number = 0;
-  warTurnExpiresAt: number = 0;
-
-  // War round counter
-  warTurns: number = 0;
-
-  // Live game data
-  players: MapSchema<Player> = new MapSchema<Player>();
-  countries: MapSchema<Country> = new MapSchema<Country>();
-  activeQuestion: ActiveQuestion | null = null;
-  activeAttack: ActiveAttack | null = null;
+  constructor() {
+    super();
+    this.stage = "capitals";
+    this.status = "active";
+    this.winnerId = "";
+    this.turnIndex = 0;
+    this.pickOrder = new ArraySchema<string>();
+    this.capitalExpiresAt = 0;
+    this.pickExpiresAt = 0;
+    this.nextQuestionAt = 0;
+    this.warTurnExpiresAt = 0;
+    this.warTurns = 0;
+    this.players = new MapSchema<Player>();
+    this.countries = new MapSchema<Country>();
+    this.activeQuestion = null;
+    this.activeAttack = null;
+  }
 }
 defineTypes(MatchState, {
   stage: "string",

@@ -11,7 +11,10 @@ import { MatchState } from "@quiz/shared/schemas";
 
 export class MatchRoom extends Room<MatchState> {
   override async onCreate(): Promise<void> {
-    this.setState(new MatchState());
+    const state = new MatchState();
+    state.stage = "capitals";
+    state.turnIndex = 0;
+    this.setState(state);
 
     // Cap room size so we never accidentally accept more than 4 players.
     this.maxClients = 4;
