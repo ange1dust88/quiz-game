@@ -242,11 +242,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       set({ room, status: "connected", state: snapshot(room.state) });
     } catch (err) {
-      console.error("[room] connect failed", err);
-      set({
-        status: "error",
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
+      // ProgressEvent stringifies to "[object ProgressEvent]" — not useful.
+      // Extract whatever signal we can and ALWAYS include the URL we tried
+      // so a misconfigured NEXT_PUBLIC_GAME_SERVER_URL is obvious.
+      let detail: string;
+      if (err instanceof Error) {
+        detail = err.message;
+      } else if (
+        err &&
+        typeof err === "object" &&
+        "type" in err &&
+        (err as { type: unknown }).type === "error"
+      ) {
+        detail = "WebSocket error (server unreachable or wrong URL)";
+      } else {
+        detail = String(err);
+      }
+      const msg = `${detail} — server: ${SERVER_URL}`;
+      console.error("[room] connect failed", err, "url:", SERVER_URL);
+      set({ status: "error", errorMessage: msg });
     }
   },
 
