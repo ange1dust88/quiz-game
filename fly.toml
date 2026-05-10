@@ -23,4 +23,7 @@ primary_region = 'fra'
 
 [[vm]]
   size = 'shared-cpu-1x'
-  memory = '256mb'
+  # 256MB is too tight — Node + Prisma's schema engine + tsx blow past it
+  # on cold start (machine logs showed "Out of memory: Killed process node").
+  # 512MB is the sweet spot for a small Colyseus + Prisma app.
+  memory = '512mb'
