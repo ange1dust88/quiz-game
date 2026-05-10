@@ -14,6 +14,8 @@
     "verbatimModuleSyntax": false,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false
   }
 }
