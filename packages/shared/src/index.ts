@@ -2,3 +2,4 @@
 // (later) Colyseus state schemas. Used by both apps/web and apps/game.
 export * from "./gameLogic.js";
 export * from "./matchChoices.js";
+export * from "./auth.js";

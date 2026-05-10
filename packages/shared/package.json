@@ -12,7 +12,8 @@
     "./schemas": "./src/schemas/index.ts"
   },
   "dependencies": {
-    "@colyseus/schema": "^3.0.0"
+    "@colyseus/schema": "^3.0.0",
+    "jose": "^6.1.3"
   },
   "devDependencies": {
     "vitest": "^4.1.5"

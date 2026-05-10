@@ -2,6 +2,8 @@
 // same `prisma` from this package so they hit the same connection pool
 // configuration and the same generated types.
 
+// MUST come first — populates DATABASE_URL before PrismaPg reads it.
+import "./loadEnv.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
 
