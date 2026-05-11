@@ -41,7 +41,15 @@ httpServer.on("request", (req: IncomingMessage, res: ServerResponse) => {
 
 const gameServer = new Server({ server: httpServer });
 
-gameServer.define("match", MatchRoom);
+// `filterBy(['sessionId'])` makes the matchmaker key its room pool on the
+// sessionId option. Without this, two players joining "match" with the
+// SAME sessionId could still land in different rooms because the matchmaker
+// treats all "match" rooms as one pool — clients then see desynced state
+// (different countries, different questions). With filterBy, joinOrCreate
+// scans only rooms whose options.sessionId matches the incoming request,
+// so a second player joining the same match is guaranteed to share state
+// with the first.
+gameServer.define("match", MatchRoom).filterBy(["sessionId"]);
 
 gameServer.listen(port);
 console.log(`[colyseus] listening on :${port}`);
