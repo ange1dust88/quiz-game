@@ -10,7 +10,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  useActiveAttack,
   useActivePlayerId,
+  useActiveQuestion,
   useCountries,
   useGameStore,
   usePickOrder,
@@ -30,7 +32,21 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
   const players = usePlayers();
   const countries = useCountries();
   const activePlayerId = useActivePlayerId();
-  const isMyTurn = activePlayerId === myPlayerId;
+  const activeQuestion = useActiveQuestion();
+  const activeAttack = useActiveAttack();
+
+  // Map clicks should be available ONLY when we're truly waiting for a
+  // territory choice — not while a numeric question is on screen (expand
+  // phase, question phase) and not while a war attack is being resolved.
+  // Without this gate the player at turnIndex saw the pickable-country
+  // glow even though clicking did nothing, which was misleading.
+  const mapIsInteractive =
+    !activeQuestion &&
+    !activeAttack &&
+    (stage === "capitals" ||
+      (stage === "expand" && pickOrder.length > 0) ||
+      stage === "war");
+  const isMyTurn = mapIsInteractive && activePlayerId === myPlayerId;
 
   const claimCapital = useGameStore((s) => s.claimCapital);
   const claimTerritory = useGameStore((s) => s.claimTerritory);

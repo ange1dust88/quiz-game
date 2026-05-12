@@ -14,6 +14,7 @@ import {
   useWinnerId,
 } from "@/app/lib/gameStore";
 import { PLAYER_COLORS } from "@/app/lib/constants";
+import Spinner from "@/app/components/ui/Spinner";
 import MapPanel from "./MapPanel";
 import ActionPanel from "./ActionPanel";
 import PlayerPanel from "./PlayerPanel";
@@ -35,7 +36,8 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
 
   if (status === "connecting" || status === "idle") {
     return (
-      <div className="min-h-screen text-white flex items-center justify-center">
+      <div className="min-h-screen text-white flex flex-col items-center justify-center gap-4">
+        <Spinner />
         <span className="text-sm text-gray-400">Connecting to game…</span>
       </div>
     );
