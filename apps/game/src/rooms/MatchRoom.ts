@@ -802,16 +802,25 @@ export class MatchRoom extends Room<MatchState> {
     // Push results message — ephemeral; clients render briefly then hide.
     this.broadcast("round_results", { results, correctAnswer: cq.correctAnswer });
 
-    // Clear active question, install pick queue + deadline.
+    // Clear active question immediately so the input box disappears, but
+    // hold the pickOrder closed for the reveal window. Without this delay
+    // a fast picker could click a territory while other players are still
+    // reading the results banner, which felt like a desync.
     this.state.activeQuestion = null;
     this.state.pickOrder.clear();
-    pickOrder.forEach((id) => this.state.pickOrder.push(id));
-    this.state.pickExpiresAt =
-      pickOrder.length > 0 ? Date.now() + PICK_TIMER_MS : 0;
+    this.state.pickExpiresAt = 0;
 
     console.log(
-      `[match ${this.roomId}] question resolved, pickOrder=[${pickOrder.length}]`,
+      `[match ${this.roomId}] question resolved, picks opening in ${PHASE_DELAY_MS}ms`,
     );
+
+    this.clock.setTimeout(() => {
+      // Defensive: stage may have moved on (everyone disconnected, etc).
+      if (this.state.stage !== "expand") return;
+      pickOrder.forEach((id) => this.state.pickOrder.push(id));
+      this.state.pickExpiresAt =
+        pickOrder.length > 0 ? Date.now() + PICK_TIMER_MS : 0;
+    }, PHASE_DELAY_MS);
   }
 
   private handleClaimTerritory(

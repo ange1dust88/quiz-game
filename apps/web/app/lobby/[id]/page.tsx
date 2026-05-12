@@ -8,7 +8,7 @@ import { LobbyContent } from "./LobbyContent";
 import { MAX_WAR_ROUNDS } from "@/app/lib/constants";
 
 function redirectToMatch(sessionId: string): never {
-  redirect(`/match-new/${sessionId}`);
+  redirect(`/match/${sessionId}`);
 }
 
 const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {

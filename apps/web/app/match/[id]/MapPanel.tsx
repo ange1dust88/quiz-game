@@ -8,7 +8,13 @@
 //   - war:      send attack if I'm at turnIndex (enemy neighbour)
 // Capitals get a small HP ring overlay; clickable countries glow.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   useActiveAttack,
   useActivePlayerId,
@@ -21,6 +27,7 @@ import {
   useTurnIndex,
 } from "@/app/lib/gameStore";
 import { EUROPE_PATHS } from "@/app/lib/europeSvg";
+import { EUROPE_NEIGHBORS } from "@/app/lib/europeNeighbors";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 
 const UNCLAIMED = "#23253a";
@@ -62,6 +69,14 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
     return m;
   }, [players]);
 
+  // Color used for legal-target highlighting / hover. When I'm the active
+  // picker, it's MY color; when somebody else is attacking, the targeted
+  // country shows THEIR color (computed below from activeAttack).
+  const myColor = colorByPlayer[myPlayerId] ?? "#34d399";
+  const attackerColor = activeAttack
+    ? colorByPlayer[activeAttack.attackerId] ?? "#ef4444"
+    : "#ef4444";
+
   const countryBySvg = useMemo(() => {
     const m: Record<string, (typeof countries)[number]> = {};
     countries.forEach((c) => {
@@ -70,8 +85,19 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
     return m;
   }, [countries]);
 
+  // Country currently being attacked — derived from activeAttack.countryId
+  // (the Country.id, not svgId) so we can highlight the target on the map
+  // even though clicks are gated out during reveal.
+  const attackedSvgId = useMemo(() => {
+    if (!activeAttack?.countryId) return null;
+    const c = countries.find((x) => x.id === activeAttack.countryId);
+    return c?.svgId ?? null;
+  }, [activeAttack?.countryId, countries]);
+
   // Build set of svgIds that are CLICKABLE for me right now. Used to
-  // highlight legal targets (free neighbours / enemy neighbours).
+  // highlight only the LEGAL targets — capitals can be anywhere, expand
+  // and war need adjacency to my existing territories. We read the static
+  // adjacency from EUROPE_NEIGHBORS; the server still validates.
   const eligibleSvgIds = useMemo(() => {
     if (!isMyTurn) return new Set<string>();
     const out = new Set<string>();
@@ -82,19 +108,60 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
       return out;
     }
 
-    // expand & war both need neighbour adjacency. We don't have neighbour
-    // arrays in the synced state, so we read them from EUROPE_PATHS via
-    // templateId — but EUROPE_PATHS doesn't carry neighbours either. The
-    // server is the actual source of truth and rejects non-neighbour clicks
-    // anyway. For visual hint we mark any LEGAL TARGET (right ownership)
-    // and accept that clicking a non-neighbour silently noops.
+    // Neighbours of MY current territories.
+    const myNeighborSvgIds = new Set<string>();
+    for (const c of countries) {
+      if (c.ownerId !== myPlayerId) continue;
+      const ns = EUROPE_NEIGHBORS[c.svgId];
+      if (!ns) continue;
+      for (const n of ns) myNeighborSvgIds.add(n);
+    }
     countries.forEach((c) => {
+      if (!myNeighborSvgIds.has(c.svgId)) return;
       if (stage === "expand" && !c.ownerId) out.add(c.svgId);
       if (stage === "war" && c.ownerId && c.ownerId !== myPlayerId)
         out.add(c.svgId);
     });
     return out;
   }, [isMyTurn, stage, countries, myPlayerId]);
+
+  // Brief flash on countries that just changed ownership. Visual companion
+  // to the capture / countryLost sound effects in MatchClient. We keep a
+  // svgId → expiresAt map and clear entries on a 700ms timer so simultaneous
+  // captures animate independently.
+  const prevOwnersRef = useRef<Record<string, string | null>>({});
+  const ownersInitRef = useRef(false);
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const next: Record<string, string | null> = {};
+    const newlyChanged: string[] = [];
+    for (const c of countries) {
+      const owner = c.ownerId ?? null;
+      next[c.svgId] = owner;
+      if (!ownersInitRef.current) continue;
+      const prev = prevOwnersRef.current[c.svgId] ?? null;
+      if (prev !== owner) newlyChanged.push(c.svgId);
+    }
+    prevOwnersRef.current = next;
+    if (!ownersInitRef.current) {
+      ownersInitRef.current = true;
+      return;
+    }
+    if (!newlyChanged.length) return;
+    setFlashIds((s) => {
+      const nxt = new Set(s);
+      newlyChanged.forEach((id) => nxt.add(id));
+      return nxt;
+    });
+    const t = setTimeout(() => {
+      setFlashIds((s) => {
+        const nxt = new Set(s);
+        newlyChanged.forEach((id) => nxt.delete(id));
+        return nxt;
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [countries]);
 
   // Capital marker positions, computed from path bbox once paths are
   // mounted. We re-compute when the set of capitals changes.
@@ -141,15 +208,29 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
   return (
     <div className="w-full h-full flex flex-col">
       <style>{`
-        .country-eligible { animation: country-pulse 1.6s ease-in-out infinite; }
-        @keyframes country-pulse {
-          0%,100% { filter: drop-shadow(0 0 1px rgba(52,211,153,0.0)); }
-          50%     { filter: drop-shadow(0 0 4px rgba(52,211,153,0.7)); }
+        /* All player-coloured highlights read --eq-color, which is set
+           inline on each eligible / targeted path. One animation, dynamic
+           per-player tint. */
+        .country-eligible,
+        .country-attackable,
+        .country-targeted {
+          animation: country-pulse 1.6s ease-in-out infinite;
         }
-        .country-attackable { animation: country-pulse-red 1.6s ease-in-out infinite; }
-        @keyframes country-pulse-red {
-          0%,100% { filter: drop-shadow(0 0 1px rgba(239,68,68,0.0)); }
-          50%     { filter: drop-shadow(0 0 4px rgba(239,68,68,0.8)); }
+        @keyframes country-pulse {
+          0%,100% { filter: drop-shadow(0 0 0 transparent); }
+          50%     { filter: drop-shadow(0 0 3.5px var(--eq-color, #34d399)); }
+        }
+        .country-eligible:hover,
+        .country-attackable:hover {
+          animation-play-state: paused;
+          fill: var(--eq-color, #34d399);
+          fill-opacity: 0.55;
+        }
+        .country-flash { animation: country-flash 0.7s ease-out; }
+        @keyframes country-flash {
+          0%   { filter: brightness(1) drop-shadow(0 0 0 rgba(255,255,255,0)); }
+          35%  { filter: brightness(1.8) drop-shadow(0 0 6px rgba(255,255,255,0.9)); }
+          100% { filter: brightness(1) drop-shadow(0 0 0 rgba(255,255,255,0)); }
         }
       `}</style>
       <div className="flex-1 flex items-center justify-center overflow-hidden">
@@ -168,25 +249,44 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
               : stageAllowsClick(stage, isMyTurn, c.ownerId, myPlayerId)
                 ? "pointer"
                 : "not-allowed";
-            const cls =
-              eligible && stage === "war"
+            const flash = flashIds.has(p.svgId);
+            const isTargeted = attackedSvgId === p.svgId;
+            const warMode = stage === "war";
+            const cls = [
+              flash ? "country-flash" : "",
+              !flash && isTargeted ? "country-targeted" : "",
+              !flash && !isTargeted && eligible && warMode
                 ? "country-attackable"
-                : eligible
-                  ? "country-eligible"
-                  : "";
+                : "",
+              !flash && !isTargeted && eligible && !warMode
+                ? "country-eligible"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            const highlightColor = isTargeted ? attackerColor : myColor;
+            const strokeColor =
+              isTargeted || eligible ? highlightColor : "#0a0a0f";
+            const strokeW = isTargeted || eligible ? 1.5 : 0.5;
+            const pathStyle: CSSProperties = {
+              cursor,
+              transition:
+                "fill 0.3s ease, stroke 0.2s ease, fill-opacity 0.2s ease",
+            };
+            if (isTargeted || eligible) {
+              (pathStyle as Record<string, string>)["--eq-color"] =
+                highlightColor;
+            }
             return (
               <path
                 key={p.svgId}
                 id={p.svgId}
                 d={p.d}
                 fill={fill}
-                stroke={eligible ? "#34d399" : "#0a0a0f"}
-                strokeWidth={eligible ? 1.5 : 0.5}
+                stroke={strokeColor}
+                strokeWidth={strokeW}
                 className={cls}
-                style={{
-                  cursor,
-                  transition: "fill 0.4s ease, stroke 0.2s ease",
-                }}
+                style={pathStyle}
                 onClick={() => handleClick(p.svgId)}
               >
                 <title>

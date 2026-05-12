@@ -3,9 +3,11 @@
 // Top-level client component for the new Colyseus-backed match flow.
 // Connects on mount, renders three panels: map, action panel, players.
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  useActivePlayerId,
+  useActiveQuestion,
   useCountries,
   useGameStore,
   usePlayers,
@@ -14,6 +16,7 @@ import {
   useWinnerId,
 } from "@/app/lib/gameStore";
 import { PLAYER_COLORS } from "@/app/lib/constants";
+import { isMuted, setMuted, sounds } from "@/app/lib/sounds";
 import Spinner from "@/app/components/ui/Spinner";
 import MapPanel from "./MapPanel";
 import ActionPanel from "./ActionPanel";
@@ -25,7 +28,6 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
   const status = useRoomStatus();
   const errorMessage = useGameStore((s) => s.errorMessage);
   const stage = useStage();
-  const winnerId = useWinnerId();
   const connect = useGameStore((s) => s.connect);
   const disconnect = useGameStore((s) => s.disconnect);
 
@@ -33,6 +35,8 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
     connect(sessionId, jwt);
     return () => disconnect();
   }, [connect, disconnect, sessionId, jwt]);
+
+  useMatchSounds(myPlayerId);
 
   if (status === "connecting" || status === "idle") {
     return (
@@ -66,35 +70,143 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
 
   return (
     <div className="h-screen flex flex-col text-white overflow-hidden">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-[#1f1f24] bg-[#0a0a0f]/80 backdrop-blur">
-        <div className="flex items-center gap-3">
+      <header className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-[#1f1f24] bg-[#0a0a0f]/80 backdrop-blur">
+        <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-400 via-yellow-300 to-teal-400 shrink-0" />
-          <div className="leading-tight">
+          <div className="leading-tight min-w-0">
             <div className="text-sm font-semibold">EuropeQuiz</div>
-            <div className="text-[10px] uppercase tracking-widest text-gray-500">
+            <div className="text-[10px] uppercase tracking-widest text-gray-500 truncate">
               Match · {stage}
             </div>
           </div>
         </div>
-        <Link
-          href="/dashboard"
-          className="text-xs text-gray-400 hover:text-white transition-colors"
-        >
-          Leave
-        </Link>
+        <div className="flex items-center gap-2 shrink-0">
+          <MuteToggle />
+          <Link
+            href="/dashboard"
+            className="text-xs text-gray-400 hover:text-white transition-colors px-2 py-1"
+          >
+            Leave
+          </Link>
+        </div>
       </header>
 
-      <div className="flex-1 flex min-h-0">
-        <main className="flex-1 relative overflow-hidden bg-[#0a0a0f]">
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
+        <main className="relative bg-[#0a0a0f] overflow-hidden h-[45vh] shrink-0 lg:h-auto lg:flex-1 lg:shrink">
           <MapPanel myPlayerId={myPlayerId} />
         </main>
-        <aside className="w-[360px] flex flex-col gap-3 p-4 border-l border-[#1f1f24] bg-[#0a0a0f]/80 overflow-y-auto">
+        <aside className="flex-1 lg:flex-none w-full lg:w-[360px] flex flex-col gap-3 p-3 sm:p-4 border-t lg:border-t-0 lg:border-l border-[#1f1f24] bg-[#0a0a0f]/80 overflow-y-auto">
           <ActionPanel myPlayerId={myPlayerId} />
           <PlayerPanel myPlayerId={myPlayerId} />
         </aside>
       </div>
     </div>
   );
+}
+
+// --- Mute toggle -------------------------------------------------------
+//
+// Tiny speaker icon in the header. State is persisted in localStorage by
+// the sounds module so it survives reloads. The button is also the user
+// gesture that unlocks the AudioContext on autoplay-restricted browsers.
+
+function MuteToggle() {
+  const [muted, setMutedState] = useState(false);
+  useEffect(() => {
+    setMutedState(isMuted());
+  }, []);
+  const toggle = () => {
+    const next = !muted;
+    setMuted(next);
+    setMutedState(next);
+    if (!next) sounds.yourTurn();
+  };
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={muted ? "Unmute" : "Mute"}
+      className="text-xs text-gray-400 hover:text-white transition-colors px-2 py-1 border border-[#2a2a32] rounded-md"
+    >
+      {muted ? "🔇" : "🔊"}
+    </button>
+  );
+}
+
+// --- Sound effect coordinator -----------------------------------------
+//
+// Watches store slices and fires the appropriate sound on transitions:
+//   - new active question                 → questionUp
+//   - active player becomes ME            → yourTurn
+//   - a country I now own (was someone    → capture
+//     else's / nobody's)
+//   - a country I lost (mine → someone)   → countryLost
+//   - stage transitions to "ended"        → victory or defeat
+//
+// We keep prev refs locally so the diff only fires on actual transitions.
+
+function useMatchSounds(myPlayerId: string) {
+  const stage = useStage();
+  const winnerId = useWinnerId();
+  const activePlayerId = useActivePlayerId();
+  const activeQuestion = useActiveQuestion();
+  const countries = useCountries();
+
+  const prevOwnersRef = useRef<Record<string, string | null>>({});
+  const initOwnersRef = useRef(false);
+  const prevActiveRef = useRef<string | null>(null);
+  const prevQuestionIdRef = useRef<string | null>(null);
+  const prevStageRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const next: Record<string, string | null> = {};
+    let captures = 0;
+    let losses = 0;
+    for (const c of countries) {
+      const newOwner = c.ownerId ?? null;
+      next[c.svgId] = newOwner;
+      if (!initOwnersRef.current) continue;
+      const prev = prevOwnersRef.current[c.svgId] ?? null;
+      if (prev === newOwner) continue;
+      if (newOwner === myPlayerId) captures++;
+      else if (prev === myPlayerId) losses++;
+    }
+    prevOwnersRef.current = next;
+    if (!initOwnersRef.current) {
+      initOwnersRef.current = true;
+      return;
+    }
+    if (captures > 0) sounds.capture();
+    else if (losses > 0) sounds.countryLost();
+  }, [countries, myPlayerId]);
+
+  useEffect(() => {
+    if (
+      activePlayerId &&
+      activePlayerId === myPlayerId &&
+      prevActiveRef.current !== myPlayerId &&
+      stage !== "ended"
+    ) {
+      sounds.yourTurn();
+    }
+    prevActiveRef.current = activePlayerId ?? null;
+  }, [activePlayerId, myPlayerId, stage]);
+
+  useEffect(() => {
+    const qid = activeQuestion?.id ?? null;
+    if (qid && qid !== prevQuestionIdRef.current) {
+      sounds.questionUp();
+    }
+    prevQuestionIdRef.current = qid;
+  }, [activeQuestion]);
+
+  useEffect(() => {
+    if (stage === "ended" && prevStageRef.current !== "ended") {
+      if (winnerId === myPlayerId) sounds.victory();
+      else sounds.defeat();
+    }
+    prevStageRef.current = stage;
+  }, [stage, winnerId, myPlayerId]);
 }
 
 // --- Game over screen ---------------------------------------------------

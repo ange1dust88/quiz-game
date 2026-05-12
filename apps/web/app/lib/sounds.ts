@@ -78,6 +78,23 @@ function tone(opts: ToneOptions) {
 }
 
 export const sounds = {
+  // "Your turn now" — quick high blip.
+  yourTurn: () =>
+    tone({ freq: 880, duration: 0.08, type: "sine", gain: 0.5 }),
+  // A new question appeared — two-tone notification.
+  questionUp: () => {
+    tone({ freq: 440, duration: 0.08, type: "triangle", gain: 0.4 });
+    tone({ freq: 660, duration: 0.1, type: "triangle", gain: 0.4, delay: 0.07 });
+  },
+  // Someone took a country FROM me — short descending sad blip.
+  countryLost: () =>
+    tone({
+      freq: 360,
+      freqEnd: 160,
+      duration: 0.28,
+      type: "sawtooth",
+      gain: 0.35,
+    }),
   // Last 3 seconds of a timer — short, sharp.
   tick: () =>
     tone({

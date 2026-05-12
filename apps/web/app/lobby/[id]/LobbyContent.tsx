@@ -102,7 +102,7 @@ export function LobbyContent({
         },
         async (payload) => {
           if (payload.new.status === "active") {
-            router.push(`/match-new/${sessionId}`);
+            router.push(`/match/${sessionId}`);
           } else if (payload.new.status === "completed") {
             router.refresh();
           }

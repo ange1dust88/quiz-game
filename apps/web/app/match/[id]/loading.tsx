@@ -1,7 +1,7 @@
-// Streamed by Next.js while the match-new server component is fetching
-// the profile + verifying the PlayerInGame row. Shown for ~50-300ms after
-// the redirect from the lobby — long enough that a blank page would feel
-// like nothing happened.
+// Streamed by Next.js while the match server component is fetching the
+// profile + verifying the PlayerInGame row. Shown for ~50-300ms after the
+// redirect from the lobby — long enough that a blank page would feel like
+// nothing happened.
 
 import Spinner from "@/app/components/ui/Spinner";
 
