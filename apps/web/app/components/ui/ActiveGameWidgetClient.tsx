@@ -31,7 +31,7 @@ export default function ActiveGameWidgetClient({
   return (
     <Link
       href={href}
-      className="fixed left-4 bottom-4 z-40 flex items-center gap-3 bg-[#0d0d12]/95 backdrop-blur border border-emerald-400/40 hover:border-emerald-400 transition-colors rounded-xl px-4 py-3 shadow-xl shadow-black/40 max-w-[calc(100vw-2rem)]"
+      className="fixed right-4 bottom-4 z-40 flex items-center gap-3 bg-[#0d0d12]/95 backdrop-blur border border-emerald-400/40 hover:border-emerald-400 transition-colors rounded-xl px-4 py-3 shadow-xl shadow-black/40 max-w-[calc(100vw-2rem)]"
     >
       <span className="relative flex w-2.5 h-2.5 shrink-0">
         <span className="absolute inset-0 rounded-full bg-emerald-400 animate-ping opacity-60" />

@@ -132,3 +132,46 @@ export async function joinGame(sessionId: string) {
     },
   });
 }
+
+// Player drops out of a waiting lobby. If they're the host the whole
+// lobby is cancelled (status="cancelled" — kept around for analytics,
+// hidden from the active-game banner / widget). Guests just remove
+// their seat. Only allowed for waiting lobbies; active matches are
+// authoritative on Colyseus and should be left via the match Leave
+// button instead.
+export async function leaveLobby(formData: FormData) {
+  const sessionId = String(formData.get("sessionId") ?? "");
+  if (!sessionId) return;
+
+  const profile = await getProfile();
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    include: {
+      players: {
+        where: { profileId: profile.id },
+        select: { id: true, role: true },
+      },
+    },
+  });
+  if (!session) {
+    redirect("/dashboard");
+  }
+  const me = session.players[0];
+  if (!me || session.status !== "waiting") {
+    redirect("/dashboard");
+    return;
+  }
+
+  if (me.role === "host") {
+    await prisma.gameSession.update({
+      where: { id: sessionId },
+      data: { status: "cancelled" },
+    });
+  } else {
+    await prisma.matchChoice.deleteMany({
+      where: { playerInGameId: me.id },
+    });
+    await prisma.playerInGame.delete({ where: { id: me.id } });
+  }
+  redirect("/dashboard");
+}

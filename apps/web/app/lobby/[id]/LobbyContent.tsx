@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/app/lib/supabase/client";
 import { StartGameButton } from "./StartGameButton";
-import { joinGame } from "./actions";
+import { joinGame, leaveLobby } from "./actions";
 import { useRouter } from "next/navigation";
 import ResultsView from "./ResultsView";
 import MatchChoicesPicker from "./MatchChoicesPicker";
@@ -106,6 +106,8 @@ export function LobbyContent({
             router.push(`/match/${sessionId}`);
           } else if (payload.new.status === "completed") {
             router.refresh();
+          } else if (payload.new.status === "cancelled") {
+            router.push("/dashboard");
           }
         },
       )
@@ -324,6 +326,18 @@ export function LobbyContent({
             <p className="text-[#9a9a9a] text-sm">Invite friends</p>
             <InviteRow sessionId={sessionId} />
           </div>
+
+          {session?.status === "waiting" && me && (
+            <form action={leaveLobby} className="flex justify-end">
+              <input type="hidden" name="sessionId" value={session.id} />
+              <button
+                type="submit"
+                className="text-xs text-red-300 hover:text-red-200 hover:bg-red-500/10 transition-colors border border-red-500/30 hover:border-red-400/60 rounded-lg px-3 py-1.5"
+              >
+                {isHost ? "Disband lobby" : "Leave lobby"}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

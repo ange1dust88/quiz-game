@@ -55,6 +55,11 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     return <div>No room found</div>;
   }
 
+  // Disbanded by host — there's nothing to do here, send the user back.
+  if (session.status === "cancelled") {
+    redirect("/dashboard");
+  }
+
   // If the match is already running, drop the player straight into it. This
   // catches the case where someone joined a session whose host had already
   // hit Start — without this they'd see a stale "waiting" lobby.
