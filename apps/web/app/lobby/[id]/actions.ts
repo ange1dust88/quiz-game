@@ -3,6 +3,7 @@
 import { getProfile } from "@/app/lib/auth";
 import { prisma } from "@quiz/db";
 import { isValidChoice } from "@quiz/shared/matchChoices";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 export async function startGame(formData: FormData) {
@@ -34,6 +35,9 @@ export async function startGame(formData: FormData) {
       gameRoomId: null,
     },
   });
+  // Layout-level revalidate so the floating ActiveGameWidget on every
+  // page picks up the new "in match" status instead of "in lobby".
+  revalidatePath("/", "layout");
   redirect(`/match/${sessionId}`);
 }
 
@@ -131,6 +135,7 @@ export async function joinGame(sessionId: string) {
       role: "player",
     },
   });
+  revalidatePath("/", "layout");
 }
 
 // Player drops out of a waiting lobby. If they're the host the whole
@@ -173,5 +178,10 @@ export async function leaveLobby(formData: FormData) {
     });
     await prisma.playerInGame.delete({ where: { id: me.id } });
   }
+  // Force the root layout (which renders ActiveGameWidget) to re-fetch
+  // its DB lookup so the floating "in lobby" pill drops off. Without
+  // this the RSC payload from before the action gets reused and the
+  // banner persists despite the user being out of the session.
+  revalidatePath("/", "layout");
   redirect("/dashboard");
 }

@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@quiz/db";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getProfile } from "../lib/auth";
 
@@ -19,6 +20,7 @@ export async function createRoom() {
     },
   });
 
+  revalidatePath("/", "layout");
   redirect(`/lobby/${session.id}`);
 }
 
