@@ -88,10 +88,11 @@ export type GameStateMirror = {
 
 interface GameStore {
   room: Room | null;
-  status: "idle" | "connecting" | "connected" | "error";
+  status: "idle" | "connecting" | "connected" | "reconnecting" | "error";
   errorMessage: string | null;
   state: GameStateMirror;
   lastResults: { results: RoundResult[]; correctAnswer: number } | null;
+  reconnectAttempt: number;
 
   connect: (sessionId: string, jwt: string) => Promise<void>;
   disconnect: () => void;
@@ -210,100 +211,187 @@ function snapshot(s: any): GameStateMirror {
   };
 }
 
-export const useGameStore = create<GameStore>((set, get) => ({
-  room: null,
-  status: "idle",
-  errorMessage: null,
-  state: emptyState,
-  lastResults: null,
+// Outside the store so the reconnection path can read them across closures.
+// Manual disconnect (component unmount, user clicks Leave) sets
+// `manualDisconnect = true` so the onLeave handler doesn't kick off a retry.
+let manualDisconnect = false;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let savedReconnectionToken: string | null = null;
+let savedSessionId: string | null = null;
+let savedJwt: string | null = null;
+const MAX_RECONNECT_ATTEMPTS = 8;
 
-  async connect(sessionId, jwt) {
-    if (get().status === "connecting" || get().status === "connected") return;
-    set({ status: "connecting", errorMessage: null });
-    try {
-      const client = new Client(SERVER_URL);
-      const room = await client.joinOrCreate("match", { sessionId, jwt });
+function describeConnectError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (
+    err &&
+    typeof err === "object" &&
+    "type" in err &&
+    (err as { type: unknown }).type === "error"
+  ) {
+    return "WebSocket error (server unreachable or wrong URL)";
+  }
+  return String(err);
+}
 
-      room.onStateChange((s) => set({ state: snapshot(s) }));
-      room.onMessage(
-        "round_results",
-        (msg: { results: RoundResult[]; correctAnswer: number }) => {
-          set({ lastResults: msg });
-        },
-      );
-      room.onError((code, message) => {
-        console.error("[room] error", code, message);
-        set({ status: "error", errorMessage: message ?? `code ${code}` });
-      });
-      room.onLeave((code) => {
-        console.log("[room] left", code);
-        set({ status: "idle", room: null });
-      });
+export const useGameStore = create<GameStore>((set, get) => {
+  // Wire the lifecycle listeners on a freshly-joined room and stash its
+  // reconnection token so we can resume if the socket flakes. Used by
+  // both the initial connect() and the reconnect retry path.
+  const wireRoom = (room: Room) => {
+    savedReconnectionToken =
+      (room as unknown as { reconnectionToken?: string }).reconnectionToken ??
+      null;
 
-      set({ room, status: "connected", state: snapshot(room.state) });
-    } catch (err) {
-      // ProgressEvent stringifies to "[object ProgressEvent]" — not useful.
-      // Extract whatever signal we can and ALWAYS include the URL we tried
-      // so a misconfigured NEXT_PUBLIC_GAME_SERVER_URL is obvious.
-      let detail: string;
-      if (err instanceof Error) {
-        detail = err.message;
-      } else if (
-        err &&
-        typeof err === "object" &&
-        "type" in err &&
-        (err as { type: unknown }).type === "error"
-      ) {
-        detail = "WebSocket error (server unreachable or wrong URL)";
-      } else {
-        detail = String(err);
+    room.onStateChange((s) => set({ state: snapshot(s) }));
+    room.onMessage(
+      "round_results",
+      (msg: { results: RoundResult[]; correctAnswer: number }) => {
+        set({ lastResults: msg });
+      },
+    );
+    room.onError((code, message) => {
+      console.error("[room] error", code, message);
+      set({ status: "error", errorMessage: message ?? `code ${code}` });
+    });
+    room.onLeave((code) => {
+      console.log("[room] left", code);
+      if (manualDisconnect) {
+        set({ status: "idle", room: null, reconnectAttempt: 0 });
+        return;
       }
-      const msg = `${detail} — server: ${SERVER_URL}`;
-      console.error("[room] connect failed", err, "url:", SERVER_URL);
-      set({ status: "error", errorMessage: msg });
+      // Unexpected disconnect — server keeps the slot alive for ~30s via
+      // allowReconnection, so try to slip back in.
+      set({ status: "reconnecting", room: null, reconnectAttempt: 0 });
+      scheduleReconnect();
+    });
+  };
+
+  const scheduleReconnect = () => {
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (manualDisconnect) return;
+    const attempt = get().reconnectAttempt + 1;
+    if (attempt > MAX_RECONNECT_ATTEMPTS) {
+      set({
+        status: "error",
+        errorMessage:
+          "Lost connection to the game server. Refresh to try again.",
+      });
+      return;
     }
-  },
+    const delay = Math.min(8000, Math.round(700 * Math.pow(1.6, attempt - 1)));
+    reconnectTimer = setTimeout(async () => {
+      if (manualDisconnect) return;
+      set({ reconnectAttempt: attempt });
+      try {
+        if (!savedSessionId || !savedJwt) throw new Error("no saved session");
+        const client = new Client(SERVER_URL);
+        let room: Room;
+        if (savedReconnectionToken) {
+          try {
+            room = await client.reconnect(savedReconnectionToken);
+          } catch {
+            room = await client.joinOrCreate("match", {
+              sessionId: savedSessionId,
+              jwt: savedJwt,
+            });
+          }
+        } else {
+          room = await client.joinOrCreate("match", {
+            sessionId: savedSessionId,
+            jwt: savedJwt,
+          });
+        }
+        wireRoom(room);
+        set({
+          room,
+          status: "connected",
+          state: snapshot(room.state),
+          reconnectAttempt: 0,
+        });
+      } catch (err) {
+        console.warn("[room] reconnect attempt failed", err);
+        scheduleReconnect();
+      }
+    }, delay);
+  };
 
-  disconnect() {
-    const room = get().room;
-    if (room) room.leave().catch(() => {});
-    set({
-      room: null,
-      status: "idle",
-      state: emptyState,
-      lastResults: null,
-    });
-  },
+  return {
+    room: null,
+    status: "idle",
+    errorMessage: null,
+    state: emptyState,
+    lastResults: null,
+    reconnectAttempt: 0,
 
-  claimCapital(svgId) {
-    get().room?.send("claim_capital", { svgId });
-  },
-  claimTerritory(svgId) {
-    get().room?.send("claim_territory", { svgId });
-  },
-  attack(svgId) {
-    get().room?.send("attack", { svgId });
-  },
-  submitAnswer(value, telemetry) {
-    get().room?.send("submit_answer", {
-      value,
-      firstInputAtMs: telemetry?.firstInputAtMs ?? null,
-      inputChangeCount: telemetry?.inputChangeCount ?? 0,
-    });
-  },
-  submitWarAnswer(option, submittedAtMs) {
-    get().room?.send("war_answer", { option, submittedAtMs });
-  },
-  submitWarTie(value, telemetry) {
-    get().room?.send("war_tie", {
-      value,
-      firstInputAtMs: telemetry?.firstInputAtMs ?? null,
-    });
-  },
-  clearResults() {
-    set({ lastResults: null });
-  },
-}));
+    async connect(sessionId, jwt) {
+      if (get().status === "connecting" || get().status === "connected") return;
+      manualDisconnect = false;
+      savedSessionId = sessionId;
+      savedJwt = jwt;
+      set({ status: "connecting", errorMessage: null, reconnectAttempt: 0 });
+      try {
+        const client = new Client(SERVER_URL);
+        const room = await client.joinOrCreate("match", { sessionId, jwt });
+        wireRoom(room);
+        set({ room, status: "connected", state: snapshot(room.state) });
+      } catch (err) {
+        const msg = `${describeConnectError(err)} — server: ${SERVER_URL}`;
+        console.error("[room] connect failed", err, "url:", SERVER_URL);
+        set({ status: "error", errorMessage: msg });
+      }
+    },
+
+    disconnect() {
+      manualDisconnect = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      const room = get().room;
+      if (room) room.leave().catch(() => {});
+      savedReconnectionToken = null;
+      savedSessionId = null;
+      savedJwt = null;
+      set({
+        room: null,
+        status: "idle",
+        state: emptyState,
+        lastResults: null,
+        reconnectAttempt: 0,
+      });
+    },
+
+    claimCapital(svgId) {
+      get().room?.send("claim_capital", { svgId });
+    },
+    claimTerritory(svgId) {
+      get().room?.send("claim_territory", { svgId });
+    },
+    attack(svgId) {
+      get().room?.send("attack", { svgId });
+    },
+    submitAnswer(value, telemetry) {
+      get().room?.send("submit_answer", {
+        value,
+        firstInputAtMs: telemetry?.firstInputAtMs ?? null,
+        inputChangeCount: telemetry?.inputChangeCount ?? 0,
+      });
+    },
+    submitWarAnswer(option, submittedAtMs) {
+      get().room?.send("war_answer", { option, submittedAtMs });
+    },
+    submitWarTie(value, telemetry) {
+      get().room?.send("war_tie", {
+        value,
+        firstInputAtMs: telemetry?.firstInputAtMs ?? null,
+      });
+    },
+    clearResults() {
+      set({ lastResults: null });
+    },
+  };
+});
 
 // --- Selector helpers (use these in components for narrowest rerenders) --
 

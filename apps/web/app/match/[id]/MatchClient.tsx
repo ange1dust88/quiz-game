@@ -27,6 +27,7 @@ type Props = { sessionId: string; jwt: string; myPlayerId: string };
 export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
   const status = useRoomStatus();
   const errorMessage = useGameStore((s) => s.errorMessage);
+  const reconnectAttempt = useGameStore((s) => s.reconnectAttempt);
   const stage = useStage();
   const connect = useGameStore((s) => s.connect);
   const disconnect = useGameStore((s) => s.disconnect);
@@ -37,6 +38,7 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
   }, [connect, disconnect, sessionId, jwt]);
 
   useMatchSounds(myPlayerId);
+  useTurnTabAlert(myPlayerId);
 
   if (status === "connecting" || status === "idle") {
     return (
@@ -91,6 +93,16 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
         </div>
       </header>
 
+      {status === "reconnecting" && (
+        <div className="flex items-center gap-2 px-4 py-1.5 text-xs bg-amber-500/10 border-b border-amber-400/30 text-amber-200">
+          <Spinner size={12} />
+          <span>
+            Reconnecting to game server…
+            {reconnectAttempt > 1 ? ` (attempt ${reconnectAttempt})` : ""}
+          </span>
+        </div>
+      )}
+
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
         <main className="relative bg-[#0a0a0f] overflow-hidden h-[45vh] shrink-0 lg:h-auto lg:flex-1 lg:shrink">
           <MapPanel myPlayerId={myPlayerId} />
@@ -131,6 +143,46 @@ function MuteToggle() {
       {muted ? "🔇" : "🔊"}
     </button>
   );
+}
+
+// --- Tab title alert ---------------------------------------------------
+//
+// When it's my turn AND the tab is in the background (user switched away),
+// flash the document title so they notice. Restored as soon as the tab
+// is visible again or my turn ends.
+
+function useTurnTabAlert(myPlayerId: string) {
+  const activePlayerId = useActivePlayerId();
+  const stage = useStage();
+  const activeQuestion = useActiveQuestion();
+
+  useEffect(() => {
+    const original = "EuropeQuiz";
+    if (stage === "ended") {
+      document.title = original;
+      return;
+    }
+    // I need to act if it's literally my turn OR a numeric question is up
+    // (expand phase questions need every player to answer).
+    const needsMe =
+      activePlayerId === myPlayerId || activeQuestion !== null;
+    if (!needsMe) {
+      document.title = original;
+      return;
+    }
+
+    const apply = () => {
+      document.title = document.hidden
+        ? `(!) Your turn — ${original}`
+        : original;
+    };
+    apply();
+    document.addEventListener("visibilitychange", apply);
+    return () => {
+      document.removeEventListener("visibilitychange", apply);
+      document.title = original;
+    };
+  }, [activePlayerId, myPlayerId, stage, activeQuestion]);
 }
 
 // --- Sound effect coordinator -----------------------------------------

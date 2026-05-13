@@ -8,7 +8,8 @@ import { joinGame } from "./actions";
 import { useRouter } from "next/navigation";
 import ResultsView from "./ResultsView";
 import MatchChoicesPicker from "./MatchChoicesPicker";
-import { findChoiceOption } from "@quiz/shared/matchChoices";
+import { findChoiceOption, MATCH_CHOICES } from "@quiz/shared/matchChoices";
+import { PLAYER_COLORS } from "@/app/lib/constants";
 
 interface Player {
   id: string;
@@ -137,6 +138,15 @@ export function LobbyContent({
   const me = session?.players?.find((p) => p.profileId === currentUser.id);
   const isHost = me?.role === "host";
   const canStart = players.length >= 2;
+  // Pre-match colour matches the in-match seat colour: host first, then by
+  // joinedAt — which is the order returned by the page-level query.
+  const colorForPlayer = (id: string) => {
+    const idx = players.findIndex((p) => p.id === id);
+    return PLAYER_COLORS[idx % PLAYER_COLORS.length] ?? "#666";
+  };
+  const requiredChoiceKeys = MATCH_CHOICES.map((c) => c.key);
+  const playerReady = (p: Player) =>
+    requiredChoiceKeys.every((k) => p.choices.some((c) => c.key === k));
 
   if (session?.status === "completed") {
     return (
@@ -194,37 +204,60 @@ export function LobbyContent({
                   const opt = capStyle
                     ? findChoiceOption("capital_style", capStyle.value)
                     : null;
+                  const color = colorForPlayer(p.id);
+                  const ready = playerReady(p);
                   return (
                     <div
                       key={p.id}
-                      className="flex justify-between items-center bg-[#242424] px-4 py-2 rounded-lg border border-[#333]"
+                      className="flex justify-between items-center gap-3 bg-[#242424] px-3 py-2 rounded-lg border-2"
+                      style={{ borderColor: `${color}44` }}
                     >
-                      <span className="flex items-center gap-2">
-                        {nick ? (
-                          <Link
-                            href={`/profile/${encodeURIComponent(nick)}`}
-                            target="_blank"
-                            className="hover:text-blue-400 hover:underline transition-colors"
-                          >
-                            {nick}
-                          </Link>
-                        ) : (
-                          <span>No name</span>
-                        )}
-                        {p.role === "host" && (
-                          <span className="text-yellow-400 text-sm">👑</span>
-                        )}
-                        {opt && (
-                          <span
-                            className="text-[10px] bg-blue-500/15 text-blue-200 border border-blue-500/30 rounded-full px-2 py-0.5"
-                            title={opt.description}
-                          >
-                            {opt.emoji} {opt.label}
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-xs text-[#8a8a8a]">
-                        {p.role === "host" ? "Host" : "Player"}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="w-8 h-8 rounded-md flex items-center justify-center text-sm font-bold text-black shrink-0"
+                          style={{ backgroundColor: color }}
+                        >
+                          {(nick ?? "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                          {nick ? (
+                            <Link
+                              href={`/profile/${encodeURIComponent(nick)}`}
+                              target="_blank"
+                              className="text-sm font-semibold hover:underline truncate"
+                              style={{ color }}
+                            >
+                              {nick}
+                            </Link>
+                          ) : (
+                            <span className="text-sm font-semibold text-gray-400">
+                              No name
+                            </span>
+                          )}
+                          {p.role === "host" && (
+                            <span
+                              className="text-yellow-400 text-xs"
+                              title="Host"
+                            >
+                              👑
+                            </span>
+                          )}
+                          {opt && (
+                            <span
+                              className="text-[10px] bg-[#1a1a1a] text-gray-300 border border-[#3a3a3a] rounded-full px-2 py-0.5"
+                              title={opt.description}
+                            >
+                              {opt.emoji} {opt.label}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[10px] uppercase tracking-widest font-semibold shrink-0 ${
+                          ready ? "text-emerald-400" : "text-gray-500"
+                        }`}
+                      >
+                        {ready ? "Ready" : "Picking…"}
                       </span>
                     </div>
                   );
@@ -281,20 +314,49 @@ export function LobbyContent({
             </div>
           )}
 
-          <div className="pt-2 border-t border-[#2a2a2a] flex flex-col items-start">
-            <p className="text-[#9a9a9a] mb-1 text-sm">Invite friends</p>
-            <div className="flex items-center gap-2 bg-[#242424] px-3 py-2 rounded-lg border border-[#333] w-full">
-              <span className="text-sm text-[#ccc]">{sessionId}</span>
-              <button
-                onClick={() => navigator.clipboard.writeText(sessionId)}
-                className="ml-auto text-xs bg-[#2a2a2a] hover:bg-[#3a3a3a] transition-colors px-2 py-1 rounded"
-              >
-                Copy
-              </button>
-            </div>
+          <div className="pt-2 border-t border-[#2a2a2a] flex flex-col items-start gap-1">
+            <p className="text-[#9a9a9a] text-sm">Invite friends</p>
+            <InviteRow sessionId={sessionId} />
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Copy-to-clipboard for the full invite URL. We construct it on the client
+// (window.location.origin) so it works both in dev and against whatever
+// origin the production deploy lands on, without needing an env var.
+function InviteRow({ sessionId }: { sessionId: string }) {
+  const [copied, setCopied] = useState(false);
+  const inviteUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/lobby/${sessionId}`
+      : `/lobby/${sessionId}`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore (e.g. http context with no clipboard API)
+    }
+  };
+  return (
+    <div className="flex items-center gap-2 bg-[#242424] px-3 py-2 rounded-lg border border-[#333] w-full">
+      <span className="text-xs text-[#ccc] truncate flex-1" title={inviteUrl}>
+        {inviteUrl}
+      </span>
+      <button
+        onClick={copy}
+        className={`text-xs px-2 py-1 rounded transition-colors shrink-0 ${
+          copied
+            ? "bg-emerald-500/20 text-emerald-300"
+            : "bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white"
+        }`}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
     </div>
   );
 }

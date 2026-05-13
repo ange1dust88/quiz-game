@@ -48,12 +48,18 @@ export default function PlayerPanel({ myPlayerId }: Props) {
           const color = PLAYER_COLORS[p.turnOrder % PLAYER_COLORS.length];
           const s = stats.get(p.id) ?? { lands: 0, points: 0, capHp: null, capMax: null };
           const share = totalPoints > 0 ? Math.round((s.points / totalPoints) * 100) : 0;
+          const rowStyle = isActive
+            ? {
+                borderColor: color,
+                backgroundColor: `${color}1c`,
+                boxShadow: `0 0 0 1px ${color}33`,
+              }
+            : { borderColor: "transparent" };
           return (
             <div
               key={p.id}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg border transition-colors ${
-                isActive ? "border-emerald-400/40 bg-emerald-400/5" : "border-transparent"
-              }`}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg border-2 transition-all"
+              style={rowStyle}
             >
               <div
                 className="w-9 h-9 rounded-md flex items-center justify-center text-sm font-bold shrink-0 text-black"
@@ -73,30 +79,63 @@ export default function PlayerPanel({ myPlayerId }: Props) {
                     <span className="text-[10px] text-amber-400">offline</span>
                   )}
                 </div>
-                <div className="text-xs text-gray-500">
-                  {s.points.toLocaleString()} pts · {s.lands} lands
-                  {s.capHp !== null && (
-                    <span className="ml-1 text-amber-300">
-                      ★{s.capHp}/{s.capMax}
-                    </span>
+                <div className="text-xs text-gray-500 flex items-center gap-2">
+                  <span>
+                    {s.points.toLocaleString()} pts · {s.lands} lands
+                  </span>
+                  {s.capHp !== null && s.capMax !== null && (
+                    <CapitalHearts hp={s.capHp} max={s.capMax} />
                   )}
                 </div>
               </div>
-              <div className="w-16 h-1 bg-[#1f1f24] rounded-full overflow-hidden shrink-0">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{ width: `${Math.max(share, 4)}%`, backgroundColor: color }}
-                />
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                {isActive && (
+                  <span
+                    className="text-[10px] uppercase tracking-widest font-semibold"
+                    style={{ color }}
+                  >
+                    Turn
+                  </span>
+                )}
+                <div className="w-16 h-1 bg-[#1f1f24] rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.max(share, 4)}%`,
+                      backgroundColor: color,
+                    }}
+                  />
+                </div>
               </div>
-              {isActive && (
-                <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold shrink-0">
-                  Turn
-                </span>
-              )}
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+// Capital HP as filled/empty hearts — easier to parse at a glance than
+// "★3/3" text, especially when you only have a quarter-second of side-eye
+// while reading the question.
+function CapitalHearts({ hp, max }: { hp: number; max: number }) {
+  const pips = [];
+  for (let i = 0; i < max; i++) {
+    pips.push(
+      <span
+        key={i}
+        className={`inline-block w-2 h-2 rounded-full ${
+          i < hp ? "bg-amber-300" : "bg-amber-300/20"
+        }`}
+      />,
+    );
+  }
+  return (
+    <span
+      title={`Capital ${hp}/${max} HP`}
+      className="inline-flex items-center gap-0.5"
+    >
+      {pips}
+    </span>
   );
 }
