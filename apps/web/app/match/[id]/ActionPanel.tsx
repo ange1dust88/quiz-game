@@ -215,12 +215,17 @@ function WarView({
   const isInTie = attack.tieQuestionId > 0;
   const isRevealing =
     attack.resolveRevealEndsAt > 0 && Date.now() < attack.resolveRevealEndsAt;
+  const isTieRevealing =
+    attack.tieResolveRevealEndsAt > 0 &&
+    Date.now() < attack.tieResolveRevealEndsAt;
   const remaining = useRemaining(
     isRevealing
       ? attack.resolveRevealEndsAt
-      : isInTie
-        ? attack.tieExpiresAt
-        : attack.expiresAt,
+      : isTieRevealing
+        ? attack.tieResolveRevealEndsAt
+        : isInTie
+          ? attack.tieExpiresAt
+          : attack.expiresAt,
   );
 
   const pickOption = (opt: string) => {
@@ -255,7 +260,13 @@ function WarView({
         <h2 className="text-lg font-bold leading-tight">
           {attack.tieQuestionText}
         </h2>
-        {!isInvolved ? (
+        {isTieRevealing ? (
+          <TieRevealView
+            attack={attack}
+            attacker={attacker}
+            defender={defender}
+          />
+        ) : !isInvolved ? (
           <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
             Watching…
           </div>
@@ -376,6 +387,100 @@ function WarView({
           Watching…
         </div>
       )}
+    </div>
+  );
+}
+
+// Tie-breaker reveal — for the WAR_REVEAL_MS window after both players
+// have submitted (or the timer expired). Shows the correct number plus
+// each side's guess with their distance from correct, colour-coded by
+// player so it's instantly readable.
+function TieRevealView({
+  attack,
+  attacker,
+  defender,
+}: {
+  attack: NonNullable<ReturnType<typeof useActiveAttack>>;
+  attacker: ReturnType<typeof usePlayers>[number] | undefined;
+  defender: ReturnType<typeof usePlayers>[number] | undefined;
+}) {
+  const rows: {
+    id: string;
+    nickname: string;
+    color: string;
+    answered: boolean;
+    answer: number;
+    diff: number;
+  }[] = [];
+  if (attacker) {
+    rows.push({
+      id: attacker.id,
+      nickname: attacker.nickname,
+      color:
+        PLAYER_COLORS[attacker.turnOrder % PLAYER_COLORS.length] ?? "#666",
+      answered: attack.tieAttackerAnswered,
+      answer: attack.tieAttackerAnswer,
+      diff: Math.abs(attack.tieAttackerAnswer - attack.tieCorrectAnswer),
+    });
+  }
+  if (defender) {
+    rows.push({
+      id: defender.id,
+      nickname: defender.nickname,
+      color:
+        PLAYER_COLORS[defender.turnOrder % PLAYER_COLORS.length] ?? "#666",
+      answered: attack.tieDefenderAnswered,
+      answer: attack.tieDefenderAnswer,
+      diff: Math.abs(attack.tieDefenderAnswer - attack.tieCorrectAnswer),
+    });
+  }
+  // Sort by closest-first so the winner is visually on top.
+  const ranked = rows
+    .filter((r) => r.answered)
+    .sort((a, b) => a.diff - b.diff);
+  const missed = rows.filter((r) => !r.answered);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="bg-emerald-500/15 border border-emerald-400/40 rounded-md px-3 py-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-widest text-emerald-300">
+          Correct answer
+        </span>
+        <span className="text-base font-mono font-bold text-emerald-200">
+          {attack.tieCorrectAnswer}
+        </span>
+      </div>
+      {[...ranked, ...missed].map((r, idx) => (
+        <div
+          key={r.id}
+          className="flex items-center gap-2 bg-[#1f1f24] rounded-md px-3 py-2 border-2"
+          style={{ borderColor: `${r.color}66` }}
+        >
+          <span
+            className="w-2.5 h-2.5 rounded-full shrink-0"
+            style={{ backgroundColor: r.color }}
+          />
+          <span className="text-sm font-semibold truncate flex-1">
+            {r.nickname}
+          </span>
+          {r.answered ? (
+            <>
+              <span className="text-sm font-mono">{r.answer}</span>
+              <span
+                className={`text-[11px] font-mono w-14 text-right ${
+                  idx === 0 && ranked.length > 0
+                    ? "text-emerald-300"
+                    : "text-gray-500"
+                }`}
+              >
+                Δ{r.diff}
+              </span>
+            </>
+          ) : (
+            <span className="text-[11px] italic text-gray-600">no answer</span>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

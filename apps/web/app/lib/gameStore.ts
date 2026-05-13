@@ -59,6 +59,12 @@ export type ActiveAttackMirror = {
   defenderOption: string;
   correctOption: string;
   resolveRevealEndsAt: number;
+  tieCorrectAnswer: number;
+  tieAttackerAnswer: number;
+  tieDefenderAnswer: number;
+  tieAttackerAnswered: boolean;
+  tieDefenderAnswered: boolean;
+  tieResolveRevealEndsAt: number;
 };
 
 export type RoundResult = {
@@ -201,6 +207,12 @@ function snapshot(s: any): GameStateMirror {
           defenderOption: aa.defenderOption ?? "",
           correctOption: aa.correctOption ?? "",
           resolveRevealEndsAt: aa.resolveRevealEndsAt ?? 0,
+          tieCorrectAnswer: aa.tieCorrectAnswer ?? 0,
+          tieAttackerAnswer: aa.tieAttackerAnswer ?? 0,
+          tieDefenderAnswer: aa.tieDefenderAnswer ?? 0,
+          tieAttackerAnswered: aa.tieAttackerAnswered ?? false,
+          tieDefenderAnswered: aa.tieDefenderAnswered ?? false,
+          tieResolveRevealEndsAt: aa.tieResolveRevealEndsAt ?? 0,
         }
       : null;
 
@@ -231,7 +243,6 @@ let savedReconnectionToken: string | null = null;
 let savedSessionId: string | null = null;
 let savedJwt: string | null = null;
 let savedRoomId: string | null = null;
-let savedRole: string = "player";
 const MAX_RECONNECT_ATTEMPTS = 8;
 // Poll interval guests use while waiting for the host to publish the room
 // id to the DB. Host's first joinOrCreate usually completes within a few
@@ -408,7 +419,6 @@ export const useGameStore = create<GameStore>((set, get) => {
       manualDisconnect = false;
       savedSessionId = sessionId;
       savedJwt = jwt;
-      savedRole = opts.role;
       savedRoomId = opts.initialRoomId;
       set({ status: "connecting", errorMessage: null, reconnectAttempt: 0 });
       try {
@@ -446,7 +456,6 @@ export const useGameStore = create<GameStore>((set, get) => {
       savedSessionId = null;
       savedJwt = null;
       savedRoomId = null;
-      savedRole = "player";
       set({
         room: null,
         status: "idle",

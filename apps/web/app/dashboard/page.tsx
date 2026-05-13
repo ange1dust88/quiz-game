@@ -1,9 +1,9 @@
 import Link from "next/link";
-import Input from "../components/ui/Input";
 import { getProfileSafe } from "../lib/auth";
 import { logout } from "../login/actions";
-import { createRoom, joinRoom } from "./actions";
+import { createRoom } from "./actions";
 import CreateRoomButton from "./CreateRoomButton";
+import JoinRoomForm from "./JoinRoomForm";
 import ProfileReminderBanner, {
   hasDemographicData,
 } from "../components/ui/ProfileReminderBanner";
@@ -96,14 +96,22 @@ export default async function Dashboard() {
             <span className="text-3xl font-bold text-blue-400">
               {profile?.elo ?? 1000}
             </span>
-            {profile && (
+            <div className="flex flex-col gap-2 items-end">
+              {profile && (
+                <Link
+                  href={`/profile/${encodeURIComponent(profile.nickname)}`}
+                  className="text-xs text-gray-400 hover:text-white transition-colors px-3 py-1.5 border border-[#4f4f4f] rounded-lg"
+                >
+                  View profile
+                </Link>
+              )}
               <Link
-                href={`/profile/${encodeURIComponent(profile.nickname)}`}
+                href="/leaderboard"
                 className="text-xs text-gray-400 hover:text-white transition-colors px-3 py-1.5 border border-[#4f4f4f] rounded-lg"
               >
-                View profile
+                Leaderboard
               </Link>
-            )}
+            </div>
           </div>
         </section>
 
@@ -129,28 +137,7 @@ export default async function Dashboard() {
             <CreateRoomButton />
           </form>
 
-          <form
-            action={joinRoom}
-            className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] hover:border-blue-500/60 transition-colors rounded-2xl p-6 flex flex-col gap-4"
-          >
-            <div className="flex flex-col gap-2">
-              <h2 className="text-xl font-semibold">Join Game</h2>
-              <p className="text-sm text-[#9a9a9a]">
-                Enter a room ID to join an existing match.
-              </p>
-            </div>
-
-            <Input
-              placeholder="Room ID"
-              type="text"
-              id="roomId"
-              name="roomId"
-            />
-
-            <button className="bg-blue-400 hover:bg-blue-500 transition-colors text-white px-6 py-3 rounded-lg font-medium">
-              Join
-            </button>
-          </form>
+          <JoinRoomForm />
         </section>
       </div>
     </div>

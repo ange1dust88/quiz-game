@@ -52,6 +52,19 @@ export default function MatchClient({
   useMatchSounds(myPlayerId);
   useTurnTabAlert(myPlayerId);
 
+  // After the server flips stage → "ended", keep the match view visible
+  // for a few seconds so players can read the final map state (last
+  // captures, capital HP, etc.) before the results modal pops over it.
+  const [showEndModal, setShowEndModal] = useState(false);
+  useEffect(() => {
+    if (stage !== "ended") {
+      setShowEndModal(false);
+      return;
+    }
+    const t = setTimeout(() => setShowEndModal(true), 5000);
+    return () => clearTimeout(t);
+  }, [stage]);
+
   if (status === "connecting" || status === "idle") {
     return (
       <div className="min-h-screen text-white flex flex-col items-center justify-center gap-4">
@@ -89,21 +102,17 @@ export default function MatchClient({
     );
   }
 
-  if (stage === "ended") {
-    return <EndScreen sessionId={sessionId} myPlayerId={myPlayerId} />;
-  }
-
   return (
     <div className="h-screen flex flex-col text-white overflow-hidden">
-      <header className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-[#1f1f24] bg-[#0a0a0f]/80 backdrop-blur">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="flex items-center gap-3 px-3 sm:px-6 py-3 border-b border-[#1f1f24] bg-[#0a0a0f]/80 backdrop-blur">
+        <div className="flex items-center gap-3 min-w-0 shrink-0">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-400 via-yellow-300 to-teal-400 shrink-0" />
-          <div className="leading-tight min-w-0">
-            <div className="text-sm font-semibold">EuropeQuiz</div>
-            <div className="text-[10px] uppercase tracking-widest text-gray-500 truncate">
-              Match · {stage}
-            </div>
+          <div className="text-sm font-semibold hidden sm:block">
+            EuropeQuiz
           </div>
+        </div>
+        <div className="flex-1 flex justify-center min-w-0">
+          <StageTracker stage={stage} />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <MuteToggle />
@@ -116,6 +125,7 @@ export default function MatchClient({
         </div>
       </header>
 
+      <StageTransitionOverlay />
       {status === "reconnecting" && (
         <div className="flex items-center gap-2 px-4 py-1.5 text-xs bg-amber-500/10 border-b border-amber-400/30 text-amber-200">
           <Spinner size={12} />
@@ -123,6 +133,11 @@ export default function MatchClient({
             Reconnecting to game server…
             {reconnectAttempt > 1 ? ` (attempt ${reconnectAttempt})` : ""}
           </span>
+        </div>
+      )}
+      {stage === "ended" && !showEndModal && (
+        <div className="px-4 py-1.5 text-xs bg-emerald-500/10 border-b border-emerald-400/30 text-emerald-200 text-center uppercase tracking-widest font-semibold">
+          Game over — final standings coming up…
         </div>
       )}
 
@@ -135,6 +150,48 @@ export default function MatchClient({
           <PlayerPanel myPlayerId={myPlayerId} />
         </aside>
       </div>
+      {stage === "ended" && showEndModal && (
+        <EndScreen sessionId={sessionId} myPlayerId={myPlayerId} />
+      )}
+    </div>
+  );
+}
+
+// --- Stage tracker -----------------------------------------------------
+//
+// Pill-style segmented indicator in the header. Active segment gets a
+// white background + emerald dot, inactive ones stay dim. Replaces the
+// older "Match · expand" text label.
+
+const STAGES: { id: string; label: string }[] = [
+  { id: "capitals", label: "Capitals" },
+  { id: "expand", label: "Expand" },
+  { id: "war", label: "War" },
+];
+
+function StageTracker({ stage }: { stage: string }) {
+  return (
+    <div className="inline-flex items-center gap-0.5 bg-[#0a0a0f] border border-[#1f1f24] rounded-full p-1">
+      {STAGES.map((s) => {
+        const active = stage === s.id;
+        return (
+          <div
+            key={s.id}
+            className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full transition-colors ${
+              active ? "bg-white text-black" : "text-gray-500"
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                active ? "bg-emerald-500" : "bg-gray-700"
+              }`}
+            />
+            <span className="text-[11px] sm:text-sm font-semibold">
+              {s.label}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -165,6 +222,84 @@ function MuteToggle() {
     >
       {muted ? "🔇" : "🔊"}
     </button>
+  );
+}
+
+// --- Stage transition overlay ------------------------------------------
+//
+// Brief full-screen banner that fades in/out when the match stage changes
+// (capitals → expand → war). Without it the only signal of a stage change
+// is a small "Match · expand" label in the header, which players miss.
+
+const STAGE_HEADLINES: Record<
+  string,
+  { title: string; subtitle: string; tone: string }
+> = {
+  capitals: {
+    title: "Place your capital",
+    subtitle: "Pick a country to start your empire.",
+    tone: "text-emerald-300",
+  },
+  expand: {
+    title: "Expand phase",
+    subtitle: "Answer questions, pick territories.",
+    tone: "text-sky-300",
+  },
+  war: {
+    title: "War begins!",
+    subtitle: "Attack enemy neighbours to take their land.",
+    tone: "text-red-400",
+  },
+};
+
+function StageTransitionOverlay() {
+  const stage = useStage();
+  const [visible, setVisible] = useState<{
+    title: string;
+    subtitle: string;
+    tone: string;
+  } | null>(null);
+  const lastStageRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (lastStageRef.current === null) {
+      // First render — don't flash, just record where we started.
+      lastStageRef.current = stage;
+      return;
+    }
+    if (lastStageRef.current === stage) return;
+    lastStageRef.current = stage;
+    const info = STAGE_HEADLINES[stage];
+    if (!info) return;
+    setVisible(info);
+    const t = setTimeout(() => setVisible(null), 1800);
+    return () => clearTimeout(t);
+  }, [stage]);
+
+  if (!visible) return null;
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-stage-overlay">
+      <style>{`
+        @keyframes stage-overlay-in {
+          0%   { opacity: 0; transform: scale(0.94); }
+          18%  { opacity: 1; transform: scale(1); }
+          82%  { opacity: 1; transform: scale(1); }
+          100% { opacity: 0; transform: scale(1.02); }
+        }
+        .animate-stage-overlay { animation: stage-overlay-in 1.8s ease-out forwards; }
+      `}</style>
+      <div className="text-center flex flex-col gap-2 px-8">
+        <div
+          className={`text-[10px] uppercase tracking-[0.4em] font-semibold ${visible.tone}`}
+        >
+          New phase
+        </div>
+        <h1 className="text-4xl sm:text-5xl font-extrabold leading-tight">
+          {visible.title}
+        </h1>
+        <p className="text-sm text-gray-300">{visible.subtitle}</p>
+      </div>
+    </div>
   );
 }
 
@@ -317,7 +452,18 @@ function EndScreen({
   const totalPoints = countries.reduce((s, c) => s + c.points, 0);
 
   return (
-    <div className="min-h-screen text-white flex items-center justify-center px-6 py-10">
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-40 text-white flex items-center justify-center px-6 py-10 overflow-y-auto bg-black/70 backdrop-blur-sm animate-end-modal"
+    >
+      <style>{`
+        @keyframes end-modal-in {
+          0%   { opacity: 0; transform: scale(0.96); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+        .animate-end-modal { animation: end-modal-in 0.35s ease-out forwards; }
+      `}</style>
       <div className="max-w-lg w-full flex flex-col gap-6">
         <section className="bg-[#14141a] border border-emerald-400/40 rounded-2xl p-8 flex flex-col items-center text-center gap-3">
           <div className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">

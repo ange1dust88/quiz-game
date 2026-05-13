@@ -497,6 +497,7 @@ export class MatchRoom extends Room<MatchState> {
       if (
         this.state.activeAttack &&
         this.state.activeAttack.tieQuestionId &&
+        this.state.activeAttack.tieResolveRevealEndsAt === 0 &&
         this.state.activeAttack.tieExpiresAt > 0 &&
         now >= this.state.activeAttack.tieExpiresAt
       ) {
@@ -1109,6 +1110,12 @@ export class MatchRoom extends Room<MatchState> {
     aa.attackerOption = "";
     aa.defenderOption = "";
     aa.correctOption = "";
+    aa.tieResolveRevealEndsAt = 0;
+    aa.tieCorrectAnswer = 0;
+    aa.tieAttackerAnswer = 0;
+    aa.tieDefenderAnswer = 0;
+    aa.tieAttackerAnswered = false;
+    aa.tieDefenderAnswered = false;
 
     ca.tieQuestionRowId = q.id;
     ca.tieCorrectAnswer = q.answer;
@@ -1144,7 +1151,12 @@ export class MatchRoom extends Room<MatchState> {
 
   private resolveWarTie(): void {
     const ca = this.currentAttack;
+    const aa = this.state.activeAttack;
     if (!ca || ca.tieCorrectAnswer === undefined || !ca.tieStartedAtMs) return;
+    if (!aa) return;
+    // Idempotency — once the reveal window is running, ignore stragglers
+    // (e.g. the deadline tick firing right after both answers came in).
+    if (aa.tieResolveRevealEndsAt > 0) return;
 
     const att = ca.tieAnswers.get(ca.attackerId);
     const def = ca.tieAnswers.get(ca.defenderId);
@@ -1155,7 +1167,22 @@ export class MatchRoom extends Room<MatchState> {
       att ? att.receivedAtMs - ca.tieStartedAtMs : null,
       def ? def.receivedAtMs - ca.tieStartedAtMs : null,
     );
-    this.endAttack(outcome);
+
+    // Publish reveal info so the client can show "correct: X, you: Y,
+    // opponent: Z" for WAR_REVEAL_MS before activeAttack disappears.
+    aa.tieCorrectAnswer = ca.tieCorrectAnswer;
+    aa.tieAttackerAnswer = att?.value ?? 0;
+    aa.tieDefenderAnswer = def?.value ?? 0;
+    aa.tieAttackerAnswered = att !== undefined;
+    aa.tieDefenderAnswered = def !== undefined;
+    aa.tieExpiresAt = 0;
+    aa.tieResolveRevealEndsAt = Date.now() + WAR_REVEAL_MS;
+
+    this.clock.setTimeout(() => {
+      // Defensive: if the room was disposed / replaced while waiting.
+      if (this.currentAttack !== ca) return;
+      this.endAttack(outcome);
+    }, WAR_REVEAL_MS);
   }
 
   private endAttack(

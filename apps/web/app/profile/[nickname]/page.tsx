@@ -45,6 +45,22 @@ export default async function ProfilePage({
     .map((s) => buildRecentMatchRow(s, profile.id))
     .filter((row): row is RecentMatchRow => row !== null);
 
+  // Live game pointer — used to surface an "in lobby / in match" banner
+  // with a jump-back-to-lobby link. We pick the most recent join so a
+  // player who's accidentally still listed in an old session doesn't see
+  // a phantom banner.
+  const activeGame = await prisma.playerInGame.findFirst({
+    where: {
+      profileId: profile.id,
+      gameSession: { status: { in: ["waiting", "active"] } },
+    },
+    orderBy: { joinedAt: "desc" },
+    select: {
+      gameSessionId: true,
+      gameSession: { select: { status: true } },
+    },
+  });
+
   const viewer = await getProfileSafe();
   const isOwnProfile = viewer?.id === profile.id;
   const showReminder = isOwnProfile && !hasDemographicData(profile);
@@ -91,6 +107,15 @@ export default async function ProfilePage({
         </header>
 
         {showReminder && <ProfileReminderBanner />}
+
+        {activeGame && (
+          <ActiveGameBanner
+            sessionId={activeGame.gameSessionId}
+            status={activeGame.gameSession.status}
+            isOwnProfile={isOwnProfile}
+            nickname={profile.nickname}
+          />
+        )}
 
         <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex items-center gap-6">
           <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-3xl font-bold shrink-0">
@@ -270,6 +295,59 @@ function PersonalInfoSection({
 
         </>
       )}
+    </section>
+  );
+}
+
+// Live-game banner — pulses green when this profile is still in a lobby
+// or mid-match. Clicking it lands the viewer on the lobby page (which
+// auto-redirects to /match for active games where the viewer is a
+// participant).
+function ActiveGameBanner({
+  sessionId,
+  status,
+  isOwnProfile,
+  nickname,
+}: {
+  sessionId: string;
+  status: string;
+  isOwnProfile: boolean;
+  nickname: string;
+}) {
+  const isWaiting = status === "waiting";
+  const title = isOwnProfile
+    ? isWaiting
+      ? "You're in a lobby"
+      : "You're in a match"
+    : isWaiting
+      ? `${nickname} is in a lobby`
+      : `${nickname} is in a match`;
+  const subtitle = isWaiting
+    ? "Waiting for players to start."
+    : "Match in progress.";
+  const ctaLabel = isOwnProfile
+    ? isWaiting
+      ? "Return to lobby"
+      : "Rejoin match"
+    : "View lobby";
+  return (
+    <section className="bg-emerald-500/10 border border-emerald-400/40 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
+      <div className="flex items-center gap-3 min-w-0">
+        <span
+          className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"
+          style={{ animation: "pulse 1.6s ease-in-out infinite" }}
+        />
+        <div className="leading-tight min-w-0">
+          <div className="text-sm font-semibold truncate">{title}</div>
+          <div className="text-xs text-gray-400 truncate">{subtitle}</div>
+        </div>
+      </div>
+      <Link
+        href={`/lobby/${sessionId}`}
+        className="text-xs bg-emerald-400 hover:bg-emerald-500 text-black font-semibold px-4 py-2 rounded-lg shrink-0"
+      >
+        {ctaLabel}
+      </Link>
     </section>
   );
 }

@@ -11,6 +11,12 @@ export function RegisterForm() {
 
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
+  // Controlled inputs survive React 19's implicit form reset after a
+  // server action — otherwise every validation error would force the user
+  // to retype everything.
+  const [email, setEmail] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [password, setPassword] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -67,7 +73,15 @@ export function RegisterForm() {
           <label htmlFor="email" className="text-[#fafafa]">
             Email
           </label>
-          <Input id="email" name="email" type="email" placeholder="Email" />
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+          />
         </div>
 
         <div className="flex flex-col gap-2">
@@ -79,6 +93,9 @@ export function RegisterForm() {
             name="nickname"
             type="text"
             placeholder="Nickname"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            autoComplete="username"
           />
         </div>
 
@@ -91,6 +108,9 @@ export function RegisterForm() {
             name="password"
             type="password"
             placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
           />
         </div>
         <div>

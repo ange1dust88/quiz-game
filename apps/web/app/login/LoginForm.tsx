@@ -11,6 +11,11 @@ export function LoginForm() {
   const [state, loginAction] = useActionState(login, undefined);
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
+  // Controlled inputs — React 19 auto-resets <form action={...}> after a
+  // server action, which would otherwise blank these out and force the
+  // user to retype on every failed attempt.
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -64,7 +69,15 @@ export function LoginForm() {
           <label htmlFor="email" className="text-[#fafafa]">
             Email
           </label>
-          <Input id="email" name="email" type="email" placeholder="Email" />
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+          />
         </div>
 
         <div className="flex flex-col gap-2">
@@ -76,6 +89,9 @@ export function LoginForm() {
             name="password"
             type="password"
             placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
           />
         </div>
         <div>

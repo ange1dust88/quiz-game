@@ -164,7 +164,15 @@ export function LobbyContent({
   }
 
   return (
-    <div className="flex justify-center items-center min-h-screen text-white px-4 py-10">
+    <div className="min-h-screen text-white px-4 py-10 flex flex-col items-center gap-4">
+      <div className="w-full max-w-lg flex">
+        <Link
+          href="/dashboard"
+          className="text-xs text-gray-400 hover:text-white transition-colors px-4 py-2 border border-[#4f4f4f] rounded-lg"
+        >
+          ← Back to dashboard
+        </Link>
+      </div>
       <div className="bg-[#0d0d12]/90 backdrop-blur rounded-2xl p-2 w-full max-w-lg shadow-xl border border-[#4f4f4f]">
         <div className="flex gap-4 items-center p-4 justify-between border-b border-[#2a2a2a]">
           <div className="flex gap-3 items-center">
@@ -180,9 +188,7 @@ export function LobbyContent({
               {host?.profile?.nickname || "Unknown"}'s lobby
             </h1>
           </div>
-          <span className="text-xs uppercase tracking-wider bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-md">
-            {session?.status || "waiting"}
-          </span>
+          <StatusPill status={session?.status ?? "waiting"} />
         </div>
 
         <div className="bg-[#1a1a1a] p-5 rounded-xl m-4 flex flex-col gap-5">
@@ -321,6 +327,39 @@ export function LobbyContent({
         </div>
       </div>
     </div>
+  );
+}
+
+// Status pill at the top of the lobby card. Coloured by lifecycle:
+//   waiting   → blue   (open for joiners)
+//   active    → amber  (match in progress, pulsing dot)
+//   completed → green  (showing the post-match summary)
+function StatusPill({ status }: { status: string }) {
+  const styles: Record<string, { cls: string; dot: string; label: string }> = {
+    waiting: {
+      cls: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+      dot: "bg-blue-400",
+      label: "Waiting",
+    },
+    active: {
+      cls: "bg-amber-500/15 text-amber-300 border-amber-400/40",
+      dot: "bg-amber-400 animate-pulse",
+      label: "In match",
+    },
+    completed: {
+      cls: "bg-emerald-500/15 text-emerald-300 border-emerald-400/40",
+      dot: "bg-emerald-400",
+      label: "Finished",
+    },
+  };
+  const s = styles[status] ?? styles.waiting;
+  return (
+    <span
+      className={`text-xs uppercase tracking-wider border rounded-md px-3 py-1 inline-flex items-center gap-2 ${s.cls}`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+      {s.label}
+    </span>
   );
 }
 

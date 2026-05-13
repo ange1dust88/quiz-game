@@ -98,6 +98,11 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
   // highlight only the LEGAL targets — capitals can be anywhere, expand
   // and war need adjacency to my existing territories. We read the static
   // adjacency from EUROPE_NEIGHBORS; the server still validates.
+  //
+  // Expand has an isolation fallback: if I own land but none of my
+  // territories border a free country, the server lets me pick ANY free
+  // country (otherwise I'd be stuck). The eligible set mirrors that, so
+  // the highlight doesn't lie when an isolated player is up.
   const eligibleSvgIds = useMemo(() => {
     if (!isMyTurn) return new Set<string>();
     const out = new Set<string>();
@@ -108,7 +113,6 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
       return out;
     }
 
-    // Neighbours of MY current territories.
     const myNeighborSvgIds = new Set<string>();
     for (const c of countries) {
       if (c.ownerId !== myPlayerId) continue;
@@ -116,12 +120,30 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
       if (!ns) continue;
       for (const n of ns) myNeighborSvgIds.add(n);
     }
-    countries.forEach((c) => {
-      if (!myNeighborSvgIds.has(c.svgId)) return;
-      if (stage === "expand" && !c.ownerId) out.add(c.svgId);
-      if (stage === "war" && c.ownerId && c.ownerId !== myPlayerId)
-        out.add(c.svgId);
-    });
+
+    if (stage === "expand") {
+      const freeNeighbors = new Set<string>();
+      countries.forEach((c) => {
+        if (!c.ownerId && myNeighborSvgIds.has(c.svgId))
+          freeNeighbors.add(c.svgId);
+      });
+      if (freeNeighbors.size > 0) {
+        return freeNeighbors;
+      }
+      // Isolated — no reachable free neighbour. Server falls back to
+      // "any free country", so we do too.
+      countries.forEach((c) => {
+        if (!c.ownerId) out.add(c.svgId);
+      });
+      return out;
+    }
+
+    if (stage === "war") {
+      countries.forEach((c) => {
+        if (!myNeighborSvgIds.has(c.svgId)) return;
+        if (c.ownerId && c.ownerId !== myPlayerId) out.add(c.svgId);
+      });
+    }
     return out;
   }, [isMyTurn, stage, countries, myPlayerId]);
 
@@ -163,6 +185,50 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
     return () => clearTimeout(t);
   }, [countries]);
 
+  // Tracks the svgId we've optimistically clicked on but haven't yet seen
+  // the server respond to (state mutation arriving over the WS). Mostly
+  // matters for `attack` — it hits the DB for a question, adding ~200ms
+  // of round-trip during which the player otherwise sees nothing.
+  const [pendingSvgId, setPendingSvgId] = useState<string | null>(null);
+  // Clear the pending overlay as soon as the server's state catches up:
+  // - capital/territory  → that country now has an ownerId
+  // - war                → activeAttack exists for that country
+  useEffect(() => {
+    if (!pendingSvgId) return;
+    const c = countryBySvg[pendingSvgId];
+    const acked =
+      (stage === "war" && activeAttack && c && activeAttack.countryId === c.id) ||
+      (stage !== "war" && c && !!c.ownerId);
+    if (acked) {
+      setPendingSvgId(null);
+      return;
+    }
+    // Failsafe — server may reject silently. 3s covers the slowest path.
+    const t = setTimeout(() => setPendingSvgId(null), 3000);
+    return () => clearTimeout(t);
+  }, [pendingSvgId, activeAttack, countryBySvg, stage]);
+
+  // Center of the country we're waiting on a server response for — used
+  // to anchor the spinner overlay.
+  const [pendingCenter, setPendingCenter] = useState<
+    { cx: number; cy: number } | null
+  >(null);
+  useEffect(() => {
+    if (!pendingSvgId || !svgRef.current) {
+      setPendingCenter(null);
+      return;
+    }
+    const el = svgRef.current.querySelector(
+      `#${pendingSvgId}`,
+    ) as SVGPathElement | null;
+    if (!el) {
+      setPendingCenter(null);
+      return;
+    }
+    const bb = el.getBBox();
+    setPendingCenter({ cx: bb.x + bb.width / 2, cy: bb.y + bb.height / 2 });
+  }, [pendingSvgId]);
+
   // Capital marker positions, computed from path bbox once paths are
   // mounted. We re-compute when the set of capitals changes.
   const [markers, setMarkers] = useState<
@@ -191,16 +257,20 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
 
   const handleClick = (svgId: string) => {
     if (!isMyTurn) return;
+    if (pendingSvgId) return; // already mid-flight
     const c = countryBySvg[svgId];
     if (!c) return;
     if (stage === "capitals") {
       if (c.ownerId) return;
+      setPendingSvgId(svgId);
       claimCapital(svgId);
     } else if (stage === "expand") {
       if (c.ownerId) return;
+      setPendingSvgId(svgId);
       claimTerritory(svgId);
     } else if (stage === "war") {
       if (!c.ownerId || c.ownerId === myPlayerId) return;
+      setPendingSvgId(svgId);
       attack(svgId);
     }
   };
@@ -232,6 +302,8 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
           35%  { filter: brightness(1.8) drop-shadow(0 0 6px rgba(255,255,255,0.9)); }
           100% { filter: brightness(1) drop-shadow(0 0 0 rgba(255,255,255,0)); }
         }
+        @keyframes map-spinner-rot { to { transform: rotate(360deg); } }
+        .map-spinner { animation: map-spinner-rot 0.8s linear infinite; transform-origin: center; transform-box: fill-box; }
       `}</style>
       <div className="flex-1 flex items-center justify-center overflow-hidden">
         <svg
@@ -252,6 +324,7 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
             const flash = flashIds.has(p.svgId);
             const isTargeted = attackedSvgId === p.svgId;
             const warMode = stage === "war";
+            const isPending = pendingSvgId === p.svgId;
             const cls = [
               flash ? "country-flash" : "",
               !flash && isTargeted ? "country-targeted" : "",
@@ -266,10 +339,15 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
               .join(" ");
             const highlightColor = isTargeted ? attackerColor : myColor;
             const strokeColor =
-              isTargeted || eligible ? highlightColor : "#0a0a0f";
-            const strokeW = isTargeted || eligible ? 1.5 : 0.5;
+              isTargeted || eligible || isPending ? highlightColor : "#0a0a0f";
+            const strokeW =
+              isTargeted || eligible || isPending ? 1.5 : 0.5;
+            // While a click is in flight, EVERY country is non-interactive
+            // (cursor: wait) so the player doesn't try to click again. The
+            // pending country itself stays "pointer-ish" — we just don't
+            // accept more clicks via handleClick anyway.
             const pathStyle: CSSProperties = {
-              cursor,
+              cursor: pendingSvgId ? "wait" : cursor,
               transition:
                 "fill 0.3s ease, stroke 0.2s ease, fill-opacity 0.2s ease",
             };
@@ -298,6 +376,58 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
               </path>
             );
           })}
+          {/* Player-colour tint over eligible / targeted countries. A
+              translucent overlay so the underlying owner colour still
+              comes through, but it's obvious at a glance which set is
+              "yours to act on" right now. */}
+          {EUROPE_PATHS.map((p) => {
+            const isTargeted = attackedSvgId === p.svgId;
+            const eligible = eligibleSvgIds.has(p.svgId);
+            if (!isTargeted && !eligible) return null;
+            const color = isTargeted ? attackerColor : myColor;
+            return (
+              <path
+                key={p.svgId + "-tint"}
+                d={p.d}
+                fill={color}
+                fillOpacity={0.1}
+                stroke="none"
+                pointerEvents="none"
+              />
+            );
+          })}
+          {/* Pending-action spinner — overlay on the country we've just
+              clicked while we wait for the server's state to catch up.
+              Especially needed for `attack`, which round-trips through
+              the DB. */}
+          {pendingCenter && (
+            <g pointerEvents="none">
+              <circle
+                cx={pendingCenter.cx}
+                cy={pendingCenter.cy}
+                r="8"
+                fill="#0a0a0f"
+                opacity="0.75"
+              />
+              <circle
+                cx={pendingCenter.cx}
+                cy={pendingCenter.cy}
+                r="6"
+                fill="none"
+                stroke={myColor}
+                strokeOpacity="0.25"
+                strokeWidth="1.4"
+              />
+              <path
+                d={`M ${pendingCenter.cx} ${pendingCenter.cy - 6} A 6 6 0 0 1 ${pendingCenter.cx + 6} ${pendingCenter.cy}`}
+                fill="none"
+                stroke={myColor}
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                className="map-spinner"
+              />
+            </g>
+          )}
           {/* Capital HP markers */}
           {markers.map((m) => {
             const damage = m.maxHp - m.hp;

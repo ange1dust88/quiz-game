@@ -119,6 +119,15 @@ export class ActiveAttack extends Schema {
   // While > now, server is holding the result on screen so clients can
   // show a "X picked Y, correct was Z" reveal before the next phase.
   declare resolveRevealEndsAt: number;
+  // Tie-breaker reveal info. Set after both players have submitted (or the
+  // timer expired) so the client can show "correct: 42, attacker: 40,
+  // defender: 50" for WAR_REVEAL_MS before the attack closes out.
+  declare tieCorrectAnswer: number;
+  declare tieAttackerAnswer: number;
+  declare tieDefenderAnswer: number;
+  declare tieAttackerAnswered: boolean;
+  declare tieDefenderAnswered: boolean;
+  declare tieResolveRevealEndsAt: number;
 
   constructor() {
     super();
@@ -140,6 +149,12 @@ export class ActiveAttack extends Schema {
     this.attackerOption = "";
     this.defenderOption = "";
     this.resolveRevealEndsAt = 0;
+    this.tieCorrectAnswer = 0;
+    this.tieAttackerAnswer = 0;
+    this.tieDefenderAnswer = 0;
+    this.tieAttackerAnswered = false;
+    this.tieDefenderAnswered = false;
+    this.tieResolveRevealEndsAt = 0;
   }
 }
 defineTypes(ActiveAttack, {
@@ -161,6 +176,12 @@ defineTypes(ActiveAttack, {
   attackerOption: "string",
   defenderOption: "string",
   resolveRevealEndsAt: "number",
+  tieCorrectAnswer: "number",
+  tieAttackerAnswer: "number",
+  tieDefenderAnswer: "number",
+  tieAttackerAnswered: "boolean",
+  tieDefenderAnswered: "boolean",
+  tieResolveRevealEndsAt: "number",
 });
 
 export class MatchState extends Schema {
