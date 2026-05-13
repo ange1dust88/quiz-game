@@ -22,9 +22,21 @@ import MapPanel from "./MapPanel";
 import ActionPanel from "./ActionPanel";
 import PlayerPanel from "./PlayerPanel";
 
-type Props = { sessionId: string; jwt: string; myPlayerId: string };
+type Props = {
+  sessionId: string;
+  jwt: string;
+  myPlayerId: string;
+  myRole: string;
+  initialGameRoomId: string | null;
+};
 
-export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
+export default function MatchClient({
+  sessionId,
+  jwt,
+  myPlayerId,
+  myRole,
+  initialGameRoomId,
+}: Props) {
   const status = useRoomStatus();
   const errorMessage = useGameStore((s) => s.errorMessage);
   const reconnectAttempt = useGameStore((s) => s.reconnectAttempt);
@@ -33,9 +45,9 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
   const disconnect = useGameStore((s) => s.disconnect);
 
   useEffect(() => {
-    connect(sessionId, jwt);
+    connect(sessionId, jwt, { role: myRole, initialRoomId: initialGameRoomId });
     return () => disconnect();
-  }, [connect, disconnect, sessionId, jwt]);
+  }, [connect, disconnect, sessionId, jwt, myRole, initialGameRoomId]);
 
   useMatchSounds(myPlayerId);
   useTurnTabAlert(myPlayerId);
@@ -45,6 +57,17 @@ export default function MatchClient({ sessionId, jwt, myPlayerId }: Props) {
       <div className="min-h-screen text-white flex flex-col items-center justify-center gap-4">
         <Spinner />
         <span className="text-sm text-gray-400">Connecting to game…</span>
+      </div>
+    );
+  }
+
+  if (status === "waiting-host") {
+    return (
+      <div className="min-h-screen text-white flex flex-col items-center justify-center gap-4">
+        <Spinner />
+        <span className="text-sm text-gray-400">
+          Waiting for host to open the room…
+        </span>
       </div>
     );
   }

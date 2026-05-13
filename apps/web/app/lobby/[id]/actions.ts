@@ -29,9 +29,57 @@ export async function startGame(formData: FormData) {
     data: {
       status: "active",
       capitalExpiresAt: new Date(Date.now() + 20000),
+      // Reset for a fresh match — a previous game (if any) might have
+      // left a stale id pointing at a now-disposed Colyseus room.
+      gameRoomId: null,
     },
   });
   redirect(`/match/${sessionId}`);
+}
+
+// Called from the host's MatchClient after they successfully joinOrCreate
+// the Colyseus room. Guests poll for this column and use joinById, which
+// eliminates the joinOrCreate race that puts the two clients in different
+// rooms (same sessionId, different room ids on the matchmaker).
+//
+// The where clause is conservative: only set gameRoomId if it's still
+// null. If two clients happen to race joinOrCreate, the second claim is
+// a no-op and the loser leaves their orphan room.
+export async function claimGameRoomId(
+  sessionId: string,
+  roomId: string,
+): Promise<{ ok: boolean; canonicalRoomId: string | null }> {
+  if (!sessionId || !roomId)
+    return { ok: false, canonicalRoomId: null };
+  const result = await prisma.gameSession.updateMany({
+    where: { id: sessionId, gameRoomId: null },
+    data: { gameRoomId: roomId },
+  });
+  if (result.count === 1) {
+    return { ok: true, canonicalRoomId: roomId };
+  }
+  // Someone else got here first — return what they claimed so the caller
+  // can hop into the canonical room.
+  const fresh = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    select: { gameRoomId: true },
+  });
+  return { ok: false, canonicalRoomId: fresh?.gameRoomId ?? null };
+}
+
+// Polled by guests until the host's first joinOrCreate populates this.
+// Cheap single-row read, called every ~500ms by waiting clients —
+// bounded because the host's connect typically finishes in a few hundred
+// milliseconds.
+export async function getGameRoomId(
+  sessionId: string,
+): Promise<string | null> {
+  if (!sessionId) return null;
+  const row = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    select: { gameRoomId: true },
+  });
+  return row?.gameRoomId ?? null;
 }
 
 export async function setMatchChoice(

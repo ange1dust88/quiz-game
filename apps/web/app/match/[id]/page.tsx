@@ -30,6 +30,9 @@ export default async function MatchNewPage({
         profileId: profile.id,
       },
     },
+    include: {
+      gameSession: { select: { gameRoomId: true } },
+    },
   });
   if (!playerInGame) notFound();
 
@@ -38,6 +41,8 @@ export default async function MatchNewPage({
       sessionId={sessionId}
       jwt={jwt}
       myPlayerId={playerInGame.id}
+      myRole={playerInGame.role}
+      initialGameRoomId={playerInGame.gameSession.gameRoomId}
     />
   );
 }

@@ -84,6 +84,10 @@ model GameSession {
   snapshot          MatchSnapshot?
   warTurns          Int             @default(0)
   winnerId          String?
+  // Colyseus room id, populated by the host's first joinOrCreate. Guests
+  // read this and call joinById, so only one client races to create the
+  // room — eliminates the "two clients in two different rooms" desync.
+  gameRoomId        String?
   matchMap          MatchCountry[]
   questions         MatchQuestion[]
   players           PlayerInGame[]

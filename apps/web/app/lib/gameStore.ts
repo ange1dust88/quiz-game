@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 import { Client, Room } from "colyseus.js";
+import { claimGameRoomId, getGameRoomId } from "@/app/lobby/[id]/actions";
 
 const SERVER_URL =
   process.env.NEXT_PUBLIC_GAME_SERVER_URL ?? "ws://localhost:2567";
@@ -88,13 +89,23 @@ export type GameStateMirror = {
 
 interface GameStore {
   room: Room | null;
-  status: "idle" | "connecting" | "connected" | "reconnecting" | "error";
+  status:
+    | "idle"
+    | "connecting"
+    | "connected"
+    | "reconnecting"
+    | "waiting-host"
+    | "error";
   errorMessage: string | null;
   state: GameStateMirror;
   lastResults: { results: RoundResult[]; correctAnswer: number } | null;
   reconnectAttempt: number;
 
-  connect: (sessionId: string, jwt: string) => Promise<void>;
+  connect: (
+    sessionId: string,
+    jwt: string,
+    opts: { role: string; initialRoomId: string | null },
+  ) => Promise<void>;
   disconnect: () => void;
 
   claimCapital: (svgId: string) => void;
@@ -219,7 +230,16 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let savedReconnectionToken: string | null = null;
 let savedSessionId: string | null = null;
 let savedJwt: string | null = null;
+let savedRoomId: string | null = null;
+let savedRole: string = "player";
 const MAX_RECONNECT_ATTEMPTS = 8;
+// Poll interval guests use while waiting for the host to publish the room
+// id to the DB. Host's first joinOrCreate usually completes within a few
+// hundred ms; if it takes longer, this keeps the guest checking.
+const GUEST_ROOM_POLL_MS = 500;
+// Outer wall-clock budget for a guest waiting for the host's room id —
+// gives up after ~30s with an error.
+const GUEST_ROOM_WAIT_MS = 30_000;
 
 function describeConnectError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -291,17 +311,33 @@ export const useGameStore = create<GameStore>((set, get) => {
           try {
             room = await client.reconnect(savedReconnectionToken);
           } catch {
-            room = await client.joinOrCreate("match", {
-              sessionId: savedSessionId,
-              jwt: savedJwt,
-            });
+            // Token expired — try the canonical room id we know about.
+            const canonical =
+              savedRoomId ?? (await getGameRoomId(savedSessionId));
+            room = canonical
+              ? await client.joinById(canonical, {
+                  sessionId: savedSessionId,
+                  jwt: savedJwt,
+                })
+              : await client.joinOrCreate("match", {
+                  sessionId: savedSessionId,
+                  jwt: savedJwt,
+                });
           }
         } else {
-          room = await client.joinOrCreate("match", {
-            sessionId: savedSessionId,
-            jwt: savedJwt,
-          });
+          const canonical =
+            savedRoomId ?? (await getGameRoomId(savedSessionId));
+          room = canonical
+            ? await client.joinById(canonical, {
+                sessionId: savedSessionId,
+                jwt: savedJwt,
+              })
+            : await client.joinOrCreate("match", {
+                sessionId: savedSessionId,
+                jwt: savedJwt,
+              });
         }
+        savedRoomId = room.roomId;
         wireRoom(room);
         set({
           room,
@@ -316,6 +352,49 @@ export const useGameStore = create<GameStore>((set, get) => {
     }, delay);
   };
 
+  // The host's branch: race to create the room, then publish the resulting
+  // roomId to the DB. If a guest snuck in first and claimed the column,
+  // dispose this room and hop into the canonical one — so we never end up
+  // with two players in two rooms.
+  const connectAsHost = async (sessionId: string, jwt: string) => {
+    const client = new Client(SERVER_URL);
+    const room = await client.joinOrCreate("match", { sessionId, jwt });
+    const claim = await claimGameRoomId(sessionId, room.roomId);
+    if (!claim.ok && claim.canonicalRoomId && claim.canonicalRoomId !== room.roomId) {
+      // Lost the race — abandon our orphan and use the canonical room.
+      try {
+        await room.leave();
+      } catch {
+        // ignore
+      }
+      const canonical = await client.joinById(claim.canonicalRoomId, {
+        sessionId,
+        jwt,
+      });
+      return canonical;
+    }
+    return room;
+  };
+
+  // The guest's branch: poll the DB until the host publishes a roomId,
+  // then joinById. Bounded by GUEST_ROOM_WAIT_MS.
+  const connectAsGuest = async (sessionId: string, jwt: string) => {
+    set({ status: "waiting-host" });
+    const deadline = Date.now() + GUEST_ROOM_WAIT_MS;
+    let roomId: string | null = null;
+    while (Date.now() < deadline) {
+      if (manualDisconnect) throw new Error("disconnected");
+      roomId = await getGameRoomId(sessionId);
+      if (roomId) break;
+      await new Promise((r) => setTimeout(r, GUEST_ROOM_POLL_MS));
+    }
+    if (!roomId) {
+      throw new Error("Host did not open the room in time");
+    }
+    const client = new Client(SERVER_URL);
+    return client.joinById(roomId, { sessionId, jwt });
+  };
+
   return {
     room: null,
     status: "idle",
@@ -324,15 +403,28 @@ export const useGameStore = create<GameStore>((set, get) => {
     lastResults: null,
     reconnectAttempt: 0,
 
-    async connect(sessionId, jwt) {
+    async connect(sessionId, jwt, opts) {
       if (get().status === "connecting" || get().status === "connected") return;
       manualDisconnect = false;
       savedSessionId = sessionId;
       savedJwt = jwt;
+      savedRole = opts.role;
+      savedRoomId = opts.initialRoomId;
       set({ status: "connecting", errorMessage: null, reconnectAttempt: 0 });
       try {
         const client = new Client(SERVER_URL);
-        const room = await client.joinOrCreate("match", { sessionId, jwt });
+        let room: Room;
+        if (opts.initialRoomId) {
+          // Room already exists for this session — just hop in.
+          room = await client.joinById(opts.initialRoomId, { sessionId, jwt });
+        } else if (opts.role === "host") {
+          // First boot of the match. Host creates + publishes.
+          room = await connectAsHost(sessionId, jwt);
+        } else {
+          // Guest arrived before host published the roomId — wait.
+          room = await connectAsGuest(sessionId, jwt);
+        }
+        savedRoomId = room.roomId;
         wireRoom(room);
         set({ room, status: "connected", state: snapshot(room.state) });
       } catch (err) {
@@ -353,6 +445,8 @@ export const useGameStore = create<GameStore>((set, get) => {
       savedReconnectionToken = null;
       savedSessionId = null;
       savedJwt = null;
+      savedRoomId = null;
+      savedRole = "player";
       set({
         room: null,
         status: "idle",
