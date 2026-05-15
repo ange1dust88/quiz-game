@@ -21,6 +21,7 @@ import Spinner from "@/app/components/ui/Spinner";
 import MapPanel from "./MapPanel";
 import ActionPanel from "./ActionPanel";
 import PlayerPanel from "./PlayerPanel";
+import { abandonMatch } from "./actions";
 
 type Props = {
   sessionId: string;
@@ -86,17 +87,40 @@ export default function MatchClient({
   }
 
   if (status === "error") {
+    const isRoomGone =
+      errorMessage?.includes("not found") ||
+      errorMessage?.includes("room") ||
+      false;
     return (
       <div className="min-h-screen text-white flex items-center justify-center px-6">
         <div className="max-w-md text-center flex flex-col gap-4">
           <h1 className="text-xl font-bold">Couldn&apos;t join match</h1>
           <p className="text-sm text-red-300">{errorMessage}</p>
-          <Link
-            href="/dashboard"
-            className="text-sm bg-blue-400 hover:bg-blue-500 transition-colors text-white px-4 py-2 rounded-lg w-fit mx-auto"
-          >
-            Back to dashboard
-          </Link>
+          {isRoomGone && (
+            <p className="text-xs text-gray-400">
+              Looks like the server lost this match (likely a restart).
+              You can discard it from your profile.
+            </p>
+          )}
+          <div className="flex gap-2 justify-center">
+            {isRoomGone && (
+              <form action={abandonMatch}>
+                <input type="hidden" name="sessionId" value={sessionId} />
+                <button
+                  type="submit"
+                  className="text-sm border border-red-500/40 text-red-300 hover:bg-red-500/10 transition-colors px-4 py-2 rounded-lg"
+                >
+                  Discard match
+                </button>
+              </form>
+            )}
+            <Link
+              href="/dashboard"
+              className="text-sm bg-blue-400 hover:bg-blue-500 transition-colors text-white px-4 py-2 rounded-lg"
+            >
+              Back to dashboard
+            </Link>
+          </div>
         </div>
       </div>
     );

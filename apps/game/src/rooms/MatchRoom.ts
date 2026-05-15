@@ -374,8 +374,31 @@ export class MatchRoom extends Room<MatchState> {
     }
   }
 
-  override onDispose(): void {
+  override async onDispose(): Promise<void> {
     console.log(`[match ${this.roomId}] disposed`);
+    // Last-chance status flip — if this room is being torn down without
+    // ever reaching game_over (all clients disconnected, app shutdown,
+    // crash recovery, etc.), the DB row stays "active" forever and
+    // forces a stale "Rejoin match" banner on every screen for everyone
+    // who was in it. Convert to "cancelled" so the active-game widget
+    // filters it out on the next query.
+    try {
+      const row = await prisma.gameSession.findUnique({
+        where: { id: this.sessionId },
+        select: { status: true },
+      });
+      if (row?.status === "active") {
+        await prisma.gameSession.update({
+          where: { id: this.sessionId },
+          data: { status: "cancelled" },
+        });
+        console.log(
+          `[match ${this.roomId}] marked stale active session as cancelled`,
+        );
+      }
+    } catch (err) {
+      console.warn(`[match ${this.roomId}] dispose cleanup failed`, err);
+    }
   }
 
   // --- DB → state hydration ---------------------------------------------

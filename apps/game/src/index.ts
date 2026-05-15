@@ -14,6 +14,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { Server } from "colyseus";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import { prisma } from "@quiz/db";
 import { MatchRoom } from "./rooms/MatchRoom.js";
 
 // Load shared env vars from monorepo root (no-op in production where Fly
@@ -24,6 +25,24 @@ dotenv.config({ path: path.join(repoRoot, ".env") });
 dotenv.config({ path: path.join(repoRoot, ".env.local") });
 
 const port = Number(process.env.PORT) || 2567;
+
+// On boot, mark all sessions still flagged "active" in the DB as
+// cancelled — their Colyseus rooms can't exist anymore (we just
+// started), so any client trying to join would hit "room not found".
+// Otherwise stale rows keep the "Rejoin match" banner alive forever.
+try {
+  const cleared = await prisma.gameSession.updateMany({
+    where: { status: "active" },
+    data: { status: "cancelled" },
+  });
+  if (cleared.count > 0) {
+    console.log(
+      `[colyseus] cleaned up ${cleared.count} orphan active session(s)`,
+    );
+  }
+} catch (err) {
+  console.warn("[colyseus] startup cleanup failed", err);
+}
 
 // Pre-create the HTTP server and install our health handler BEFORE Colyseus
 // wraps it. Colyseus registers its own /matchmake routes on the same server;

@@ -167,17 +167,33 @@ export async function leaveLobby(formData: FormData) {
     return;
   }
 
-  if (me.role === "host") {
+  // Step 1 — remove the leaving player's seat + their choices.
+  // MatchChoice has a FK to PlayerInGame and there's no onDelete cascade
+  // in the schema, so we wipe choices first to avoid a constraint error.
+  await prisma.matchChoice.deleteMany({
+    where: { playerInGameId: me.id },
+  });
+  await prisma.playerInGame.delete({ where: { id: me.id } });
+
+  // Step 2 — if the lobby is now empty (solo host leaving, or last
+  // guest of an abandoned cancelled lobby), drop the GameSession row
+  // entirely. Waiting lobbies have no MatchCountry / MatchQuestion /
+  // MatchEvent children yet, so this trio is enough.
+  const remaining = await prisma.playerInGame.count({
+    where: { gameSessionId: sessionId },
+  });
+  if (remaining === 0) {
+    await prisma.gameSession.delete({ where: { id: sessionId } });
+  } else if (me.role === "host") {
+    // Host bailed but guests are still here — flip to "cancelled" so
+    // their lobby UIs (subscribed via Supabase realtime) auto-redirect
+    // them home. Their PlayerInGame rows survive for analytics.
     await prisma.gameSession.update({
       where: { id: sessionId },
       data: { status: "cancelled" },
     });
-  } else {
-    await prisma.matchChoice.deleteMany({
-      where: { playerInGameId: me.id },
-    });
-    await prisma.playerInGame.delete({ where: { id: me.id } });
   }
+
   // Force the root layout (which renders ActiveGameWidget) to re-fetch
   // its DB lookup so the floating "in lobby" pill drops off. Without
   // this the RSC payload from before the action gets reused and the
