@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./gameLogic": "./src/gameLogic.ts",
     "./matchChoices": "./src/matchChoices.ts",
+    "./achievements": "./src/achievements.ts",
     "./schemas": "./src/schemas/index.ts"
   },
   "dependencies": {

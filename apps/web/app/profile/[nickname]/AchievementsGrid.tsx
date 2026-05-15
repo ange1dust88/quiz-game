@@ -2,7 +2,10 @@
 // icon + name + unlock date in colour. Locked ones are greyed out with
 // the description still visible so visitors know what's possible.
 
-import { ACHIEVEMENTS, type AchievementDef } from "@quiz/shared";
+import {
+  ACHIEVEMENTS,
+  type AchievementDef,
+} from "@quiz/shared/achievements";
 
 type Unlock = { code: string; unlockedAt: Date };
 

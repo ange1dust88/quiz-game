@@ -12,7 +12,7 @@ import {
   PERSONALITY_TRAITS,
   isValidOption,
 } from "@/app/lib/profileOptions";
-import { evaluateAchievements } from "@quiz/shared";
+import { evaluateAchievements } from "@quiz/shared/achievements";
 
 const MAX_TRAITS = 16;
 const MIN_BIRTH_YEAR = 1900;
