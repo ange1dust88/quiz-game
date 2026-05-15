@@ -61,7 +61,9 @@ export default function AchievementsGrid({ unlocks, isOwnProfile }: Props) {
               }
             >
               <span
-                className={`text-2xl shrink-0 ${unlocked ? "" : "grayscale opacity-40"}`}
+                className={`text-2xl shrink-0 w-8 h-8 inline-flex items-center justify-center ${
+                  unlocked ? "" : "grayscale opacity-40"
+                }`}
                 aria-hidden="true"
               >
                 {a.icon}

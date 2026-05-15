@@ -145,13 +145,14 @@ export default function EloChart({ history, startingElo }: Props) {
             strokeLinejoin="round"
             strokeLinecap="round"
           />
-          {/* Match dots */}
+          {/* Match dots — bigger when there's only one to plot so the
+              chart doesn't look like a single hairline. */}
           {points.map((p, i) => (
             <circle
               key={i}
               cx={p.x}
               cy={p.y}
-              r={3}
+              r={points.length === 1 ? 5 : 3}
               fill={p.isWinner ? "#34d399" : "#60a5fa"}
               stroke="#0d0d12"
               strokeWidth="1"
