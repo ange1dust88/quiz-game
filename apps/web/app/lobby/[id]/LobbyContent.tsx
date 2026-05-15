@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { createClient } from "@/app/lib/supabase/client";
 import { StartGameButton } from "./StartGameButton";
@@ -10,6 +11,7 @@ import ResultsView from "./ResultsView";
 import MatchChoicesPicker from "./MatchChoicesPicker";
 import { findChoiceOption, MATCH_CHOICES } from "@quiz/shared/matchChoices";
 import { PLAYER_COLORS } from "@/app/lib/constants";
+import Spinner from "@/app/components/ui/Spinner";
 
 interface Player {
   id: string;
@@ -330,17 +332,37 @@ export function LobbyContent({
           {session?.status === "waiting" && me && (
             <form action={leaveLobby} className="flex justify-end">
               <input type="hidden" name="sessionId" value={session.id} />
-              <button
-                type="submit"
-                className="text-xs text-red-300 hover:text-red-200 hover:bg-red-500/10 transition-colors border border-red-500/30 hover:border-red-400/60 rounded-lg px-3 py-1.5"
-              >
-                {isHost ? "Disband lobby" : "Leave lobby"}
-              </button>
+              <LeaveLobbyButton isHost={isHost} />
             </form>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+// useFormStatus only works inside a <form>, so the leave button has to be
+// its own component. Disabled + spinner while the server action runs so
+// the user doesn't smash Disband five times wondering if anything's
+// happening (DB transaction + redirect takes ~500ms in practice).
+function LeaveLobbyButton({ isHost }: { isHost: boolean }) {
+  const { pending } = useFormStatus();
+  const label = pending
+    ? isHost
+      ? "Disbanding…"
+      : "Leaving…"
+    : isHost
+      ? "Disband lobby"
+      : "Leave lobby";
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="flex items-center gap-2 text-xs text-red-300 hover:text-red-200 hover:bg-red-500/10 disabled:opacity-60 disabled:cursor-wait transition-colors border border-red-500/30 hover:border-red-400/60 rounded-lg px-3 py-1.5"
+    >
+      {pending && <Spinner size={10} />}
+      {label}
+    </button>
   );
 }
 

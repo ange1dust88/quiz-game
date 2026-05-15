@@ -27,6 +27,8 @@ model PlayerProfile {
   gamesPlayed Int            @default(0)
   gamesWon    Int            @default(0)
   gamesLost   Int            @default(0)
+  eloHistory  EloHistoryEntry[]
+  achievements Achievement[]
 
   // Demographic fields — used as features for behavioural inference / clustering.
   // All optional so registration stays lightweight; populated via /settings.
@@ -56,6 +58,43 @@ model PlayerProfile {
 // during gameplay. Both `finalState` and `telemetry` are JSON blobs —
 // schemas inferred at analysis time, not enforced here, since the live
 // schema may still evolve.
+// One row per (profile, achievement code) — unlocked-only. We never
+// store "locked" achievements; the UI derives "locked" from the
+// catalogue minus what's in this table. Cascade-on-delete so wiping a
+// profile (which would only happen in admin cleanup) takes their
+// unlock history with it.
+model Achievement {
+  id         String   @id @default(cuid())
+  profileId  String
+  code       String
+  unlockedAt DateTime @default(now())
+
+  profile    PlayerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, code])
+  @@index([profileId, unlockedAt])
+}
+
+// One row per match per player — the ELO they ended a match with and
+// how much it moved. Drives the player's rating-over-time chart on the
+// profile page. Survives session deletion (sessionId is nullable +
+// SetNull on cascade) so the chart doesn't get gappy when an old
+// GameSession is purged.
+model EloHistoryEntry {
+  id        String   @id @default(cuid())
+  profileId String
+  sessionId String?
+  eloAfter  Int
+  delta     Int
+  isWinner  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  profile   PlayerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  session   GameSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([profileId, createdAt])
+}
+
 model MatchSnapshot {
   id          String      @id @default(cuid())
   sessionId   String      @unique
@@ -65,7 +104,7 @@ model MatchSnapshot {
   telemetry   Json
   createdAt   DateTime    @default(now())
 
-  session     GameSession @relation(fields: [sessionId], references: [id])
+  session     GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }
 
 model GameSession {
@@ -94,6 +133,7 @@ model GameSession {
   currentAttackId   String?
   attacks           WarAttack[]
   events            MatchEvent[]
+  eloHistoryEntries EloHistoryEntry[]
 }
 
 model PlayerInGame {
@@ -105,7 +145,7 @@ model PlayerInGame {
   turnOrder      Int?
   ownedCountries MatchCountry[]
   answers        PlayerAnswer[]
-  gameSession    GameSession    @relation(fields: [gameSessionId], references: [id])
+  gameSession    GameSession    @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
   profile        PlayerProfile  @relation(fields: [profileId], references: [id])
 
   attacksAsAttacker  WarAttack[] @relation("attacker")
@@ -129,7 +169,7 @@ model MatchChoice {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  player         PlayerInGame @relation(fields: [playerInGameId], references: [id])
+  player         PlayerInGame @relation(fields: [playerInGameId], references: [id], onDelete: Cascade)
 
   @@unique([playerInGameId, key])
 }
@@ -154,8 +194,8 @@ model MatchCountry {
   // Used by the HP-dot UI to render "current / max" without guessing.
   maxArmies     Int             @default(1)
   points        Int             @default(200)
-  gameSession   GameSession     @relation(fields: [gameSessionId], references: [id])
-  owner         PlayerInGame?   @relation(fields: [ownerId], references: [id])
+  gameSession   GameSession     @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  owner         PlayerInGame?   @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   template      CountryTemplate @relation(fields: [templateId], references: [id])
   attacks   WarAttack[]  
 
@@ -189,7 +229,7 @@ model MatchQuestion {
   isActive      Boolean        @default(true)
   expiresAt     DateTime
   results       Json?
-  gameSession   GameSession    @relation(fields: [gameSessionId], references: [id])
+  gameSession   GameSession    @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
   question      Question       @relation(fields: [questionId], references: [id])
   answers       PlayerAnswer[]
 }
@@ -207,8 +247,8 @@ model PlayerAnswer {
   firstInputAtMs   Int?
   inputChangeCount Int           @default(0)
 
-  matchQuestion   MatchQuestion @relation(fields: [matchQuestionId], references: [id])
-  player          PlayerInGame  @relation(fields: [playerId], references: [id])
+  matchQuestion   MatchQuestion @relation(fields: [matchQuestionId], references: [id], onDelete: Cascade)
+  player          PlayerInGame  @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@unique([matchQuestionId, playerId])
 }
@@ -237,10 +277,10 @@ model WarAttack {
   tieAttackerTimeMs  Int?
   tieDefenderTimeMs  Int?
 
-  gameSession   GameSession  @relation(fields: [gameSessionId], references: [id])
-  attacker      PlayerInGame @relation("attacker", fields: [attackerId], references: [id])
-  defender      PlayerInGame @relation("defender", fields: [defenderId], references: [id])
-  country       MatchCountry @relation(fields: [countryId], references: [id])
+  gameSession   GameSession  @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  attacker      PlayerInGame @relation("attacker", fields: [attackerId], references: [id], onDelete: Cascade)
+  defender      PlayerInGame @relation("defender", fields: [defenderId], references: [id], onDelete: Cascade)
+  country       MatchCountry @relation(fields: [countryId], references: [id], onDelete: Cascade)
   answers       WarAnswer[]
   questionId    Int?
   question      WarQuestion? @relation(fields: [questionId], references: [id])
@@ -256,8 +296,8 @@ model WarAnswer {
   // Behavioural telemetry — ms since the MC question started.
   submittedAtMs Int?
 
-  attack      WarAttack    @relation(fields: [attackId], references: [id])
-  player      PlayerInGame @relation(fields: [playerId], references: [id])
+  attack      WarAttack    @relation(fields: [attackId], references: [id], onDelete: Cascade)
+  player      PlayerInGame @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@unique([attackId, playerId])
 }
@@ -279,8 +319,8 @@ model MatchEvent {
   actorId       String?
   payload       Json
 
-  gameSession   GameSession   @relation(fields: [gameSessionId], references: [id])
-  actor         PlayerInGame? @relation(fields: [actorId], references: [id])
+  gameSession   GameSession   @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  actor         PlayerInGame? @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([gameSessionId, createdAt])
 }

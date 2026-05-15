@@ -54,6 +54,12 @@ export class Player extends Schema {
   declare turnOrder: number;
   declare capitalStyle: string;
   declare connected: boolean;
+  // Set once the player has given up on the match — either by clicking
+  // Leave or by burning through the 30s reconnect grace. From this point
+  // their turn is skipped, their lands have been redistributed, and the
+  // PlayerPanel marks them as "left". Distinct from `connected: false`
+  // which only signals a transient drop.
+  declare abandoned: boolean;
 
   constructor() {
     super();
@@ -63,6 +69,7 @@ export class Player extends Schema {
     this.turnOrder = 0;
     this.capitalStyle = "standard";
     this.connected = false;
+    this.abandoned = false;
   }
 }
 defineTypes(Player, {
@@ -72,6 +79,7 @@ defineTypes(Player, {
   turnOrder: "number",
   capitalStyle: "string",
   connected: "boolean",
+  abandoned: "boolean",
 });
 
 export class ActiveQuestion extends Schema {

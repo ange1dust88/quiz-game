@@ -13,6 +13,9 @@ import {
 import ProfileReminderBanner, {
   hasDemographicData,
 } from "@/app/components/ui/ProfileReminderBanner";
+import ActivityHeatmap from "./ActivityHeatmap";
+import EloChart from "./EloChart";
+import AchievementsGrid from "./AchievementsGrid";
 
 export default async function ProfilePage({
   params,
@@ -44,6 +47,44 @@ export default async function ProfilePage({
   const recentMatches = snapshots
     .map((s) => buildRecentMatchRow(s, profile.id))
     .filter((row): row is RecentMatchRow => row !== null);
+
+  // Activity heatmap data — every MatchSnapshot the profile participated
+  // in during the last 365 days. We only need createdAt; the dedicated
+  // query is cheap and keeps the heatmap independent of the "last 10"
+  // recents list above.
+  const heatmapStart = new Date();
+  heatmapStart.setHours(0, 0, 0, 0);
+  heatmapStart.setDate(heatmapStart.getDate() - 365);
+  const activityRows = await prisma.matchSnapshot.findMany({
+    where: {
+      session: { players: { some: { profileId: profile.id } } },
+      createdAt: { gte: heatmapStart },
+    },
+    select: { createdAt: true },
+  });
+
+  // ELO trend — every match result we have on file for this profile,
+  // ordered oldest → newest so the chart draws left-to-right.
+  const eloHistory = await prisma.eloHistoryEntry.findMany({
+    where: { profileId: profile.id },
+    orderBy: { createdAt: "asc" },
+    select: {
+      eloAfter: true,
+      delta: true,
+      isWinner: true,
+      createdAt: true,
+    },
+  });
+
+  const achievementRows = await prisma.achievement.findMany({
+    where: { profileId: profile.id },
+    select: { code: true, unlockedAt: true },
+  });
+  // Starting ELO = current ELO undone by the cumulative deltas. Lets
+  // the chart show "you started at 1000, now you're at X" even though
+  // we never explicitly stored a starting-point row.
+  const totalDelta = eloHistory.reduce((acc, e) => acc + e.delta, 0);
+  const startingElo = profile.elo - totalDelta;
 
   // Live game pointer — used to surface an "in lobby / in match" banner
   // with a jump-back-to-lobby link. We pick the most recent join so a
@@ -166,6 +207,15 @@ export default async function ProfilePage({
           <StatCard label="Losses" value={gamesLost} accent="text-red-400" />
           <StatCard label="Win Rate" value={`${winRate}%`} />
         </section>
+
+        <AchievementsGrid
+          unlocks={achievementRows}
+          isOwnProfile={isOwnProfile}
+        />
+
+        <EloChart history={eloHistory} startingElo={startingElo} />
+
+        <ActivityHeatmap dates={activityRows.map((r) => r.createdAt)} />
 
         <RecentMatchesSection
           rows={recentMatches}

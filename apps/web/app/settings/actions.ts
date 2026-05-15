@@ -12,6 +12,7 @@ import {
   PERSONALITY_TRAITS,
   isValidOption,
 } from "@/app/lib/profileOptions";
+import { evaluateAchievements } from "@quiz/shared";
 
 const MAX_TRAITS = 16;
 const MIN_BIRTH_YEAR = 1900;
@@ -84,6 +85,63 @@ export async function updateSettings(formData: FormData) {
       personalityTraits,
     },
   });
+
+  // After the demographic update, re-evaluate the achievement catalogue
+  // — `profile_complete` flips once all five required fields are set.
+  // Cheap; the unique constraint makes it idempotent.
+  try {
+    const fresh = await prisma.playerProfile.findUnique({
+      where: { id: profile.id },
+      select: {
+        gamesPlayed: true,
+        gamesWon: true,
+        elo: true,
+        birthYear: true,
+        gender: true,
+        education: true,
+        occupation: true,
+        mbti: true,
+      },
+    });
+    if (fresh) {
+      const recent = await prisma.eloHistoryEntry.findMany({
+        where: { profileId: profile.id },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: { isWinner: true },
+      });
+      const have = new Set(
+        (
+          await prisma.achievement.findMany({
+            where: { profileId: profile.id },
+            select: { code: true },
+          })
+        ).map((r) => r.code),
+      );
+      const earned = evaluateAchievements({
+        gamesPlayed: fresh.gamesPlayed,
+        gamesWon: fresh.gamesWon,
+        elo: fresh.elo,
+        recentWins: recent.map((r) => r.isWinner),
+        demographicComplete: Boolean(
+          fresh.birthYear &&
+            fresh.gender &&
+            fresh.education &&
+            fresh.occupation &&
+            fresh.mbti,
+        ),
+      });
+      const fresh_codes = earned.filter((c) => !have.has(c));
+      if (fresh_codes.length > 0) {
+        await prisma.achievement.createMany({
+          data: fresh_codes.map((code) => ({ profileId: profile.id, code })),
+          skipDuplicates: true,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — settings save succeeds even if achievement eval fails.
+  }
 
   revalidatePath(`/profile/${encodeURIComponent(profile.nickname)}`);
   revalidatePath("/dashboard");

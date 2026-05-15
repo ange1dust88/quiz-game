@@ -75,8 +75,16 @@ export default function PlayerPanel({ myPlayerId }: Props) {
                   {isYou && (
                     <span className="text-[10px] text-gray-500">you</span>
                   )}
-                  {!p.connected && (
-                    <span className="text-[10px] text-amber-400">offline</span>
+                  {p.abandoned ? (
+                    <span className="text-[10px] text-red-400 uppercase tracking-widest">
+                      left
+                    </span>
+                  ) : (
+                    !p.connected && (
+                      <span className="text-[10px] text-amber-400">
+                        offline
+                      </span>
+                    )
                   )}
                 </div>
                 <div className="text-xs text-gray-500 flex items-center gap-2">

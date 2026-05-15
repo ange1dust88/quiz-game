@@ -30,6 +30,11 @@ const port = Number(process.env.PORT) || 2567;
 // cancelled — their Colyseus rooms can't exist anymore (we just
 // started), so any client trying to join would hit "room not found".
 // Otherwise stale rows keep the "Rejoin match" banner alive forever.
+//
+// Also nuke stale waiting / cancelled rows that nobody bothered to
+// finish — keeps Supabase from accumulating dead lobbies indefinitely.
+// Cascade onDelete in the schema means a single GameSession.delete
+// takes its PlayerInGame / MatchChoice / events / etc. with it.
 try {
   const cleared = await prisma.gameSession.updateMany({
     where: { status: "active" },
@@ -37,7 +42,21 @@ try {
   });
   if (cleared.count > 0) {
     console.log(
-      `[colyseus] cleaned up ${cleared.count} orphan active session(s)`,
+      `[colyseus] marked ${cleared.count} orphan active session(s) as cancelled`,
+    );
+  }
+
+  const STALE_LOBBY_MS = 24 * 60 * 60 * 1000; // 24h
+  const cutoff = new Date(Date.now() - STALE_LOBBY_MS);
+  const purged = await prisma.gameSession.deleteMany({
+    where: {
+      status: { in: ["waiting", "cancelled"] },
+      createdAt: { lt: cutoff },
+    },
+  });
+  if (purged.count > 0) {
+    console.log(
+      `[colyseus] purged ${purged.count} stale waiting/cancelled lobby/lobbies`,
     );
   }
 } catch (err) {

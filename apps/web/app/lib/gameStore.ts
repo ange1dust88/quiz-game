@@ -30,6 +30,7 @@ export type PlayerMirror = {
   turnOrder: number;
   capitalStyle: string;
   connected: boolean;
+  abandoned: boolean;
 };
 
 export type ActiveQuestionMirror = {
@@ -156,6 +157,7 @@ function snapshot(s: any): GameStateMirror {
       turnOrder: p.turnOrder,
       capitalStyle: p.capitalStyle,
       connected: p.connected,
+      abandoned: p.abandoned ?? false,
     });
   });
 

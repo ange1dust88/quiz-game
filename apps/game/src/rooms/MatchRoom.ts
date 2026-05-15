@@ -24,6 +24,7 @@ import {
   computePickOrder,
   computeTieResult,
   computeXpEarned,
+  evaluateAchievements,
   rankAnswers,
   verifyJwt,
   warEndReason,
@@ -63,6 +64,11 @@ const WAR_TIE_TIMER_MS = 15_000;
 const WAR_REVEAL_MS = 3_500;
 const MAX_WAR_ROUNDS = 5;
 const TICK_INTERVAL_MS = 250;
+// If only one player is still connected for this long, declare a walkover
+// win. Covers the case where opponents close the tab and don't come back
+// — otherwise the lone survivor sits forever, watching their opponent's
+// turn auto-action through random territories until rounds run out.
+const WALKOVER_TIMEOUT_MS = 60_000;
 
 // Per-question telemetry collected from clients while the question is live.
 // Held outside the synced state so other players can't see opponents'
@@ -86,6 +92,11 @@ export class MatchRoom extends Room<MatchState> {
   // their tabs have closed. Refreshing one tab no longer "disconnects"
   // the player from the room's perspective.
   private clientsPerPlayer = new Map<string, number>();
+  // Timestamp (ms) when the room first saw "only one player still
+  // connected" with everyone else gone. If this persists for
+  // WALKOVER_TIMEOUT_MS, tick() calls endGameByWalkover. Cleared back to
+  // null whenever someone reconnects or the game ends.
+  private walkoverStartedAtMs: number | null = null;
 
   // Cache of CountryTemplate.neighbors so adjacency lookups don't hit the
   // DB during gameplay. Populated once at hydration.
@@ -340,10 +351,12 @@ export class MatchRoom extends Room<MatchState> {
     if (player) player.connected = false;
 
     if (consented) {
-      // Player explicitly clicked Leave — don't try to reconnect.
+      // Player explicitly clicked Leave — skip the reconnect window and
+      // hand their lands out right now so the others aren't waiting.
       console.log(
         `[match ${this.roomId}] ${client.sessionId} left consented (player=${playerId})`,
       );
+      this.abandonPlayer(playerId);
       return;
     }
 
@@ -365,9 +378,13 @@ export class MatchRoom extends Room<MatchState> {
         console.log(
           `[match ${this.roomId}] ${client.sessionId} reconnected (player=${playerId})`,
         );
+        return;
       }
+      // allowReconnection resolved but with no client → abandon.
+      this.abandonPlayer(playerId);
     } catch {
-      // Window expired or room disposed — nothing to do.
+      // Window expired or room disposed — treat as abandonment.
+      this.abandonPlayer(playerId);
       console.log(
         `[match ${this.roomId}] reconnect window expired for ${playerId}`,
       );
@@ -457,6 +474,8 @@ export class MatchRoom extends Room<MatchState> {
 
   private tick(): void {
     const now = Date.now();
+    this.checkWalkover(now);
+    if (this.state.stage === "ended") return;
     if (this.state.stage === "capitals") {
       if (
         this.state.capitalExpiresAt > 0 &&
@@ -552,13 +571,6 @@ export class MatchRoom extends Room<MatchState> {
     return has;
   }
 
-  private capitalsPlaced(): number {
-    let n = 0;
-    this.state.countries.forEach((c) => {
-      if (c.isCapital) n += 1;
-    });
-    return n;
-  }
 
   /**
    * Apply a capital pick. Validates that:
@@ -637,12 +649,18 @@ export class MatchRoom extends Room<MatchState> {
   }
 
   private advanceCapitalTurn(): void {
-    if (this.capitalsPlaced() >= this.state.players.size) {
+    // Count seats that still need a capital. Abandoned players never
+    // will, so exclude them; otherwise we'd loop forever waiting on a
+    // ghost.
+    let activeNeedingCapital = 0;
+    this.state.players.forEach((p) => {
+      if (!p.abandoned && !this.playerHasCapital(p.id)) activeNeedingCapital += 1;
+    });
+    if (activeNeedingCapital === 0) {
       this.transitionToExpand();
       return;
     }
-    this.state.turnIndex =
-      (this.state.turnIndex + 1) % Math.max(1, this.state.players.size);
+    this.state.turnIndex = this.nextActiveTurnIndex();
     this.state.capitalExpiresAt = Date.now() + CAPITAL_TIMER_MS;
   }
 
@@ -728,7 +746,13 @@ export class MatchRoom extends Room<MatchState> {
       inputChangeCount,
     });
 
-    if (this.currentQuestion.answers.size >= this.state.players.size) {
+    // Resolve as soon as everyone still in the match has submitted —
+    // abandoned players never will, so we exclude them from the quorum.
+    let activeCount = 0;
+    this.state.players.forEach((p) => {
+      if (!p.abandoned) activeCount += 1;
+    });
+    if (this.currentQuestion.answers.size >= activeCount) {
       this.resolveQuestion();
     }
   }
@@ -1311,6 +1335,132 @@ export class MatchRoom extends Room<MatchState> {
     this.currentAttack = null;
   }
 
+  // Permanently take a player out of rotation. Called when they hit Leave
+  // in the match UI or burn through the 30s reconnect window. Their lands
+  // are split among the surviving players (preferring direct neighbours
+  // so empires stay contiguous), their pickOrder slot is dropped, and any
+  // attack they were part of is cancelled. Subsequent turn-advance logic
+  // skips them — see `nextActiveTurnIndex`.
+  private abandonPlayer(playerId: string): void {
+    const player = this.state.players.get(playerId);
+    if (!player || player.abandoned) return;
+    if (this.state.stage === "ended") return;
+    player.abandoned = true;
+    player.connected = false;
+    console.log(
+      `[match ${this.roomId}] ${player.nickname} abandoned the match`,
+    );
+
+    // Cancel any active attack involving them — easier than retrofitting
+    // the new ownerId mid-MC. attackerId+defenderId both relevant.
+    const aa = this.state.activeAttack;
+    if (aa && (aa.attackerId === playerId || aa.defenderId === playerId)) {
+      this.cleanupAttack();
+    }
+
+    // Drop them from pickOrder (head or otherwise).
+    if (this.state.pickOrder.length > 0) {
+      const filtered: string[] = [];
+      this.state.pickOrder.forEach((pid) => {
+        if (pid !== playerId) filtered.push(pid);
+      });
+      this.state.pickOrder.clear();
+      filtered.forEach((pid) => this.state.pickOrder.push(pid));
+      if (this.state.pickOrder.length === 0) {
+        // Queue emptied — schedule the next question like advanceTerritoryPick.
+        this.state.pickExpiresAt = 0;
+        this.state.nextQuestionAt = Date.now() + PHASE_DELAY_MS;
+      }
+    }
+
+    // Build the list of live recipients up front so we don't redistribute
+    // to a player whose own abandon hasn't propagated yet.
+    const aliveIds: string[] = [];
+    this.state.players.forEach((p) => {
+      if (p.id !== playerId && !p.abandoned) aliveIds.push(p.id);
+    });
+
+    if (aliveIds.length > 0) {
+      // Index countries by templateId so we can look up neighbours.
+      const byTemplateId = new Map<number, Country>();
+      this.state.countries.forEach((c) =>
+        byTemplateId.set(c.templateId, c),
+      );
+
+      const playerCountries: Country[] = [];
+      this.state.countries.forEach((c) => {
+        if (c.ownerId === playerId) playerCountries.push(c);
+      });
+
+      for (const c of playerCountries) {
+        const neighbors = this.templateNeighbors.get(c.templateId) ?? [];
+        const candidates: string[] = [];
+        for (const ntid of neighbors) {
+          const nc = byTemplateId.get(ntid);
+          if (!nc?.ownerId || nc.ownerId === playerId) continue;
+          const ownerPlayer = this.state.players.get(nc.ownerId);
+          if (ownerPlayer && !ownerPlayer.abandoned) {
+            candidates.push(nc.ownerId);
+          }
+        }
+        const newOwnerId =
+          candidates.length > 0
+            ? candidates[Math.floor(Math.random() * candidates.length)]
+            : aliveIds[Math.floor(Math.random() * aliveIds.length)];
+        c.ownerId = newOwnerId;
+        c.armies = 1;
+        c.isCapital = false;
+      }
+    }
+
+    // If it was their turn (capitals or war), advance.
+    if (
+      this.state.stage === "capitals" &&
+      player.turnOrder === this.state.turnIndex
+    ) {
+      this.advanceCapitalTurn();
+    } else if (
+      this.state.stage === "war" &&
+      !this.state.activeAttack &&
+      player.turnOrder === this.state.turnIndex
+    ) {
+      this.advanceWarTurn();
+    }
+
+    // If a question is waiting on this player's answer, the
+    // "all-answered" check should now be satisfied.
+    this.maybeResolveQuestionEarly();
+  }
+
+  // If everyone who's still in the game has submitted an answer for the
+  // current question, resolve now. Called from abandonPlayer in case the
+  // departing player was the last one we were waiting on.
+  private maybeResolveQuestionEarly(): void {
+    if (this.state.stage !== "expand") return;
+    if (!this.currentQuestion) return;
+    let activeCount = 0;
+    this.state.players.forEach((p) => {
+      if (!p.abandoned) activeCount += 1;
+    });
+    if (this.currentQuestion.answers.size >= activeCount) {
+      this.resolveQuestion();
+    }
+  }
+
+  // Round-robin turnOrder advance that skips abandoned players. Used by
+  // capitals + war turn rotation. Returns the new turnIndex.
+  private nextActiveTurnIndex(): number {
+    const size = Math.max(1, this.state.players.size);
+    let idx = (this.state.turnIndex + 1) % size;
+    const start = idx;
+    do {
+      const p = this.playerByTurnOrder(idx);
+      if (p && !p.abandoned) return idx;
+      idx = (idx + 1) % size;
+    } while (idx !== start);
+    return idx;
+  }
+
   private advanceWarTurn(): void {
     // Increment warTurns. Compute end-of-game first.
     this.state.warTurns += 1;
@@ -1337,10 +1487,9 @@ export class MatchRoom extends Room<MatchState> {
       return;
     }
 
-    // Advance turn (skip players with no lands? old code didn't). Just
-    // round-robin.
-    this.state.turnIndex =
-      (this.state.turnIndex + 1) % Math.max(1, this.state.players.size);
+    // Advance to the next non-abandoned player. nextActiveTurnIndex
+    // round-robins past anyone who's left the match.
+    this.state.turnIndex = this.nextActiveTurnIndex();
     this.state.warTurnExpiresAt = Date.now() + WAR_TURN_TIMER_MS;
   }
 
@@ -1384,6 +1533,57 @@ export class MatchRoom extends Room<MatchState> {
   }
 
   // --- Game end ---------------------------------------------------------
+
+  // Walkover detection — runs every tick. If everyone except one player
+  // has dropped (browser closed, network lost beyond the 30s reconnect
+  // window), wait WALKOVER_TIMEOUT_MS to make sure it's not a transient
+  // dip, then hand the win to whoever's still around.
+  private checkWalkover(now: number): void {
+    if (this.state.stage === "ended") return;
+    // "Total seats that started the match" — including abandoned ones.
+    // For a 1v1 walkover doesn't make sense, but a 3-player game where
+    // two abandoned should still finish on the last one alone.
+    let totalSeats = 0;
+    this.state.players.forEach(() => (totalSeats += 1));
+    if (totalSeats < 2) return;
+    let activeCount = 0;
+    let lone: Player | null = null;
+    this.state.players.forEach((p) => {
+      if (p.connected && !p.abandoned) {
+        activeCount += 1;
+        lone = p;
+      }
+    });
+    if (activeCount === 1 && lone) {
+      const survivor = lone as Player;
+      if (this.walkoverStartedAtMs === null) {
+        this.walkoverStartedAtMs = now;
+        console.log(
+          `[match ${this.roomId}] walkover countdown — ${survivor.nickname} alone`,
+        );
+      } else if (now - this.walkoverStartedAtMs >= WALKOVER_TIMEOUT_MS) {
+        const winnerId = survivor.id;
+        this.walkoverStartedAtMs = null;
+        console.log(
+          `[match ${this.roomId}] walkover → ${survivor.nickname}`,
+        );
+        this.endGameByWalkover(winnerId);
+      }
+    } else {
+      // Someone came back (or the room is empty / single-player config).
+      this.walkoverStartedAtMs = null;
+    }
+  }
+
+  private endGameByWalkover(winnerId: string): void {
+    this.state.winnerId = winnerId;
+    this.state.stage = "ended";
+    this.state.status = "completed";
+    this.state.warTurnExpiresAt = 0;
+    this.state.activeQuestion = null;
+    this.state.activeAttack = null;
+    void this.persistFinalSnapshot();
+  }
 
   private endGame(
     _reason: "sole_survivor" | "rounds_exhausted",
@@ -1568,6 +1768,85 @@ export class MatchRoom extends Room<MatchState> {
           elo: { increment: delta },
         },
       });
+
+      // Append to ELO history so the profile chart has a data point
+      // per match. Stored independently of MatchSnapshot so deleting an
+      // old session (cleanup job) leaves the rating curve intact.
+      await prisma.eloHistoryEntry.create({
+        data: {
+          profileId: p.profileId,
+          sessionId: this.sessionId,
+          eloAfter: profile.elo + delta,
+          delta,
+          isWinner,
+        },
+      });
+
+      // Evaluate achievement unlocks. Anything new gets a row in the
+      // Achievement table — no toast notification yet, the user sees it
+      // next time they open their profile.
+      await this.unlockAchievementsFor(p.profileId);
+    }
+  }
+
+  // Pulls the freshly-updated profile + recent results, runs the pure
+  // achievement evaluator, and inserts rows for any codes that just
+  // crossed the threshold. The unique constraint on (profileId, code)
+  // makes the createMany idempotent even if this runs twice.
+  private async unlockAchievementsFor(profileId: string): Promise<void> {
+    try {
+      const [profile, recent, existing] = await Promise.all([
+        prisma.playerProfile.findUnique({
+          where: { id: profileId },
+          select: {
+            gamesPlayed: true,
+            gamesWon: true,
+            elo: true,
+            birthYear: true,
+            gender: true,
+            education: true,
+            occupation: true,
+            mbti: true,
+          },
+        }),
+        prisma.eloHistoryEntry.findMany({
+          where: { profileId },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: { isWinner: true },
+        }),
+        prisma.achievement.findMany({
+          where: { profileId },
+          select: { code: true },
+        }),
+      ]);
+      if (!profile) return;
+      const demographicComplete = Boolean(
+        profile.birthYear &&
+          profile.gender &&
+          profile.education &&
+          profile.occupation &&
+          profile.mbti,
+      );
+      const earned = evaluateAchievements({
+        gamesPlayed: profile.gamesPlayed,
+        gamesWon: profile.gamesWon,
+        elo: profile.elo,
+        recentWins: recent.map((r) => r.isWinner),
+        demographicComplete,
+      });
+      const have = new Set(existing.map((r) => r.code));
+      const fresh = earned.filter((code) => !have.has(code));
+      if (fresh.length === 0) return;
+      await prisma.achievement.createMany({
+        data: fresh.map((code) => ({ profileId, code })),
+        skipDuplicates: true,
+      });
+    } catch (err) {
+      console.warn(
+        `[match ${this.roomId}] achievement evaluation failed for ${profileId}`,
+        err,
+      );
     }
   }
 
