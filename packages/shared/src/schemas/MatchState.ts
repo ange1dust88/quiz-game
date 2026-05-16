@@ -51,6 +51,7 @@ export class Player extends Schema {
   declare id: string;
   declare profileId: string;
   declare nickname: string;
+  declare avatarUrl: string;
   declare turnOrder: number;
   declare capitalStyle: string;
   declare connected: boolean;
@@ -66,6 +67,7 @@ export class Player extends Schema {
     this.id = "";
     this.profileId = "";
     this.nickname = "";
+    this.avatarUrl = "";
     this.turnOrder = 0;
     this.capitalStyle = "standard";
     this.connected = false;
@@ -76,6 +78,7 @@ defineTypes(Player, {
   id: "string",
   profileId: "string",
   nickname: "string",
+  avatarUrl: "string",
   turnOrder: "number",
   capitalStyle: "string",
   connected: "boolean",

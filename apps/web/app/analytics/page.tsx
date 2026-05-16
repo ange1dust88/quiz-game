@@ -262,7 +262,7 @@ export default async function AnalyticsPage() {
             <SmallBarCard
               title="Education"
               data={eduArr}
-              color="bg-purple-400"
+              color="bg-blue-400"
             />
             <SmallBarCard title="Gender" data={genderArr} color="bg-cyan-400" />
           </div>

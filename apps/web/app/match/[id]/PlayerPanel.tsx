@@ -9,6 +9,7 @@ import {
   usePlayers,
 } from "@/app/lib/gameStore";
 import { PLAYER_COLORS } from "@/app/lib/constants";
+import Avatar from "@/app/components/ui/Avatar";
 
 type Props = { myPlayerId: string };
 
@@ -61,12 +62,13 @@ export default function PlayerPanel({ myPlayerId }: Props) {
               className="flex items-center gap-3 px-3 py-2 rounded-lg border-2 transition-all"
               style={rowStyle}
             >
-              <div
-                className="w-9 h-9 rounded-md flex items-center justify-center text-sm font-bold shrink-0 text-black"
-                style={{ backgroundColor: color }}
-              >
-                {p.nickname.charAt(0).toUpperCase()}
-              </div>
+              <Avatar
+                nickname={p.nickname}
+                avatarUrl={p.avatarUrl}
+                size={36}
+                shape="square"
+                color={color}
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
                   <span className="text-sm font-semibold truncate">

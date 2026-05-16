@@ -39,9 +39,11 @@ export default function ProfileReminderBanner({
         isCompact ? "p-3" : "p-4"
       } flex items-start gap-3`}
     >
-      <span className="text-2xl shrink-0">🧪</span>
       <div className="flex-1 flex flex-col gap-2">
         <div className="flex flex-col gap-0.5">
+          <span className="text-[10px] uppercase tracking-widest text-amber-300 font-bold">
+            Research
+          </span>
           <span className="font-semibold text-amber-100 text-sm">
             Help our research — finish your profile
           </span>

@@ -12,6 +12,8 @@ import MatchChoicesPicker from "./MatchChoicesPicker";
 import { findChoiceOption, MATCH_CHOICES } from "@quiz/shared/matchChoices";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 import Spinner from "@/app/components/ui/Spinner";
+import Avatar from "@/app/components/ui/Avatar";
+import Button from "@/app/components/ui/Button";
 
 interface Player {
   id: string;
@@ -19,6 +21,7 @@ interface Player {
   role: string;
   profile: {
     nickname: string;
+    avatarUrl?: string | null;
   };
   choices: { key: string; value: string }[];
 }
@@ -223,12 +226,13 @@ export function LobbyContent({
                       style={{ borderColor: `${color}44` }}
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div
-                          className="w-8 h-8 rounded-md flex items-center justify-center text-sm font-bold text-black shrink-0"
-                          style={{ backgroundColor: color }}
-                        >
-                          {(nick ?? "?").charAt(0).toUpperCase()}
-                        </div>
+                        <Avatar
+                          nickname={nick ?? "?"}
+                          avatarUrl={p.profile?.avatarUrl ?? null}
+                          size={32}
+                          shape="square"
+                          color={color}
+                        />
                         <div className="flex items-center gap-2 min-w-0 flex-wrap">
                           {nick ? (
                             <Link
@@ -246,10 +250,10 @@ export function LobbyContent({
                           )}
                           {p.role === "host" && (
                             <span
-                              className="text-yellow-400 text-xs"
+                              className="text-[9px] uppercase tracking-widest font-bold text-amber-300 border border-amber-400/40 rounded-full px-1.5 py-0.5"
                               title="Host"
                             >
-                              👑
+                              Host
                             </span>
                           )}
                           {opt && (
@@ -308,14 +312,16 @@ export function LobbyContent({
           )}
 
           {session?.status === "waiting" && !me && (
-            <button
+            <Button
+              type="button"
+              variant="primary"
+              fullWidth
               onClick={async () => {
                 await joinGame(session.id);
               }}
-              className="w-full bg-blue-400 hover:bg-blue-500 transition-colors text-white px-6 py-2 rounded-lg font-medium"
             >
-              Join Game
-            </button>
+              Join game
+            </Button>
           )}
 
           {session?.status === "active" && (
@@ -373,7 +379,7 @@ function LeaveLobbyButton({ isHost }: { isHost: boolean }) {
 function StatusPill({ status }: { status: string }) {
   const styles: Record<string, { cls: string; dot: string; label: string }> = {
     waiting: {
-      cls: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+      cls: "bg-blue-500/15 text-blue-200 border-blue-500/40",
       dot: "bg-blue-400",
       label: "Waiting",
     },

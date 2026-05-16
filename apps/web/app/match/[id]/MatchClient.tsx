@@ -18,6 +18,7 @@ import {
 import { PLAYER_COLORS } from "@/app/lib/constants";
 import { isMuted, setMuted, sounds } from "@/app/lib/sounds";
 import Spinner from "@/app/components/ui/Spinner";
+import Avatar from "@/app/components/ui/Avatar";
 import MapPanel from "./MapPanel";
 import ActionPanel from "./ActionPanel";
 import PlayerPanel from "./PlayerPanel";
@@ -116,7 +117,7 @@ export default function MatchClient({
             )}
             <Link
               href="/dashboard"
-              className="text-sm bg-blue-400 hover:bg-blue-500 transition-colors text-white px-4 py-2 rounded-lg"
+              className="text-sm bg-blue-500 hover:bg-blue-400 transition-colors text-white px-4 py-2 rounded-md font-semibold"
             >
               Back to dashboard
             </Link>
@@ -242,9 +243,9 @@ function MuteToggle() {
       type="button"
       onClick={toggle}
       aria-label={muted ? "Unmute" : "Mute"}
-      className="text-xs text-gray-400 hover:text-white transition-colors px-2 py-1 border border-[#2a2a32] rounded-md"
+      className="text-[10px] uppercase tracking-widest text-gray-400 hover:text-white transition-colors px-2 py-1 border border-[#2a2a32] hover:border-[#3a3a45] rounded-md font-semibold"
     >
-      {muted ? "🔇" : "🔊"}
+      {muted ? "Sound off" : "Sound on"}
     </button>
   );
 }
@@ -495,12 +496,14 @@ function EndScreen({
           </div>
           {winner ? (
             <>
-              <div
-                className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold text-black"
-                style={{ backgroundColor: winnerColor ?? "#666" }}
-              >
-                {winner.nickname.charAt(0).toUpperCase()}
-              </div>
+              <Avatar
+                nickname={winner.nickname}
+                avatarUrl={winner.avatarUrl}
+                size={64}
+                shape="square"
+                color={winnerColor ?? "#666"}
+                className="rounded-2xl"
+              />
               <h1 className="text-3xl font-bold leading-tight">
                 {isMe ? `You win, ${winner.nickname}!` : `${winner.nickname} wins`}
               </h1>
@@ -536,12 +539,13 @@ function EndScreen({
                 <span className="text-xs text-gray-500 font-mono w-5 text-center">
                   #{idx + 1}
                 </span>
-                <div
-                  className="w-9 h-9 rounded-md flex items-center justify-center text-sm font-bold shrink-0 text-black"
-                  style={{ backgroundColor: color }}
-                >
-                  {p.nickname.charAt(0).toUpperCase()}
-                </div>
+                <Avatar
+                  nickname={p.nickname}
+                  avatarUrl={p.avatarUrl}
+                  size={36}
+                  shape="square"
+                  color={color}
+                />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-2">
                     <span className="text-sm font-semibold truncate">
@@ -563,7 +567,7 @@ function EndScreen({
         <div className="flex justify-center gap-3">
           <Link
             href="/dashboard"
-            className="text-sm bg-blue-400 hover:bg-blue-500 transition-colors text-white px-5 py-2 rounded-lg"
+            className="text-sm bg-blue-500 hover:bg-blue-400 transition-colors text-white px-5 py-2 rounded-md font-semibold"
           >
             Dashboard
           </Link>

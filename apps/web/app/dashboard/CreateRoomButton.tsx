@@ -1,17 +1,12 @@
 "use client";
 import { useFormStatus } from "react-dom";
+import Button from "../components/ui/Button";
 
-function CreateRoomButton() {
+export default function CreateRoomButton() {
   const { pending } = useFormStatus();
-
   return (
-    <button
-      disabled={pending}
-      className="bg-blue-400 hover:bg-blue-500 transition-colors text-white px-6 py-3 rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-      type="submit"
-    >
-      Create Room
-    </button>
+    <Button type="submit" variant="primary" disabled={pending}>
+      {pending ? "Creating…" : "Create room"}
+    </Button>
   );
 }
-export default CreateRoomButton;

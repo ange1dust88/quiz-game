@@ -7,6 +7,8 @@
 
 import { useActionState, useState } from "react";
 import { joinRoom, type JoinRoomState } from "./actions";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
 
 const ROOM_ID_PATTERN = /^[a-z0-9]{20,30}$/;
 
@@ -33,44 +35,47 @@ export default function JoinRoomForm() {
   const canSubmit = !pending && looksLikeValidId(value);
 
   return (
-    <form
-      action={formAction}
-      className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] hover:border-blue-500/60 transition-colors rounded-2xl p-6 flex flex-col gap-4"
+    <Card
+      as="div"
+      className="flex flex-col gap-3 justify-between min-h-[200px]"
     >
-      <div className="flex flex-col gap-2">
-        <h2 className="text-xl font-semibold">Join Game</h2>
-        <p className="text-sm text-[#9a9a9a]">
-          Enter a room ID or paste the full invite URL.
-        </p>
-      </div>
+      <form action={formAction} className="contents">
+        <div className="flex flex-col gap-2">
+          <span className="text-[10px] uppercase tracking-widest text-blue-300">
+            Join
+          </span>
+          <h2 className="text-lg font-semibold">Join room</h2>
+          <p className="text-xs text-gray-400 leading-snug">
+            Paste a friend&apos;s invite ID or URL.
+          </p>
+        </div>
 
-      <input
-        id="roomId"
-        name="roomId"
-        type="text"
-        placeholder="Room ID"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        autoComplete="off"
-        spellCheck={false}
-        className={`text-white bg-[#292929] border focus:outline-none transition-colors rounded-lg px-4 py-2 placeholder:text-[#6a6a6a] ${
-          localError
-            ? "border-red-500/60 focus:border-red-500"
-            : "border-[#4f4f4f] focus:border-blue-500/60"
-        }`}
-      />
+        <div className="flex flex-col gap-2">
+          <input
+            id="roomId"
+            name="roomId"
+            type="text"
+            placeholder="Room ID or URL"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            className={`text-white text-sm bg-[#0d0d12] border focus:outline-none transition-colors rounded-md px-3 py-2 placeholder:text-[#6a6a6a] ${
+              localError
+                ? "border-red-500/60 focus:border-red-500"
+                : "border-[#2a2a32] focus:border-blue-500/60"
+            }`}
+          />
 
-      {errorMessage && (
-        <p className="text-xs text-red-400 -mt-2">{errorMessage}</p>
-      )}
+          {errorMessage && (
+            <p className="text-[11px] text-red-400">{errorMessage}</p>
+          )}
 
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        className="bg-blue-400 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-white px-6 py-3 rounded-lg font-medium"
-      >
-        {pending ? "Joining…" : "Join"}
-      </button>
-    </form>
+          <Button type="submit" variant="primary" disabled={!canSubmit}>
+            {pending ? "Joining…" : "Join"}
+          </Button>
+        </div>
+      </form>
+    </Card>
   );
 }

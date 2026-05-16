@@ -24,7 +24,9 @@ export default function GlobalError({
   return (
     <div className="min-h-screen text-white flex items-center justify-center px-6">
       <div className="max-w-md w-full bg-[#0d0d12]/90 border border-red-500/40 rounded-2xl p-8 flex flex-col gap-4 text-center">
-        <div className="text-4xl">⚠️</div>
+        <span className="text-[10px] uppercase tracking-widest text-red-300 font-bold">
+          Error
+        </span>
         <h1 className="text-xl font-semibold">Something went wrong</h1>
         <p className="text-sm text-gray-400 leading-relaxed">
           We hit an unexpected error. You can try again — if it keeps

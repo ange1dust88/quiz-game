@@ -1,21 +1,23 @@
+"use client";
 import { useFormStatus } from "react-dom";
+import Button from "./Button";
 
-interface SubmitButtonTypes {
-  text: string;
-}
+// Thin wrapper around our shared <Button> that ties into useFormStatus
+// for the parent <form>. Login + Register both consume this so their
+// submit affordance matches the rest of the app instead of drifting
+// into custom Tailwind blocks.
 
-function SubmitButton({ text }: SubmitButtonTypes) {
+export default function SubmitButton({ text }: { text: string }) {
   const { pending } = useFormStatus();
-
   return (
-    <button
-      disabled={pending}
+    <Button
       type="submit"
-      className="bg-blue-400 hover:bg-blue-500 transition-colors text-white px-6 py-3 rounded-lg font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      variant="primary"
+      size="lg"
+      fullWidth
+      disabled={pending}
     >
-      {text}
-    </button>
+      {pending ? "…" : text}
+    </Button>
   );
 }
-
-export default SubmitButton;

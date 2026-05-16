@@ -29,6 +29,8 @@ model PlayerProfile {
   gamesLost   Int            @default(0)
   eloHistory  EloHistoryEntry[]
   achievements Achievement[]
+  avatarSubmissions AvatarSubmission[] @relation("submitter")
+  avatarReviews     AvatarSubmission[] @relation("reviewer")
 
   // Demographic fields — used as features for behavioural inference / clustering.
   // All optional so registration stays lightweight; populated via /settings.
@@ -58,6 +60,35 @@ model PlayerProfile {
 // during gameplay. Both `finalState` and `telemetry` are JSON blobs —
 // schemas inferred at analysis time, not enforced here, since the live
 // schema may still evolve.
+// Avatar moderation queue. A user uploads → row with status="pending",
+// file lands in Supabase Storage under `pending/<id>.<ext>`. An admin
+// reviews and either approves (file moves to `approved/<profileId>.<ext>`
+// and PlayerProfile.avatarUrl is updated) or rejects (file deleted,
+// reason recorded). Pre-emptive moderation avoids letting any user-
+// uploaded image appear in public UI before a human has looked at it.
+model AvatarSubmission {
+  id                String   @id @default(cuid())
+  profileId         String
+  // Path inside the `avatars` Supabase Storage bucket, including any
+  // sub-folder. e.g. "pending/abc123.png" or "approved/<uuid>.png".
+  storagePath       String
+  // Convenience cache of the resolved public URL so the UI doesn't have
+  // to call getPublicUrl on every render.
+  publicUrl         String
+  // "pending" | "approved" | "rejected"
+  status            String   @default("pending")
+  rejectionReason   String?
+  createdAt         DateTime @default(now())
+  reviewedAt        DateTime?
+  reviewerProfileId String?
+
+  profile  PlayerProfile  @relation("submitter", fields: [profileId], references: [id], onDelete: Cascade)
+  reviewer PlayerProfile? @relation("reviewer", fields: [reviewerProfileId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([profileId, createdAt])
+}
+
 // One row per (profile, achievement code) — unlocked-only. We never
 // store "locked" achievements; the UI derives "locked" from the
 // catalogue minus what's in this table. Cascade-on-delete so wiping a

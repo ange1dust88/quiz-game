@@ -41,7 +41,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       players: {
         include: {
           profile: {
-            select: { nickname: true },
+            select: { nickname: true, avatarUrl: true },
           },
           choices: { select: { key: true, value: true } },
         },
@@ -90,6 +90,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       role: p.role,
       profile: {
         nickname: p.profile.nickname,
+        avatarUrl: p.profile.avatarUrl ?? null,
       },
       choices: p.choices.map((c) => ({ key: c.key, value: c.value })),
     })),

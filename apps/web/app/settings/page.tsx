@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
 import {
   EDUCATION_OPTIONS,
@@ -9,12 +10,27 @@ import {
   PERSONALITY_TRAITS,
 } from "@/app/lib/profileOptions";
 import { updateSettings } from "./actions";
+import AvatarUploadSection from "./AvatarUploadSection";
 
 export default async function SettingsPage() {
   const profile = await getProfileSafe();
   if (!profile) redirect("/login");
 
   const checkedTraits = new Set(profile.personalityTraits ?? []);
+
+  // Latest submission (any status). Drives the "Pending review" /
+  // "Rejected: <reason>" banner under the upload field.
+  const latestSubmission = await prisma.avatarSubmission.findFirst({
+    where: { profileId: profile.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      status: true,
+      publicUrl: true,
+      rejectionReason: true,
+      createdAt: true,
+      reviewedAt: true,
+    },
+  });
 
   return (
     <div className="min-h-screen text-white">
@@ -31,10 +47,12 @@ export default async function SettingsPage() {
           </span>
         </header>
 
-        <section className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-sm text-blue-100 flex gap-3">
-          <span className="text-lg shrink-0">ℹ️</span>
+        <section className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-sm text-blue-100 flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-widest text-blue-300 font-bold">
+            Why we ask
+          </span>
           <div className="flex flex-col gap-1">
-            <span className="font-semibold">Why we ask</span>
+            <span className="font-semibold">Help our diploma research</span>
             <span className="text-blue-200/80 text-xs leading-relaxed">
               These fields help us train an analytical model that better
               understands player behavior — used in the diploma research
@@ -43,6 +61,12 @@ export default async function SettingsPage() {
             </span>
           </div>
         </section>
+
+        <AvatarUploadSection
+          nickname={profile.nickname}
+          currentAvatarUrl={profile.avatarUrl}
+          latestSubmission={latestSubmission}
+        />
 
         <form
           action={updateSettings}

@@ -1,166 +1,152 @@
-import Link from "next/link";
-import { getProfileSafe } from "../lib/auth";
-import { logout } from "../login/actions";
-import { createRoom } from "./actions";
-import CreateRoomButton from "./CreateRoomButton";
-import JoinRoomForm from "./JoinRoomForm";
-import ProfileReminderBanner, {
-  hasDemographicData,
-} from "../components/ui/ProfileReminderBanner";
+// FACEIT-style dashboard. Left column: hero CONQUER THE MAP + rank
+// widget on top, stat tiles row, full match history. Right column:
+// live matches feed, leaderboard preview, daily missions.
+//
+// Features without a real backend yet (online count, currency, live
+// match list, daily missions, K/D stat) render with mock data — the
+// markup is in place so wiring them up later is mechanical.
+
+import { redirect } from "next/navigation";
+import { prisma } from "@quiz/db";
+import { getProfileSafe } from "@/app/lib/auth";
+import { hasDemographicData } from "@/app/components/ui/ProfileReminderBanner";
+import ProfileReminderBanner from "@/app/components/ui/ProfileReminderBanner";
+import HeroPlay from "./HeroPlay";
+import RankWidget from "./RankWidget";
+import StatTiles from "./StatTiles";
+import MatchHistory from "./MatchHistory";
+import LiveMatches from "./LiveMatches";
+import LeaderboardPreview from "./LeaderboardPreview";
+import DailyMissions from "./DailyMissions";
 
 export default async function Dashboard() {
   const profile = await getProfileSafe();
+  if (!profile) redirect("/login");
 
-  const gamesPlayed = profile?.gamesPlayed ?? 0;
-  const gamesWon = profile?.gamesWon ?? 0;
-  const gamesLost = profile?.gamesLost ?? 0;
+  const showReminder = !hasDemographicData(profile);
+
+  // Rank — count of profiles with strictly higher ELO + 1.
+  const higherCount = await prisma.playerProfile.count({
+    where: { elo: { gt: profile.elo } },
+  });
+  const myRank = higherCount + 1;
+
+  // Streak — walk back through recent results, count consecutive of the
+  // same outcome. Sign of the latest match decides the type.
+  const recent = await prisma.eloHistoryEntry.findMany({
+    where: { profileId: profile.id },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: { isWinner: true },
+  });
+  let streakKind: "W" | "L" | null = null;
+  let streakLen = 0;
+  if (recent.length > 0) {
+    streakKind = recent[0].isWinner ? "W" : "L";
+    for (const r of recent) {
+      const cur: "W" | "L" = r.isWinner ? "W" : "L";
+      if (cur !== streakKind) break;
+      streakLen += 1;
+    }
+  }
+
+  // K/D — total war attacks won / lost, aggregated from telemetry.
+  // Cheap-ish for a single profile: pull telemetry from snapshots they
+  // were in, count attacker correct/incorrect. Mocked to 0 if no data.
+  const snapshotsForKd = await prisma.matchSnapshot.findMany({
+    where: { session: { players: { some: { profileId: profile.id } } } },
+    select: { telemetry: true, finalState: true },
+    take: 100,
+  });
+  let warWins = 0;
+  let warLosses = 0;
+  for (const s of snapshotsForKd) {
+    const fs = s.finalState as
+      | { players?: { id: string; profileId: string }[] }
+      | null;
+    if (!fs?.players) continue;
+    const me = fs.players.find((p) => p.profileId === profile.id);
+    if (!me) continue;
+    const tel = s.telemetry as
+      | { warAnswers?: { playerId: string; isCorrect: boolean }[] }
+      | null;
+    if (!tel?.warAnswers) continue;
+    for (const a of tel.warAnswers) {
+      if (a.playerId !== me.id) continue;
+      if (a.isCorrect) warWins += 1;
+      else warLosses += 1;
+    }
+  }
+  const kd = warLosses > 0 ? warWins / warLosses : warWins;
+
+  // Aggregate stats for the tile row.
+  const totalSnapshots = await prisma.matchSnapshot.count({
+    where: { session: { players: { some: { profileId: profile.id } } } },
+  });
+  let myCapitals = 0;
+  let myTerritories = 0;
+  for (const s of snapshotsForKd) {
+    const fs = s.finalState as
+      | {
+          players?: { id: string; profileId: string }[];
+          countries?: { ownerId: string | null; isCapital: boolean }[];
+        }
+      | null;
+    if (!fs?.players || !fs.countries) continue;
+    const me = fs.players.find((p) => p.profileId === profile.id);
+    if (!me) continue;
+    for (const c of fs.countries) {
+      if (c.ownerId !== me.id) continue;
+      myTerritories += 1;
+      if (c.isCapital) myCapitals += 1;
+    }
+  }
   const winRate =
-    gamesPlayed > 0 ? Math.round((gamesWon / gamesPlayed) * 100) : 0;
-  const xpForNext = (profile?.level ?? 1) * 1000;
-  const xpProgress = Math.min(
-    100,
-    Math.round(((profile?.experience ?? 0) / xpForNext) * 100),
-  );
-
-  const initial = (profile?.nickname ?? "?").charAt(0).toUpperCase();
-  const showReminder = profile ? !hasDemographicData(profile) : false;
+    profile.gamesPlayed > 0
+      ? Math.round((profile.gamesWon / profile.gamesPlayed) * 100)
+      : 0;
+  const warTotal = warWins + warLosses;
+  const warWinPct = warTotal > 0 ? Math.round((warWins / warTotal) * 100) : 0;
 
   return (
-    <div className="min-h-screen text-white">
-      <div className="max-w-6xl mx-auto px-8 py-10 flex flex-col gap-8">
-        <header className="flex items-center justify-between">
-          <div>
-            <p className="text-sm uppercase tracking-widest text-gray-400">
-              Dashboard
-            </p>
-            <h1 className="text-3xl font-bold mt-1">
-              Welcome back
-              {profile?.nickname ? (
-                <span className="text-blue-400">, {profile.nickname}</span>
-              ) : null}
-            </h1>
+    <div className="min-h-[calc(100vh-4rem)] text-white bg-[#080a10]">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
+        <div className="flex flex-col gap-4 min-w-0">
+          {showReminder && <ProfileReminderBanner />}
+
+          <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4">
+            <HeroPlay onlineCount={profile.gamesPlayed * 4 + 217} />
+            <RankWidget
+              level={profile.level}
+              elo={profile.elo}
+              experience={profile.experience}
+              xpForNext={profile.level * 1000}
+              rank={myRank}
+              streakKind={streakKind}
+              streakLen={streakLen}
+              kd={kd}
+            />
           </div>
 
-          <form action={logout}>
-            <button
-              type="submit"
-              className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors px-4 py-2 rounded-lg text-sm"
-            >
-              Logout
-            </button>
-          </form>
-        </header>
+          <StatTiles
+            matches={totalSnapshots}
+            winRate={winRate}
+            capitals={myCapitals}
+            territories={myTerritories}
+            warWinPct={warWinPct}
+            warTotal={warTotal}
+            warWins={warWins}
+          />
 
-        {showReminder && <ProfileReminderBanner />}
+          <MatchHistory profileId={profile.id} />
+        </div>
 
-        <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex items-center gap-6">
-          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-3xl font-bold shrink-0">
-            {initial}
-          </div>
-
-          <div className="flex-1 flex flex-col gap-2">
-            <div className="flex items-baseline gap-3 flex-wrap">
-              <span className="text-2xl font-semibold">
-                {profile?.nickname ?? "Player"}
-              </span>
-              <span className="text-xs px-2 py-1 rounded-md bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                Level {profile?.level ?? 1}
-              </span>
-              {profile?.country && (
-                <span className="text-xs text-gray-400">
-                  {profile.country}
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>XP</span>
-                <span>
-                  {profile?.experience ?? 0} / {xpForNext}
-                </span>
-              </div>
-              <div className="h-2 bg-[#292929] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-blue-400 to-purple-500"
-                  style={{ width: `${xpProgress}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="hidden sm:flex flex-col items-end shrink-0 gap-2">
-            <span className="text-xs uppercase tracking-widest text-gray-400">
-              ELO
-            </span>
-            <span className="text-3xl font-bold text-blue-400">
-              {profile?.elo ?? 1000}
-            </span>
-            <div className="flex flex-col gap-2 items-end">
-              {profile && (
-                <Link
-                  href={`/profile/${encodeURIComponent(profile.nickname)}`}
-                  className="text-xs text-gray-400 hover:text-white transition-colors px-3 py-1.5 border border-[#4f4f4f] rounded-lg"
-                >
-                  View profile
-                </Link>
-              )}
-              <Link
-                href="/leaderboard"
-                className="text-xs text-gray-400 hover:text-white transition-colors px-3 py-1.5 border border-[#4f4f4f] rounded-lg"
-              >
-                Leaderboard
-              </Link>
-            </div>
-          </div>
-        </section>
-
-        <section className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatCard label="Games Played" value={gamesPlayed} />
-          <StatCard label="Wins" value={gamesWon} accent="text-green-400" />
-          <StatCard label="Losses" value={gamesLost} accent="text-red-400" />
-          <StatCard label="Win Rate" value={`${winRate}%`} />
-        </section>
-
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <form
-            action={createRoom}
-            className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] hover:border-blue-500/60 transition-colors rounded-2xl p-6 flex flex-col gap-4 justify-between"
-          >
-            <div className="flex flex-col gap-2">
-              <h2 className="text-xl font-semibold">Create Game</h2>
-              <p className="text-sm text-[#9a9a9a]">
-                Start a new match and invite friends with a room ID.
-              </p>
-            </div>
-
-            <CreateRoomButton />
-          </form>
-
-          <JoinRoomForm />
-        </section>
+        <div className="flex flex-col gap-4 min-w-0">
+          <LiveMatches />
+          <LeaderboardPreview />
+          <DailyMissions />
+        </div>
       </div>
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string | number;
-  accent?: string;
-}) {
-  return (
-    <div className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-xl p-4 flex flex-col gap-1">
-      <span className="text-xs uppercase tracking-wider text-gray-400">
-        {label}
-      </span>
-      <span className={`text-2xl font-bold ${accent ?? "text-white"}`}>
-        {value}
-      </span>
     </div>
   );
 }

@@ -18,7 +18,7 @@ const CATEGORY_BORDER: Record<AchievementDef["category"], string> = {
   play: "border-blue-400/50 bg-blue-500/10",
   skill: "border-emerald-400/50 bg-emerald-500/10",
   rating: "border-amber-400/50 bg-amber-500/10",
-  profile: "border-purple-400/50 bg-purple-500/10",
+  profile: "border-blue-400/50 bg-blue-500/10",
 };
 
 export default function AchievementsGrid({ unlocks, isOwnProfile }: Props) {
@@ -60,13 +60,18 @@ export default function AchievementsGrid({ unlocks, isOwnProfile }: Props) {
                     : "Locked"
               }
             >
+              {/* TODO: replace text-letter chip with an SVG icon once the
+                  icon set lands. The catalogue still ships `a.icon` for
+                  the swap. */}
               <span
-                className={`text-2xl shrink-0 w-8 h-8 inline-flex items-center justify-center ${
-                  unlocked ? "" : "grayscale opacity-40"
+                className={`shrink-0 w-9 h-9 inline-flex items-center justify-center rounded-md text-sm font-bold uppercase tracking-widest ${
+                  unlocked
+                    ? "bg-[#0d0d12] border border-current/30 text-current"
+                    : "bg-[#0d0d12] border border-[#2a2a32] text-gray-600"
                 }`}
                 aria-hidden="true"
               >
-                {a.icon}
+                {a.name.charAt(0).toUpperCase()}
               </span>
               <div className="flex flex-col min-w-0 gap-0.5">
                 <span

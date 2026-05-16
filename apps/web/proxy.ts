@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { decrypt } from "./app/lib/session";
 
-const protectedRoutes = ["/dashboard", "/settings", "/leaderboard"];
+const protectedRoutes = [
+  "/dashboard",
+  "/settings",
+  "/leaderboard",
+  "/play",
+  "/tournaments",
+  "/friends",
+  "/admin/avatars",
+];
 const publicRoutes = ["/login", "/register"];
 
 export default async function middleware(req: NextRequest) {

@@ -426,7 +426,7 @@ export class MatchRoom extends Room<MatchState> {
       include: {
         players: {
           include: {
-            profile: { select: { nickname: true } },
+            profile: { select: { nickname: true, avatarUrl: true } },
             choices: { select: { key: true, value: true } },
           },
           orderBy: { joinedAt: "asc" },
@@ -443,6 +443,7 @@ export class MatchRoom extends Room<MatchState> {
       player.id = p.id;
       player.profileId = p.profileId;
       player.nickname = p.profile.nickname;
+      player.avatarUrl = p.profile.avatarUrl ?? "";
       player.turnOrder = idx;
       const capChoice = p.choices.find((c) => c.key === "capital_style");
       player.capitalStyle = capChoice?.value ?? "standard";

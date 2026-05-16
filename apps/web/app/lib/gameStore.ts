@@ -27,6 +27,7 @@ export type PlayerMirror = {
   id: string;
   profileId: string;
   nickname: string;
+  avatarUrl: string | null;
   turnOrder: number;
   capitalStyle: string;
   connected: boolean;
@@ -154,6 +155,7 @@ function snapshot(s: any): GameStateMirror {
       id: p.id,
       profileId: p.profileId,
       nickname: p.nickname,
+      avatarUrl: p.avatarUrl ? p.avatarUrl : null,
       turnOrder: p.turnOrder,
       capitalStyle: p.capitalStyle,
       connected: p.connected,

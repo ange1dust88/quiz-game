@@ -7,12 +7,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
+import Avatar from "@/app/components/ui/Avatar";
 
 const TOP_LIMIT = 50;
 
 type LbRow = {
   id: string;
   nickname: string;
+  avatarUrl: string | null;
   elo: number;
   level: number;
   gamesPlayed: number;
@@ -31,6 +33,7 @@ export default async function LeaderboardPage() {
       select: {
         id: true,
         nickname: true,
+        avatarUrl: true,
         elo: true,
         level: true,
         gamesPlayed: true,
@@ -44,6 +47,7 @@ export default async function LeaderboardPage() {
       select: {
         id: true,
         nickname: true,
+        avatarUrl: true,
         elo: true,
         level: true,
         gamesPlayed: true,
@@ -211,11 +215,20 @@ function PodiumCard({
         </span>
       </div>
       <div className="flex items-center gap-3">
-        <div
-          className={`bg-gradient-to-br ${s.rank} text-black w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold shrink-0`}
-        >
-          {row.nickname.charAt(0).toUpperCase()}
-        </div>
+        {row.avatarUrl ? (
+          <Avatar
+            nickname={row.nickname}
+            avatarUrl={row.avatarUrl}
+            size={48}
+            shape="square"
+          />
+        ) : (
+          <div
+            className={`bg-gradient-to-br ${s.rank} text-black w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold shrink-0`}
+          >
+            {row.nickname.charAt(0).toUpperCase()}
+          </div>
+        )}
         <div className="flex flex-col min-w-0">
           <div className="flex items-baseline gap-2">
             <span className="text-lg font-bold truncate">{row.nickname}</span>
@@ -287,9 +300,12 @@ function RankRow({
       <span className="w-8 text-center font-mono text-sm text-gray-500 shrink-0">
         #{rank}
       </span>
-      <div className="w-9 h-9 rounded-md bg-[#1f1f24] flex items-center justify-center text-sm font-bold shrink-0">
-        {row.nickname.charAt(0).toUpperCase()}
-      </div>
+      <Avatar
+        nickname={row.nickname}
+        avatarUrl={row.avatarUrl}
+        size={36}
+        shape="square"
+      />
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold truncate">{row.nickname}</span>

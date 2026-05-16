@@ -16,6 +16,7 @@ import ProfileReminderBanner, {
 import ActivityHeatmap from "./ActivityHeatmap";
 import EloChart from "./EloChart";
 import AchievementsGrid from "./AchievementsGrid";
+import Avatar from "@/app/components/ui/Avatar";
 
 export default async function ProfilePage({
   params,
@@ -116,7 +117,6 @@ export default async function ProfilePage({
     100,
     Math.round((profile.experience / xpForNext) * 100),
   );
-  const initial = profile.nickname.charAt(0).toUpperCase();
   const memberSince = profile.createdAt.toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -159,9 +159,12 @@ export default async function ProfilePage({
         )}
 
         <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex items-center gap-6">
-          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-3xl font-bold shrink-0">
-            {initial}
-          </div>
+          <Avatar
+            nickname={profile.nickname}
+            avatarUrl={profile.avatarUrl}
+            size={80}
+            shape="circle"
+          />
 
           <div className="flex-1 flex flex-col gap-2">
             <div className="flex items-baseline gap-3 flex-wrap">
@@ -184,7 +187,7 @@ export default async function ProfilePage({
               </div>
               <div className="h-2 bg-[#292929] rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-blue-400 to-purple-500"
+                  className="h-full bg-gradient-to-r from-blue-400 to-blue-500"
                   style={{ width: `${xpProgress}%` }}
                 />
               </div>
@@ -334,7 +337,7 @@ function PersonalInfoSection({
                   {profile.personalityTraits.map((tag) => (
                     <span
                       key={tag}
-                      className="text-xs bg-purple-500/15 text-purple-200 border border-purple-500/30 rounded-full px-2.5 py-1"
+                      className="text-xs bg-blue-500/15 text-blue-200 border border-blue-500/30 rounded-full px-2.5 py-1"
                     >
                       {labelOf(tag, PERSONALITY_TRAITS) || tag}
                     </span>

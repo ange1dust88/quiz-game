@@ -46,7 +46,7 @@ export default async function Home() {
 
           <h1 className="text-5xl sm:text-6xl font-bold leading-tight">
             Conquer Europe with{" "}
-            <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-blue-400 to-blue-400 bg-clip-text text-transparent">
               knowledge
             </span>
           </h1>
