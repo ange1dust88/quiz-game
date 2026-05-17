@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/app/lib/supabase/client";
 import { joinGame, leaveLobby, setMatchChoice, startGame } from "./actions";
+import { inviteFriendToLobby } from "./inviteActions";
 import ResultsView from "./ResultsView";
 import { MATCH_CHOICES, findChoiceOption } from "@quiz/shared/matchChoices";
 import { PLAYER_COLORS } from "@/app/lib/constants";
@@ -72,6 +73,15 @@ interface GameSession {
   events: EventRow[];
 }
 
+export interface InviteCandidate {
+  id: string;
+  nickname: string;
+  avatarUrl: string | null;
+  level: number;
+  elo: number;
+  country: string | null;
+}
+
 interface Props {
   sessionId: string;
   initialSession: GameSession;
@@ -79,6 +89,8 @@ interface Props {
     id: string;
     userId: string;
   };
+  friends: InviteCandidate[];
+  invitedIds: string[];
 }
 
 const SLOT_COUNT = 4;
@@ -87,6 +99,8 @@ export function LobbyContent({
   sessionId,
   initialSession,
   currentUser,
+  friends,
+  invitedIds,
 }: Props) {
   const [session, setSession] = useState(initialSession);
   const router = useRouter();
@@ -210,11 +224,20 @@ export function LobbyContent({
       />
 
       <div className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_320px] gap-4">
-        <MatchSettingsPanel
-          sessionId={sessionId}
-          mySelections={mySelections}
-          isMember={Boolean(me)}
-        />
+        <div className="flex flex-col gap-4 min-w-0">
+          <MatchSettingsPanel
+            sessionId={sessionId}
+            mySelections={mySelections}
+            isMember={Boolean(me)}
+          />
+          {me && session.status === "waiting" && (
+            <InviteFriendsPanel
+              sessionId={sessionId}
+              friends={friends}
+              invitedIds={invitedIds}
+            />
+          )}
+        </div>
 
         <div className="flex flex-col gap-4 min-w-0">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
@@ -784,5 +807,124 @@ function LobbyChatPanel() {
         </div>
       </div>
     </PanelCard>
+  );
+}
+
+// ---- Invite friends panel ------------------------------------------------
+
+function InviteFriendsPanel({
+  sessionId,
+  friends,
+  invitedIds,
+}: {
+  sessionId: string;
+  friends: InviteCandidate[];
+  invitedIds: string[];
+}) {
+  // Track who we've invited in this session (server set + optimistic local).
+  const [invited, setInvited] = useState<Set<string>>(
+    () => new Set(invitedIds),
+  );
+  return (
+    <PanelCard
+      title={`Invite friends · ${friends.length}`}
+      accent="#3fcf6c"
+      padded={false}
+    >
+      {friends.length === 0 ? (
+        <p className="font-body text-xs text-dim text-center py-6 px-4">
+          No friends to invite — add some on the friends page.
+        </p>
+      ) : (
+        <div>
+          {friends.map((f) => (
+            <InviteFriendRow
+              key={f.id}
+              sessionId={sessionId}
+              friend={f}
+              alreadyInvited={invited.has(f.id)}
+              onInvited={() =>
+                setInvited((prev) => new Set(prev).add(f.id))
+              }
+            />
+          ))}
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+function InviteFriendRow({
+  sessionId,
+  friend,
+  alreadyInvited,
+  onInvited,
+}: {
+  sessionId: string;
+  friend: InviteCandidate;
+  alreadyInvited: boolean;
+  onInvited: () => void;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const invite = () => {
+    startTransition(async () => {
+      const r = await inviteFriendToLobby(friend.id, sessionId);
+      if (r.ok) {
+        onInvited();
+        setError(null);
+      } else {
+        setError(r.error);
+      }
+    });
+  };
+
+  return (
+    <div className="grid grid-cols-[28px_1fr_auto] gap-2.5 items-center px-3 py-2 border-t border-stroke first:border-t-0">
+      <Hexagon
+        value={friend.level}
+        size={26}
+        variant="outlined"
+        color="var(--color-accent)"
+        textColor="var(--color-accent)"
+      />
+      <div className="flex items-center gap-2 min-w-0">
+        <Avatar
+          nickname={friend.nickname}
+          avatarUrl={friend.avatarUrl}
+          size={26}
+          shape="square"
+        />
+        <div className="min-w-0 flex flex-col leading-tight">
+          <Link
+            href={`/profile/${encodeURIComponent(friend.nickname)}`}
+            target="_blank"
+            className="font-head text-[11px] text-white hover:text-accent truncate transition-colors"
+          >
+            {friend.nickname.toUpperCase()}
+          </Link>
+          <div className="flex items-center gap-2">
+            <FlagTag code={friend.country} />
+            <span className="font-mono text-[10px] text-dim">
+              {friend.elo.toLocaleString()}
+            </span>
+          </div>
+        </div>
+      </div>
+      {alreadyInvited ? (
+        <span className="font-head text-[10px] text-win">SENT ✓</span>
+      ) : (
+        <button
+          type="button"
+          onClick={invite}
+          disabled={pending}
+          title={error ?? "Invite to this lobby"}
+          className="font-head text-[10px] font-extrabold text-accent-fg bg-accent hover:bg-accent-dim disabled:opacity-60 transition-colors px-3 py-1.5"
+        >
+          {pending ? "…" : "Invite"}
+        </button>
+      )}
+    </div>
   );
 }

@@ -12,6 +12,7 @@ import {
 } from "next/font/google";
 import "./globals.css";
 import ActiveGameWidget from "./components/ui/ActiveGameWidget";
+import LobbyInviteWidget from "./components/ui/LobbyInviteWidget";
 import AppHeader from "./components/layout/AppHeader";
 
 // Geist stays as the project-wide default; the rest are exposed via CSS
@@ -96,6 +97,7 @@ export default function RootLayout({
         <AppHeader />
         {children}
         <ActiveGameWidget />
+        <LobbyInviteWidget />
       </body>
     </html>
   );

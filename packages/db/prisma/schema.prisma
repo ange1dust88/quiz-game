@@ -55,6 +55,9 @@ model PlayerProfile {
 
   friendRequestsSent     Friendship[] @relation("FriendshipRequester")
   friendRequestsReceived Friendship[] @relation("FriendshipAddressee")
+
+  lobbyInvitesSent     LobbyInvite[] @relation("LobbyInviteInviter")
+  lobbyInvitesReceived LobbyInvite[] @relation("LobbyInviteInvitee")
 }
 
 // Bidirectional friendship — direction is meaningful only while status =
@@ -77,6 +80,28 @@ model Friendship {
   @@unique([requesterId, addresseeId])
   @@index([addresseeId, status])
   @@index([requesterId, status])
+}
+
+// Direct invite from one profile to another to join a specific lobby.
+// The row lives while the invite is "active" — i.e. the invitee hasn't
+// joined or dismissed yet. Deletion happens on dismiss, on accept (the
+// joinGame path), or transitively when the GameSession/inviter/invitee
+// is removed (cascade). The unique(invitee, session) constraint blocks
+// duplicate invites from the same lobby — re-inviting is a no-op.
+model LobbyInvite {
+  id            String   @id @default(cuid())
+  inviterId     String
+  inviteeId     String
+  gameSessionId String
+  createdAt     DateTime @default(now())
+
+  inviter     PlayerProfile @relation("LobbyInviteInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee     PlayerProfile @relation("LobbyInviteInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  gameSession GameSession   @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([inviteeId, gameSessionId])
+  @@index([inviteeId, createdAt])
+  @@index([inviterId, gameSessionId])
 }
 
 // Per-match record persisted by Colyseus at game_over. Replaces the
@@ -190,6 +215,7 @@ model GameSession {
   attacks           WarAttack[]
   events            MatchEvent[]
   eloHistoryEntries EloHistoryEntry[]
+  lobbyInvites      LobbyInvite[]
 }
 
 model PlayerInGame {

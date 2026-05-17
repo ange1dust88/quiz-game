@@ -133,11 +133,61 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     })),
   };
 
+  // Friends + already-sent invites for the invite panel. We only show
+  // friends who aren't already in the lobby; the existing invites flag
+  // them as "Sent ✓" so the host doesn't double-fire.
+  const playerProfileIds = new Set(session.players.map((p) => p.profileId));
+  const [friendships, sentInvites] = await Promise.all([
+    prisma.friendship.findMany({
+      where: {
+        status: "accepted",
+        OR: [
+          { requesterId: profile.id },
+          { addresseeId: profile.id },
+        ],
+      },
+      include: {
+        requester: {
+          select: {
+            id: true,
+            nickname: true,
+            avatarUrl: true,
+            level: true,
+            elo: true,
+            country: true,
+          },
+        },
+        addressee: {
+          select: {
+            id: true,
+            nickname: true,
+            avatarUrl: true,
+            level: true,
+            elo: true,
+            country: true,
+          },
+        },
+      },
+    }),
+    prisma.lobbyInvite.findMany({
+      where: { gameSessionId: id, inviterId: profile.id },
+      select: { inviteeId: true },
+    }),
+  ]);
+  const friendList = friendships
+    .map((f) =>
+      f.requesterId === profile.id ? f.addressee : f.requester,
+    )
+    .filter((p) => !playerProfileIds.has(p.id));
+  const invitedIds = new Set(sentInvites.map((i) => i.inviteeId));
+
   return (
     <LobbyContent
       sessionId={session.id}
       initialSession={initialSession}
       currentUser={{ id: profile.id, userId }}
+      friends={friendList}
+      invitedIds={Array.from(invitedIds)}
     />
   );
 };
