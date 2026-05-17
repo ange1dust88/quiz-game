@@ -1,11 +1,12 @@
-// ELO-over-time line chart. Server-side render — pure SVG, no client JS
-// or charting libs. Each point is one finished match (sourced from the
-// EloHistoryEntry table). Axes are min/max within the dataset with a
-// little padding so single-match accounts still show a visible line.
+// ELO progression chart. Cyan line + gradient fill + gold marker at the
+// peak ELO + label on the current value. Three "summary" tiles on the
+// right (net change / best result / worst result) match the FACEIT
+// "30 matches" widget.
 //
-// We render two layers:
-//   1. a faint gray reference line at the starting ELO
-//   2. the actual rating curve with circles at every match
+// Pure server-side render (SVG, no client JS).
+
+import PanelCard from "@/app/components/ui/PanelCard";
+import PillTab from "@/app/components/ui/PillTab";
 
 type Point = {
   eloAfter: number;
@@ -19,197 +20,191 @@ type Props = {
   startingElo: number;
 };
 
-const W = 720;
-const H = 220;
-const PAD_X = 36;
-const PAD_TOP = 16;
-const PAD_BOTTOM = 28;
+const W = 620;
+const H = 200;
+const PAD_X = 8;
+const PAD_TOP = 24;
+const PAD_BOTTOM = 16;
 
 export default function EloChart({ history, startingElo }: Props) {
   if (history.length === 0) {
     return (
-      <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-4">
-        <h2 className="text-sm uppercase tracking-widest text-gray-400">
-          Rating history
-        </h2>
-        <p className="text-sm text-gray-500">
+      <PanelCard title="ELO progression · last 30 matches" accent="#1ed3ff">
+        <p className="font-body text-sm text-dim py-6 text-center">
           No matches yet — play one to see how your rating moves.
         </p>
-      </section>
+      </PanelCard>
     );
   }
 
-  // Build the polyline. x is spread evenly across matches, y maps to
-  // [minElo, maxElo] window with a small padding so even a 1-point
-  // change is visible.
-  const elos = history.map((h) => h.eloAfter);
+  const last30 = history.slice(-30);
+  const elos = last30.map((h) => h.eloAfter);
   const rawMin = Math.min(startingElo, ...elos);
   const rawMax = Math.max(startingElo, ...elos);
-  const pad = Math.max(20, Math.round((rawMax - rawMin) * 0.15));
+  const pad = Math.max(30, Math.round((rawMax - rawMin) * 0.15));
   const yMin = rawMin - pad;
   const yMax = rawMax + pad;
   const yRange = Math.max(1, yMax - yMin);
 
   const innerW = W - PAD_X * 2;
   const innerH = H - PAD_TOP - PAD_BOTTOM;
+  const stepX =
+    last30.length === 1 ? 0 : innerW / (last30.length - 1);
 
-  const xFor = (idx: number) => {
-    if (history.length === 1) return PAD_X + innerW / 2;
-    return PAD_X + (idx / (history.length - 1)) * innerW;
-  };
-  const yFor = (elo: number) => {
-    return PAD_TOP + (1 - (elo - yMin) / yRange) * innerH;
-  };
-
-  const points = history.map((h, i) => ({
-    x: xFor(i),
-    y: yFor(h.eloAfter),
+  const points = last30.map((h, i) => ({
+    x: PAD_X + (last30.length === 1 ? innerW / 2 : i * stepX),
+    y: PAD_TOP + (1 - (h.eloAfter - yMin) / yRange) * innerH,
     ...h,
   }));
-  const path = points
+
+  const pathD = points
     .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
     .join(" ");
-  // Filled area below the line for a subtle "trend" feel.
-  const areaPath =
-    points.length > 0
-      ? `M ${points[0].x.toFixed(1)} ${(PAD_TOP + innerH).toFixed(1)} ` +
-        points
-          .map((p) => `L ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
-          .join(" ") +
-        ` L ${points[points.length - 1].x.toFixed(1)} ${(PAD_TOP + innerH).toFixed(1)} Z`
-      : "";
+  const areaD =
+    `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${H} L ${points[0].x.toFixed(1)} ${H} Z`;
 
-  const startY = yFor(startingElo);
-
-  const latest = history[history.length - 1];
-  const totalDelta = latest.eloAfter - startingElo;
+  const peakIdx = elos.indexOf(Math.max(...elos));
+  const peak = points[peakIdx];
+  const last = points[points.length - 1];
+  const totalDelta = last.eloAfter - startingElo;
+  const best = last30.reduce(
+    (acc, h) => (h.delta > acc ? h.delta : acc),
+    -Infinity,
+  );
+  const worst = last30.reduce(
+    (acc, h) => (h.delta < acc ? h.delta : acc),
+    Infinity,
+  );
 
   return (
-    <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-3">
-      <div className="flex items-baseline justify-between flex-wrap gap-2">
-        <h2 className="text-sm uppercase tracking-widest text-gray-400">
-          Rating history
-        </h2>
-        <span className="text-xs text-gray-500">
-          {history.length} match{history.length === 1 ? "" : "es"} ·{" "}
-          <span
-            className={
-              totalDelta > 0
-                ? "text-emerald-400"
-                : totalDelta < 0
-                  ? "text-red-400"
-                  : "text-gray-400"
-            }
+    <PanelCard
+      title={`ELO progression · last ${last30.length} matches`}
+      accent="#1ed3ff"
+      right={
+        <div className="flex">
+          <PillTab label="30D" active />
+          <PillTab label="Season" dim />
+          <PillTab label="All time" dim />
+        </div>
+      }
+    >
+      <div className="flex gap-6 items-start flex-wrap">
+        <div className="flex-1 min-w-[320px]">
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            className="w-full h-auto"
+            role="img"
+            aria-label="ELO over last 30 matches"
           >
-            {totalDelta > 0 ? "+" : ""}
-            {totalDelta} since start
-          </span>
-        </span>
-      </div>
-      <div className="overflow-x-auto">
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="w-full h-auto min-w-[480px]"
-          role="img"
-          aria-label="ELO over time"
-        >
-          {/* Starting-ELO reference line */}
-          <line
-            x1={PAD_X}
-            x2={W - PAD_X}
-            y1={startY}
-            y2={startY}
-            stroke="#3f3f46"
-            strokeDasharray="3 4"
-            strokeWidth="1"
-          />
-          <text
-            x={W - PAD_X + 4}
-            y={startY + 3}
-            fontSize="9"
-            fill="#6b7280"
-          >
-            {startingElo}
-          </text>
-
-          {/* Filled area under the curve */}
-          {areaPath && (
-            <path d={areaPath} fill="rgba(96, 165, 250, 0.12)" stroke="none" />
-          )}
-          {/* Curve */}
-          <path
-            d={path}
-            stroke="#60a5fa"
-            strokeWidth="2"
-            fill="none"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-          {/* Match dots — bigger when there's only one to plot so the
-              chart doesn't look like a single hairline. */}
-          {points.map((p, i) => (
+            <defs>
+              <linearGradient id="eloFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#1ed3ff" stopOpacity="0.5" />
+                <stop offset="100%" stopColor="#1ed3ff" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            {[0.25, 0.5, 0.75].map((p) => (
+              <line
+                key={p}
+                x1="0"
+                x2={W}
+                y1={H * p + 4}
+                y2={H * p + 4}
+                stroke="#262f3d"
+                strokeDasharray="2 4"
+                strokeWidth="1"
+              />
+            ))}
+            <path d={areaD} fill="url(#eloFill)" />
+            <path
+              d={pathD}
+              stroke="#1ed3ff"
+              strokeWidth="2"
+              fill="none"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            {/* peak marker */}
+            <g transform={`translate(${peak.x.toFixed(1)},${peak.y.toFixed(1)})`}>
+              <circle r="4" fill="#ffc24a" stroke="#0d1218" strokeWidth="2" />
+              <text
+                y="-10"
+                textAnchor="middle"
+                fontSize="10"
+                fontFamily="var(--font-num)"
+                fill="#ffc24a"
+                fontWeight="700"
+              >
+                PEAK {peak.eloAfter}
+              </text>
+            </g>
+            {/* current */}
             <circle
-              key={i}
-              cx={p.x}
-              cy={p.y}
-              r={points.length === 1 ? 5 : 3}
-              fill={p.isWinner ? "#34d399" : "#60a5fa"}
-              stroke="#0d0d12"
-              strokeWidth="1"
+              cx={last.x}
+              cy={last.y}
+              r="5"
+              fill="#1ed3ff"
+              stroke="#0d1218"
+              strokeWidth="2"
+            />
+            <text
+              x={last.x - 8}
+              y={last.y - 10}
+              textAnchor="end"
+              fontSize="11"
+              fontFamily="var(--font-num)"
+              fill="#ffffff"
+              fontWeight="700"
             >
-              <title>
-                {`${p.eloAfter} ELO (${p.delta >= 0 ? "+" : ""}${p.delta}) — ${p.createdAt.toLocaleDateString(
-                  "en-US",
-                  { month: "short", day: "numeric", year: "numeric" },
-                )}${p.isWinner ? " · win" : ""}`}
-              </title>
-            </circle>
-          ))}
+              {last.eloAfter}
+            </text>
+          </svg>
+        </div>
 
-          {/* Y-axis labels: min, max, current */}
-          <text
-            x={PAD_X - 6}
-            y={PAD_TOP + 8}
-            fontSize="9"
-            fill="#6b7280"
-            textAnchor="end"
-          >
-            {yMax}
-          </text>
-          <text
-            x={PAD_X - 6}
-            y={PAD_TOP + innerH + 3}
-            fontSize="9"
-            fill="#6b7280"
-            textAnchor="end"
-          >
-            {yMin}
-          </text>
-
-          {/* X-axis date labels: first, middle, last */}
-          {[0, Math.floor(points.length / 2), points.length - 1]
-            .filter((idx, i, arr) => arr.indexOf(idx) === i)
-            .map((idx) => {
-              const p = points[idx];
-              if (!p) return null;
-              return (
-                <text
-                  key={idx}
-                  x={p.x}
-                  y={H - 8}
-                  fontSize="9"
-                  fill="#6b7280"
-                  textAnchor="middle"
-                >
-                  {p.createdAt.toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </text>
-              );
-            })}
-        </svg>
+        <div className="flex flex-col gap-3 w-[140px] pt-2">
+          <SideStat
+            label="Net change"
+            value={`${totalDelta >= 0 ? "+" : ""}${totalDelta}`}
+            color={
+              totalDelta > 0
+                ? "var(--color-win)"
+                : totalDelta < 0
+                  ? "var(--color-lose)"
+                  : undefined
+            }
+          />
+          <SideStat
+            label="Best result"
+            value={`${best >= 0 ? "+" : ""}${best}`}
+          />
+          <SideStat
+            label="Worst result"
+            value={String(worst)}
+            color="var(--color-lose)"
+          />
+        </div>
       </div>
-    </section>
+    </PanelCard>
+  );
+}
+
+function SideStat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
+  return (
+    <div className="flex flex-col leading-tight">
+      <span className="font-head text-[9px] text-mute">{label}</span>
+      <span
+        className="font-mono text-xl font-bold mt-0.5"
+        style={color ? { color } : undefined}
+      >
+        {value}
+      </span>
+    </div>
   );
 }

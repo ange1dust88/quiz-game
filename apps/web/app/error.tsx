@@ -9,6 +9,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import Slash from "./components/ui/Slash";
 
 export default function GlobalError({
   error,
@@ -22,32 +23,42 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <div className="min-h-screen text-white flex items-center justify-center px-6">
-      <div className="max-w-md w-full bg-[#0d0d12]/90 border border-red-500/40 rounded-2xl p-8 flex flex-col gap-4 text-center">
-        <span className="text-[10px] uppercase tracking-widest text-red-300 font-bold">
-          Error
-        </span>
-        <h1 className="text-xl font-semibold">Something went wrong</h1>
-        <p className="text-sm text-gray-400 leading-relaxed">
+    <div className="min-h-screen bg-canvas text-white flex items-center justify-center px-6">
+      <div
+        className="max-w-md w-full bg-surface border p-8 flex flex-col items-center gap-4 text-center"
+        style={{
+          borderColor: "var(--color-stroke)",
+          borderTop: "3px solid var(--color-lose)",
+        }}
+      >
+        <Slash label="Error" color="var(--color-lose)" dark />
+        <h1 className="font-head text-2xl text-white">SOMETHING WENT WRONG</h1>
+        <p className="font-body text-sm text-mute leading-relaxed">
           We hit an unexpected error. You can try again — if it keeps
           happening, head back to the dashboard.
         </p>
         {process.env.NODE_ENV !== "production" && (
-          <pre className="text-[10px] text-left bg-[#1a1a1a] border border-[#333] rounded-md p-3 overflow-x-auto whitespace-pre-wrap text-red-200">
+          <pre className="font-mono text-[10px] text-left bg-canvas border border-stroke p-3 overflow-x-auto whitespace-pre-wrap text-lose w-full">
             {error.message}
             {error.digest && `\n\ndigest: ${error.digest}`}
           </pre>
         )}
-        <div className="flex gap-3 justify-center pt-2">
+        <div className="flex gap-2 justify-center pt-1">
           <button
             onClick={reset}
-            className="bg-blue-400 hover:bg-blue-500 transition-colors text-white px-5 py-2 rounded-lg text-sm font-medium"
+            className="font-head text-xs font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-5 py-2"
+            style={{ transform: "skewX(-10deg)" }}
           >
-            Try again
+            <span
+              className="inline-block"
+              style={{ transform: "skewX(10deg)" }}
+            >
+              Try again
+            </span>
           </button>
           <Link
             href="/dashboard"
-            className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors px-5 py-2 rounded-lg text-sm"
+            className="font-head text-xs text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-5 py-2"
           >
             Dashboard
           </Link>

@@ -52,6 +52,31 @@ model PlayerProfile {
   updatedAt   DateTime       @updatedAt
   games       PlayerInGame[]
   user        User           @relation(fields: [userId], references: [id])
+
+  friendRequestsSent     Friendship[] @relation("FriendshipRequester")
+  friendRequestsReceived Friendship[] @relation("FriendshipAddressee")
+}
+
+// Bidirectional friendship — direction is meaningful only while status =
+// "pending" (so we know who initiated). Once accepted, both sides
+// query symmetric `OR` and treat each other as friends. A single
+// (requester, addressee) ordered pair is unique; the application layer
+// is responsible for not creating a pair in the opposite direction.
+model Friendship {
+  id          String    @id @default(cuid())
+  requesterId String
+  addresseeId String
+  // "pending" | "accepted"
+  status      String    @default("pending")
+  createdAt   DateTime  @default(now())
+  acceptedAt  DateTime?
+
+  requester PlayerProfile @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee PlayerProfile @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId, status])
+  @@index([requesterId, status])
 }
 
 // Per-match record persisted by Colyseus at game_over. Replaces the

@@ -17,7 +17,7 @@ export default function Hexagon({
   value,
   size = 56,
   variant = "filled",
-  color = "#1f6feb",
+  color = "#1ed3ff",
   textColor,
 }: Props) {
   const width = size;

@@ -25,12 +25,12 @@ export default function HeaderNav({ tabs }: { tabs: Tab[] }) {
             className={`relative flex items-center px-4 sm:px-5 text-xs sm:text-sm font-bold uppercase tracking-widest transition-colors ${
               active
                 ? "text-white"
-                : "text-gray-500 hover:text-gray-300"
+                : "text-dim hover:text-mute"
             }`}
           >
             {t.label}
             {active && (
-              <span className="absolute bottom-0 left-3 right-3 h-[3px] bg-blue-500 rounded-t-sm" />
+              <span className="absolute bottom-0 left-3 right-3 h-[3px] bg-accent" />
             )}
           </Link>
         );

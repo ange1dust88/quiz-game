@@ -1,27 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+// FACEIT-style lobby. Header strip with match label + ready counter +
+// invite link + leave/start. Three-column body:
+//   - left   : match settings (mostly hardcoded; capital_style is the
+//              only real interactive choice today)
+//   - centre : 4 player slots (real data) + map preview (visual only)
+//   - right  : lobby chat (visual stub — no real chat backend yet)
+//
+// Realtime sync, join/leave/start actions, and match-choice writes stay
+// exactly as they were — only the UI shell is new.
+
+import { useEffect, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
-import { createClient } from "@/app/lib/supabase/client";
-import { StartGameButton } from "./StartGameButton";
-import { joinGame, leaveLobby } from "./actions";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/app/lib/supabase/client";
+import { joinGame, leaveLobby, setMatchChoice, startGame } from "./actions";
 import ResultsView from "./ResultsView";
-import MatchChoicesPicker from "./MatchChoicesPicker";
-import { findChoiceOption, MATCH_CHOICES } from "@quiz/shared/matchChoices";
+import { MATCH_CHOICES, findChoiceOption } from "@quiz/shared/matchChoices";
 import { PLAYER_COLORS } from "@/app/lib/constants";
-import Spinner from "@/app/components/ui/Spinner";
+import { EUROPE_PATHS } from "@/app/lib/europeSvg";
+import PanelCard from "@/app/components/ui/PanelCard";
+import PillTab from "@/app/components/ui/PillTab";
+import Slash from "@/app/components/ui/Slash";
+import Hexagon from "@/app/components/ui/Hexagon";
 import Avatar from "@/app/components/ui/Avatar";
-import Button from "@/app/components/ui/Button";
+import FlagTag from "@/app/components/ui/FlagTag";
+import Spinner from "@/app/components/ui/Spinner";
 
 interface Player {
   id: string;
   profileId: string;
   role: string;
+  // True when the player abandoned (left mid-match) — set from the
+  // MatchSnapshot's finalState by the lobby server component when the
+  // session has reached "completed". Empty otherwise.
+  abandoned?: boolean;
   profile: {
     nickname: string;
     avatarUrl?: string | null;
+    level: number;
+    elo: number;
+    country: string | null;
   };
   choices: { key: string; value: string }[];
 }
@@ -61,6 +81,8 @@ interface Props {
   };
 }
 
+const SLOT_COUNT = 4;
+
 export function LobbyContent({
   sessionId,
   initialSession,
@@ -69,7 +91,6 @@ export function LobbyContent({
   const [session, setSession] = useState(initialSession);
   const router = useRouter();
 
-  // Re-sync state when the server-rendered props refresh (e.g. via router.refresh()).
   useEffect(() => {
     setSession(initialSession);
   }, [initialSession]);
@@ -83,9 +104,6 @@ export function LobbyContent({
       setSession((prev) => ({ ...prev, ...freshSession }));
     };
 
-    // Main lobby channel — drives game start, player joins, etc. Kept on
-    // tables that are already in the Supabase realtime publication so this
-    // flow can never be blocked by a misconfigured new table.
     const main = supabase
       .channel(`room-${sessionId}`)
       .on(
@@ -118,9 +136,6 @@ export function LobbyContent({
       )
       .subscribe();
 
-    // Separate channel for pre-match choice sync. If `MatchChoice` isn't in
-    // the realtime publication yet, only this channel fails — the main lobby
-    // flow is unaffected.
     const choices = supabase
       .channel(`room-${sessionId}-choices`)
       .on(
@@ -140,20 +155,22 @@ export function LobbyContent({
       choices.unsubscribe();
     };
   }, [sessionId, router]);
-  const host = session?.players?.find((p) => p.role === "host");
+
   const players = session?.players ?? [];
-  const me = session?.players?.find((p) => p.profileId === currentUser.id);
+  const host = players.find((p) => p.role === "host");
+  const me = players.find((p) => p.profileId === currentUser.id);
   const isHost = me?.role === "host";
   const canStart = players.length >= 2;
-  // Pre-match colour matches the in-match seat colour: host first, then by
-  // joinedAt — which is the order returned by the page-level query.
+
+  const requiredChoiceKeys = MATCH_CHOICES.map((c) => c.key);
+  const playerReady = (p: Player) =>
+    requiredChoiceKeys.every((k) => p.choices.some((c) => c.key === k));
+  const readyCount = players.filter(playerReady).length;
+
   const colorForPlayer = (id: string) => {
     const idx = players.findIndex((p) => p.id === id);
     return PLAYER_COLORS[idx % PLAYER_COLORS.length] ?? "#666";
   };
-  const requiredChoiceKeys = MATCH_CHOICES.map((c) => c.key);
-  const playerReady = (p: Player) =>
-    requiredChoiceKeys.every((k) => p.choices.some((c) => c.key === k));
 
   if (session?.status === "completed") {
     return (
@@ -170,176 +187,135 @@ export function LobbyContent({
     );
   }
 
+  // Build a 4-slot array — fill from real players, then pad with nulls.
+  const slots: (Player | null)[] = Array.from({ length: SLOT_COUNT }, (_, i) =>
+    players[i] ?? null,
+  );
+
+  const mySelections: Record<string, string> = Object.fromEntries(
+    me?.choices?.map((c) => [c.key, c.value]) ?? [],
+  );
+
   return (
-    <div className="min-h-screen text-white px-4 py-10 flex flex-col items-center gap-4">
-      <div className="w-full max-w-lg flex">
-        <Link
-          href="/dashboard"
-          className="text-xs text-gray-400 hover:text-white transition-colors px-4 py-2 border border-[#4f4f4f] rounded-lg"
-        >
-          ← Back to dashboard
-        </Link>
-      </div>
-      <div className="bg-[#0d0d12]/90 backdrop-blur rounded-2xl p-2 w-full max-w-lg shadow-xl border border-[#4f4f4f]">
-        <div className="flex gap-4 items-center p-4 justify-between border-b border-[#2a2a2a]">
-          <div className="flex gap-3 items-center">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 448 512"
-              className="w-6 h-6 text-[#757575]"
-              fill="currentColor"
-            >
-              <path d="M224 248a120 120 0 1 0 0-240 120 120 0 1 0 0 240zm-29.7 56C95.8 304 16 383.8 16 482.3 16 498.7 29.3 512 45.7 512l356.6 0c16.4 0 29.7-13.3 29.7-29.7 0-98.5-79.8-178.3-178.3-178.3l-59.4 0z" />
-            </svg>
-            <h1 className="text-xl font-bold">
-              {host?.profile?.nickname || "Unknown"}'s lobby
-            </h1>
-          </div>
-          <StatusPill status={session?.status ?? "waiting"} />
-        </div>
+    <div className="min-h-[calc(100vh-4rem)] text-white bg-canvas flex flex-col">
+      <LobbyHeaderStrip
+        sessionId={sessionId}
+        hostNickname={host?.profile?.nickname ?? "Unknown"}
+        players={players.length}
+        ready={readyCount}
+        status={session.status}
+        isHost={isHost}
+        canStart={canStart}
+        isMember={Boolean(me)}
+      />
 
-        <div className="bg-[#1a1a1a] p-5 rounded-xl m-4 flex flex-col gap-5">
-          <div className="flex justify-between text-sm text-[#9a9a9a]">
-            <h2 className="text-lg font-semibold text-white">Players</h2>
-            <p>
-              Players: <span className="text-white">{players.length}</span>
-            </p>
-          </div>
+      <div className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_320px] gap-4">
+        <MatchSettingsPanel
+          sessionId={sessionId}
+          mySelections={mySelections}
+          isMember={Boolean(me)}
+        />
 
-          <div className="flex flex-col gap-2">
-            {players.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {players.map((p) => {
-                  const nick = p.profile?.nickname;
-                  const capStyle = p.choices.find(
-                    (c) => c.key === "capital_style",
-                  );
-                  const opt = capStyle
-                    ? findChoiceOption("capital_style", capStyle.value)
-                    : null;
-                  const color = colorForPlayer(p.id);
-                  const ready = playerReady(p);
-                  return (
-                    <div
-                      key={p.id}
-                      className="flex justify-between items-center gap-3 bg-[#242424] px-3 py-2 rounded-lg border-2"
-                      style={{ borderColor: `${color}44` }}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Avatar
-                          nickname={nick ?? "?"}
-                          avatarUrl={p.profile?.avatarUrl ?? null}
-                          size={32}
-                          shape="square"
-                          color={color}
-                        />
-                        <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                          {nick ? (
-                            <Link
-                              href={`/profile/${encodeURIComponent(nick)}`}
-                              target="_blank"
-                              className="text-sm font-semibold hover:underline truncate"
-                              style={{ color }}
-                            >
-                              {nick}
-                            </Link>
-                          ) : (
-                            <span className="text-sm font-semibold text-gray-400">
-                              No name
-                            </span>
-                          )}
-                          {p.role === "host" && (
-                            <span
-                              className="text-[9px] uppercase tracking-widest font-bold text-amber-300 border border-amber-400/40 rounded-full px-1.5 py-0.5"
-                              title="Host"
-                            >
-                              Host
-                            </span>
-                          )}
-                          {opt && (
-                            <span
-                              className="text-[10px] bg-[#1a1a1a] text-gray-300 border border-[#3a3a3a] rounded-full px-2 py-0.5"
-                              title={opt.description}
-                            >
-                              {opt.emoji} {opt.label}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <span
-                        className={`text-[10px] uppercase tracking-widest font-semibold shrink-0 ${
-                          ready ? "text-emerald-400" : "text-gray-500"
-                        }`}
-                      >
-                        {ready ? "Ready" : "Picking…"}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-[#888]">No players connected</p>
+        <div className="flex flex-col gap-4 min-w-0">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {slots.map((p, i) =>
+              p ? (
+                <PlayerSlotCard
+                  key={p.id}
+                  player={p}
+                  color={colorForPlayer(p.id)}
+                  ready={playerReady(p)}
+                  isMe={p.profileId === currentUser.id}
+                />
+              ) : (
+                <EmptySlotCard key={`empty-${i}`} slot={i + 1} />
+              ),
             )}
           </div>
 
-          {session?.status === "waiting" && me && (
-            <div className="flex flex-col gap-2">
-              <h2 className="text-lg font-semibold text-white">
-                Pre-match choices
-              </h2>
-              <MatchChoicesPicker
-                sessionId={session.id}
-                initialSelections={Object.fromEntries(
-                  me.choices.map((c) => [c.key, c.value]),
-                )}
-              />
-            </div>
-          )}
+          <MapPreviewPanel />
+        </div>
 
-          {session?.status === "waiting" && isHost && (
-            <>
-              {canStart ? (
-                <StartGameButton sessionId={session.id} />
-              ) : (
-                <div className="flex items-center gap-4">
-                  <StartGameButton sessionId={session.id} disabled={true} />
-                  <p className="text-red-400 text-sm">
-                    Need at least 2 players
-                  </p>
-                </div>
-              )}
-            </>
-          )}
+        <LobbyChatPanel />
+      </div>
 
-          {session?.status === "waiting" && !me && (
-            <Button
-              type="button"
-              variant="primary"
-              fullWidth
-              onClick={async () => {
-                await joinGame(session.id);
-              }}
+      {!me && session.status === "waiting" && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-20">
+          <JoinPrompt sessionId={sessionId} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Header strip ---------------------------------------------------------
+
+function LobbyHeaderStrip({
+  sessionId,
+  hostNickname,
+  players,
+  ready,
+  status,
+  isHost,
+  canStart,
+  isMember,
+}: {
+  sessionId: string;
+  hostNickname: string;
+  players: number;
+  ready: number;
+  status: string;
+  isHost: boolean;
+  canStart: boolean;
+  isMember: boolean;
+}) {
+  const statusLabel =
+    status === "active"
+      ? "In match"
+      : status === "completed"
+        ? "Finished"
+        : "Waiting";
+  const statusColor =
+    status === "active"
+      ? "var(--color-gold)"
+      : status === "completed"
+        ? "var(--color-win)"
+        : "var(--color-accent)";
+
+  return (
+    <div className="border-b border-stroke bg-panel">
+      <div className="max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-4 flex-wrap min-w-0">
+          <Slash label="Lobby" color="#1ed3ff" />
+          <h1 className="font-head text-2xl text-white truncate">
+            {hostNickname}'s lobby
+          </h1>
+          <span className="font-mono text-[11px] text-mute">
+            Match #{sessionId.slice(0, 8)}
+          </span>
+          <div className="hidden sm:block w-px h-5 bg-stroke" />
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-block w-2 h-2 rounded-full"
+              style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }}
+              aria-hidden
+            />
+            <span
+              className="font-head text-[11px]"
+              style={{ color: statusColor }}
             >
-              Join game
-            </Button>
-          )}
-
-          {session?.status === "active" && (
-            <div className="bg-green-900/40 border border-green-700 text-green-300 px-4 py-2 rounded-lg text-sm">
-              Game already started
-            </div>
-          )}
-
-          <div className="pt-2 border-t border-[#2a2a2a] flex flex-col items-start gap-1">
-            <p className="text-[#9a9a9a] text-sm">Invite friends</p>
-            <InviteRow sessionId={sessionId} />
+              {ready} / {players} ready · {statusLabel}
+            </span>
           </div>
+        </div>
 
-          {session?.status === "waiting" && me && (
-            <form action={leaveLobby} className="flex justify-end">
-              <input type="hidden" name="sessionId" value={session.id} />
-              <LeaveLobbyButton isHost={isHost} />
-            </form>
+        <div className="flex items-center gap-2 flex-wrap">
+          <InviteRow sessionId={sessionId} />
+          {isMember && status === "waiting" && (
+            <LeaveButtonForm sessionId={sessionId} isHost={isHost} />
+          )}
+          {isHost && status === "waiting" && (
+            <StartButton sessionId={sessionId} disabled={!canStart} />
           )}
         </div>
       </div>
@@ -347,24 +323,72 @@ export function LobbyContent({
   );
 }
 
-// useFormStatus only works inside a <form>, so the leave button has to be
-// its own component. Disabled + spinner while the server action runs so
-// the user doesn't smash Disband five times wondering if anything's
-// happening (DB transaction + redirect takes ~500ms in practice).
-function LeaveLobbyButton({ isHost }: { isHost: boolean }) {
+function InviteRow({ sessionId }: { sessionId: string }) {
+  const [copied, setCopied] = useState(false);
+  // Server-rendered URL is the absolute path (no origin). After mount we
+  // swap in the full origin-qualified URL so the copied value works when
+  // pasted into another browser. Storing in state keeps the first client
+  // render in sync with the server's, so React never sees a mismatch.
+  const [inviteUrl, setInviteUrl] = useState(`/lobby/${sessionId}`);
+  useEffect(() => {
+    setInviteUrl(`${window.location.origin}/lobby/${sessionId}`);
+  }, [sessionId]);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore (no clipboard API in some browsers / contexts)
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="flex items-center gap-2 bg-canvas border border-stroke px-3 py-2 hover:border-mute transition-colors max-w-[280px]"
+      title={inviteUrl}
+    >
+      <span className="font-head text-[10px] text-dim">Invite</span>
+      <span className="font-mono text-[11px] text-accent truncate">
+        {inviteUrl.replace(/^https?:\/\//, "")}
+      </span>
+      <span className="font-mono text-[11px] text-mute shrink-0">
+        {copied ? "✓" : "⧉"}
+      </span>
+    </button>
+  );
+}
+
+function LeaveButtonForm({
+  sessionId,
+  isHost,
+}: {
+  sessionId: string;
+  isHost: boolean;
+}) {
+  return (
+    <form action={leaveLobby}>
+      <input type="hidden" name="sessionId" value={sessionId} />
+      <LeaveButton isHost={isHost} />
+    </form>
+  );
+}
+
+function LeaveButton({ isHost }: { isHost: boolean }) {
   const { pending } = useFormStatus();
   const label = pending
     ? isHost
       ? "Disbanding…"
       : "Leaving…"
     : isHost
-      ? "Disband lobby"
-      : "Leave lobby";
+      ? "Disband"
+      : "Leave";
   return (
     <button
       type="submit"
       disabled={pending}
-      className="flex items-center gap-2 text-xs text-red-300 hover:text-red-200 hover:bg-red-500/10 disabled:opacity-60 disabled:cursor-wait transition-colors border border-red-500/30 hover:border-red-400/60 rounded-lg px-3 py-1.5"
+      className="flex items-center gap-1.5 font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute disabled:opacity-60 disabled:cursor-wait transition-colors px-4 py-2"
     >
       {pending && <Spinner size={10} />}
       {label}
@@ -372,72 +396,393 @@ function LeaveLobbyButton({ isHost }: { isHost: boolean }) {
   );
 }
 
-// Status pill at the top of the lobby card. Coloured by lifecycle:
-//   waiting   → blue   (open for joiners)
-//   active    → amber  (match in progress, pulsing dot)
-//   completed → green  (showing the post-match summary)
-function StatusPill({ status }: { status: string }) {
-  const styles: Record<string, { cls: string; dot: string; label: string }> = {
-    waiting: {
-      cls: "bg-blue-500/15 text-blue-200 border-blue-500/40",
-      dot: "bg-blue-400",
-      label: "Waiting",
-    },
-    active: {
-      cls: "bg-amber-500/15 text-amber-300 border-amber-400/40",
-      dot: "bg-amber-400 animate-pulse",
-      label: "In match",
-    },
-    completed: {
-      cls: "bg-emerald-500/15 text-emerald-300 border-emerald-400/40",
-      dot: "bg-emerald-400",
-      label: "Finished",
-    },
-  };
-  const s = styles[status] ?? styles.waiting;
+function StartButton({
+  sessionId,
+  disabled,
+}: {
+  sessionId: string;
+  disabled: boolean;
+}) {
   return (
-    <span
-      className={`text-xs uppercase tracking-wider border rounded-md px-3 py-1 inline-flex items-center gap-2 ${s.cls}`}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-      {s.label}
-    </span>
+    <form action={startGame}>
+      <input type="hidden" name="sessionId" value={sessionId} />
+      <button
+        type="submit"
+        disabled={disabled}
+        title={disabled ? "Need at least 2 players" : "Start the match"}
+        className="font-head text-sm font-extrabold text-white bg-accent hover:bg-accent-dim disabled:bg-dim disabled:cursor-not-allowed transition-colors px-6 py-2"
+        style={{ transform: "skewX(-10deg)" }}
+      >
+        <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
+          Start ▶
+        </span>
+      </button>
+    </form>
   );
 }
 
-// Copy-to-clipboard for the full invite URL. We construct it on the client
-// (window.location.origin) so it works both in dev and against whatever
-// origin the production deploy lands on, without needing an env var.
-function InviteRow({ sessionId }: { sessionId: string }) {
-  const [copied, setCopied] = useState(false);
-  const inviteUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/lobby/${sessionId}`
-      : `/lobby/${sessionId}`;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // ignore (e.g. http context with no clipboard API)
-    }
-  };
+function JoinPrompt({ sessionId }: { sessionId: string }) {
+  const [pending, startTransition] = useTransition();
   return (
-    <div className="flex items-center gap-2 bg-[#242424] px-3 py-2 rounded-lg border border-[#333] w-full">
-      <span className="text-xs text-[#ccc] truncate flex-1" title={inviteUrl}>
-        {inviteUrl}
+    <div className="bg-surface border border-stroke px-4 py-3 flex items-center gap-3 shadow-xl shadow-black/40">
+      <span className="font-body text-sm text-mute">
+        You're spectating — join the lobby to play.
       </span>
       <button
-        onClick={copy}
-        className={`text-xs px-2 py-1 rounded transition-colors shrink-0 ${
-          copied
-            ? "bg-emerald-500/20 text-emerald-300"
-            : "bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white"
-        }`}
+        type="button"
+        disabled={pending}
+        onClick={() => startTransition(() => joinGame(sessionId))}
+        className="font-head text-xs font-extrabold text-white bg-accent hover:bg-accent-dim disabled:opacity-60 transition-colors px-5 py-2"
+        style={{ transform: "skewX(-10deg)" }}
       >
-        {copied ? "Copied" : "Copy"}
+        <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
+          {pending ? "Joining…" : "Join lobby"}
+        </span>
       </button>
     </div>
+  );
+}
+
+// ---- Settings panel -------------------------------------------------------
+
+const HARDCODED_SETTINGS: { label: string; value: string; locked: boolean }[] = [
+  { label: "Game mode", value: "Classic 4P", locked: true },
+  { label: "Map", value: "Europe (full)", locked: true },
+  { label: "Question pool", value: "Geography · Hard", locked: true },
+  { label: "Capitals timer", value: "30s", locked: true },
+  { label: "Expand timer", value: "10s + 15s pick", locked: true },
+  { label: "War timer", value: "8s", locked: true },
+  { label: "Starting armies", value: "3", locked: true },
+  { label: "ELO range", value: "±200", locked: true },
+  { label: "Spectators", value: "Allowed", locked: true },
+];
+
+function MatchSettingsPanel({
+  sessionId,
+  mySelections,
+  isMember,
+}: {
+  sessionId: string;
+  mySelections: Record<string, string>;
+  isMember: boolean;
+}) {
+  return (
+    <PanelCard title="Match settings" accent="#1ed3ff" padded={false}>
+      <div className="flex flex-col">
+        {HARDCODED_SETTINGS.map((s) => (
+          <SettingRow key={s.label} {...s} />
+        ))}
+      </div>
+
+      {isMember && (
+        <div className="border-t border-stroke px-4 py-3 flex flex-col gap-2.5">
+          <span className="font-head text-[10px] text-dim">Your picks</span>
+          {MATCH_CHOICES.map((card) => (
+            <ChoiceRow
+              key={card.key}
+              sessionId={sessionId}
+              cardKey={card.key}
+              title={card.title}
+              options={card.options}
+              selected={mySelections[card.key] ?? null}
+            />
+          ))}
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+function SettingRow({
+  label,
+  value,
+  locked,
+}: {
+  label: string;
+  value: string;
+  locked: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-t border-stroke first:border-t-0">
+      <span className="font-head text-[10px] text-mute">{label}</span>
+      <span className="flex items-center gap-1 font-mono text-[11px] text-mute">
+        {value}
+        <span className="text-dim text-[10px]">{locked ? "🔒" : "▾"}</span>
+      </span>
+    </div>
+  );
+}
+
+function ChoiceRow({
+  sessionId,
+  cardKey,
+  title,
+  options,
+  selected,
+}: {
+  sessionId: string;
+  cardKey: string;
+  title: string;
+  options: { value: string; emoji: string; label: string; description: string }[];
+  selected: string | null;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [optimistic, setOptimistic] = useState(selected);
+
+  useEffect(() => {
+    setOptimistic(selected);
+  }, [selected]);
+
+  const handlePick = (value: string) => {
+    if (optimistic === value) return;
+    setOptimistic(value);
+    startTransition(() => {
+      setMatchChoice(sessionId, cardKey, value);
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="font-head text-[10px] text-mute">{title}</span>
+        {pending && (
+          <span className="font-mono text-[10px] text-dim italic">saving…</span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {options.map((opt) => {
+          const isPicked = optimistic === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => handlePick(opt.value)}
+              className="text-left px-2 py-1.5 border transition-colors"
+              style={{
+                borderColor: isPicked
+                  ? "var(--color-accent)"
+                  : "var(--color-stroke)",
+                background: isPicked
+                  ? "color-mix(in srgb, var(--color-accent) 12%, transparent)"
+                  : "transparent",
+              }}
+              title={opt.description}
+            >
+              <span className="font-head text-[11px] text-white flex items-center gap-1.5">
+                <span aria-hidden>{opt.emoji}</span>
+                {opt.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---- Player slots ---------------------------------------------------------
+
+function PlayerSlotCard({
+  player,
+  color,
+  ready,
+  isMe,
+}: {
+  player: Player;
+  color: string;
+  ready: boolean;
+  isMe: boolean;
+}) {
+  const choice = player.choices.find((c) => c.key === "capital_style");
+  const choiceOpt = choice ? findChoiceOption("capital_style", choice.value) : null;
+  const isHost = player.role === "host";
+
+  return (
+    <div
+      className="relative bg-surface border flex flex-col overflow-hidden"
+      style={{ borderColor: ready ? "var(--color-win)" : "var(--color-stroke)" }}
+    >
+      <span
+        className="absolute top-0 left-0 right-0 h-[3px]"
+        style={{ background: color }}
+        aria-hidden
+      />
+
+      <div className="px-3 pt-5 pb-3 flex flex-col items-center gap-1.5 border-b border-stroke text-center">
+        <div className="relative inline-block">
+          <Avatar
+            nickname={player.profile.nickname}
+            avatarUrl={player.profile.avatarUrl ?? null}
+            size={64}
+            shape="square"
+            color={color}
+          />
+          <div className="absolute -right-2 -bottom-2">
+            <Hexagon
+              value={player.profile.level}
+              size={28}
+              color="#1ed3ff"
+              textColor="#ffffff"
+            />
+          </div>
+        </div>
+        <Link
+          href={`/profile/${encodeURIComponent(player.profile.nickname)}`}
+          target="_blank"
+          className="font-head text-sm text-white hover:text-accent transition-colors mt-1 truncate max-w-full"
+        >
+          {player.profile.nickname.toUpperCase()}
+          {isMe && (
+            <span className="font-mono text-[10px] text-dim ml-1">(you)</span>
+          )}
+        </Link>
+        <div className="flex items-center gap-2">
+          <FlagTag code={player.profile.country} />
+          <span className="font-mono text-[11px] text-accent font-bold">
+            {player.profile.elo.toLocaleString()} ELO
+          </span>
+        </div>
+        {isHost && (
+          <div className="mt-1">
+            <Slash label="Host" color="#ffc24a" dark />
+          </div>
+        )}
+      </div>
+
+      <div className="px-3 py-2.5 flex flex-col gap-1">
+        <span className="font-head text-[9px] text-dim">Capital</span>
+        <span className="font-mono text-[11px] text-mute">
+          {choiceOpt ? `${choiceOpt.emoji} ${choiceOpt.label}` : "Not picked"}
+        </span>
+      </div>
+
+      <div
+        className="font-head text-[11px] text-center py-2 mt-auto border-t border-stroke"
+        style={{
+          background: ready
+            ? "color-mix(in srgb, var(--color-win) 15%, transparent)"
+            : "var(--color-panel)",
+          color: ready ? "var(--color-win)" : "var(--color-mute)",
+        }}
+      >
+        {ready ? "✓ Ready" : "Picking…"}
+      </div>
+    </div>
+  );
+}
+
+function EmptySlotCard({ slot }: { slot: number }) {
+  return (
+    <div className="bg-panel border border-dashed border-stroke flex flex-col items-center justify-center gap-3 py-8 text-center">
+      <Hexagon
+        value="?"
+        size={36}
+        variant="outlined"
+        color="var(--color-dim)"
+        textColor="var(--color-dim)"
+      />
+      <span className="font-head text-[11px] text-dim">Slot {slot}</span>
+      <span className="font-mono text-[10px] text-dim">Waiting for player…</span>
+    </div>
+  );
+}
+
+// ---- Map preview ----------------------------------------------------------
+
+function MapPreviewPanel() {
+  return (
+    <PanelCard
+      title="Map preview · Europe"
+      accent="#7c8aff"
+      padded={false}
+      right={
+        <span className="font-mono text-[10px] text-dim">
+          12 countries · 4 starting capitals
+        </span>
+      }
+    >
+      <div className="relative bg-panel h-[220px] px-3 py-3">
+        <svg
+          viewBox="320 320 400 310"
+          preserveAspectRatio="xMidYMid meet"
+          className="w-full h-full"
+        >
+          {EUROPE_PATHS.map((c) => (
+            <path
+              key={c.svgId}
+              d={c.d}
+              fill="var(--color-surface-hi)"
+              stroke="var(--color-canvas)"
+              strokeWidth="0.4"
+            />
+          ))}
+        </svg>
+        <div className="absolute left-4 bottom-3 font-mono text-[10px] text-dim">
+          Capitals will be auto-assigned by ELO order
+        </div>
+      </div>
+    </PanelCard>
+  );
+}
+
+// ---- Chat panel (visual stub — no backend yet) ----------------------------
+
+const STUB_CHAT: { who: string; text: string; time: string; system?: boolean }[] = [
+  { who: "System", text: "Lobby created — waiting for players.", time: "--:--", system: true },
+  { who: "System", text: "Real chat is coming with the friends release.", time: "--:--", system: true },
+];
+
+function LobbyChatPanel() {
+  return (
+    <PanelCard
+      title="Lobby chat"
+      accent="#3fcf6c"
+      padded={false}
+      right={
+        <div className="flex">
+          <PillTab label="Chat" active />
+          <PillTab label="Team" dim />
+        </div>
+      }
+    >
+      <div className="flex flex-col h-[520px]">
+        <div className="flex-1 px-3 py-3 flex flex-col gap-2 overflow-auto">
+          {STUB_CHAT.map((msg, i) => (
+            <div key={i} className="font-body text-xs leading-snug">
+              {msg.system ? (
+                <div className="text-center text-dim font-mono text-[11px]">
+                  — {msg.text} —
+                </div>
+              ) : (
+                <>
+                  <span className="font-head text-[10px] text-accent">
+                    {msg.who.toUpperCase()}
+                  </span>
+                  <span className="font-mono text-[10px] text-dim ml-2">
+                    {msg.time}
+                  </span>
+                  <div className="text-white mt-0.5">{msg.text}</div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="border-t border-stroke px-2 py-2 flex gap-1.5">
+          <input
+            type="text"
+            placeholder="Say something…"
+            disabled
+            className="flex-1 bg-canvas border border-stroke px-2.5 py-1.5 font-body text-xs text-mute placeholder:text-dim outline-none disabled:cursor-not-allowed"
+          />
+          <button
+            type="button"
+            disabled
+            className="font-head text-[11px] text-mute bg-stroke px-3 py-1.5 cursor-not-allowed"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </PanelCard>
   );
 }

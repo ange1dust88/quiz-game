@@ -1,95 +1,77 @@
 // LIVE matches sidebar card. Lists ongoing games with a Watch CTA.
-// Today the data is mocked — there's no spectator endpoint yet and the
-// "watch" link is disabled. Once we expose Colyseus matchmaker stats
-// over HTTP we can drop the placeholders.
+// Data is mocked — once we expose Colyseus matchmaker stats over HTTP
+// the rows fill from real sessions and Watch wires into spectator mode.
 
-import Link from "next/link";
+import PanelCard from "@/app/components/ui/PanelCard";
 
 type LiveRow = {
   id: string;
   mode: string;
-  stageLabel: string;
+  phase: "WAR" | "EXPAND" | "CAPITALS";
   players: number;
-  age: string;
-  accent: string;
+  time: string;
 };
 
-const MOCK_LIVE: LiveRow[] = [
-  {
-    id: "x6f8-1a",
-    mode: "Tournament",
-    stageLabel: "War",
-    players: 4,
-    age: "08:12",
-    accent: "text-red-400",
-  },
-  {
-    id: "x6f8-22",
-    mode: "Classic 4P",
-    stageLabel: "Expand",
-    players: 4,
-    age: "03:44",
-    accent: "text-blue-300",
-  },
-  {
-    id: "x6f8-13",
-    mode: "Duel 1V1",
-    stageLabel: "Capitals",
-    players: 2,
-    age: "00:18",
-    accent: "text-emerald-300",
-  },
+const MOCK: LiveRow[] = [
+  { id: "x6f8-1a", mode: "Tournament", phase: "WAR", players: 4, time: "08:12" },
+  { id: "x6f8-22", mode: "Classic 4P", phase: "EXPAND", players: 4, time: "03:44" },
+  { id: "x6f8-13", mode: "Duel 1v1", phase: "CAPITALS", players: 2, time: "00:18" },
 ];
 
-export default function LiveMatches() {
-  const total = 1402;
-  return (
-    <section className="rounded-2xl border border-[#1f2230] bg-[#0d1117]">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-[#1f2230]">
-        <h2 className="text-xs uppercase tracking-widest font-bold flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          Live · {total.toLocaleString()} matches
-        </h2>
-      </header>
+const PHASE_COLOR: Record<LiveRow["phase"], string> = {
+  WAR: "var(--color-lose)",
+  EXPAND: "var(--color-accent)",
+  CAPITALS: "var(--color-blue2)",
+};
 
-      <ul className="flex flex-col">
-        {MOCK_LIVE.map((m) => (
-          <li
+export default function LiveMatches() {
+  return (
+    <PanelCard title="Live · 1,402 matches" accent="#ff4244" padded={false}>
+      <div>
+        {MOCK.map((m) => (
+          <div
             key={m.id}
-            className="flex items-center gap-3 px-4 py-2.5 border-t border-[#1f2230] first:border-t-0"
+            className="grid grid-cols-[1fr_auto] gap-2 px-3 py-2.5 border-t border-stroke first:border-t-0 items-center"
           >
-            <div className="flex flex-col leading-tight min-w-0 flex-1">
-              <span className="text-xs font-bold uppercase tracking-widest truncate">
-                {m.mode}
-              </span>
-              <span className={`text-[10px] uppercase tracking-widest font-bold ${m.accent}`}>
-                {m.stageLabel}
-                <span className="text-gray-600 font-mono ml-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-lose"
+                  style={{ boxShadow: "0 0 6px var(--color-lose)" }}
+                />
+                <span className="font-head text-[11px] text-white">
+                  {m.mode}
+                </span>
+                <span className="font-mono text-[10px] text-dim ml-auto">
+                  {m.time}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <span
+                  className="font-head text-[10px]"
+                  style={{ color: PHASE_COLOR[m.phase] }}
+                >
+                  {m.phase}
+                </span>
+                <span className="font-mono text-[10px] text-dim">
                   {m.players}P · #{m.id}
                 </span>
-              </span>
+              </div>
             </div>
-            <span className="text-[11px] text-gray-400 font-mono shrink-0">
-              {m.age}
-            </span>
             <button
               type="button"
               disabled
               title="Spectator mode coming soon"
-              className="text-[10px] uppercase tracking-widest font-bold border border-[#1f2230] text-gray-500 px-3 py-1 rounded-md cursor-not-allowed"
+              className="font-head text-[10px] text-mute border border-stroke px-2.5 py-1 cursor-not-allowed"
             >
               Watch
             </button>
-          </li>
+          </div>
         ))}
-      </ul>
-
-      <Link
-        href="/play"
-        className="block text-center text-[10px] uppercase tracking-widest text-gray-500 hover:text-white border-t border-[#1f2230] py-2 transition-colors"
-      >
+      </div>
+      <div className="text-center font-head text-[10px] text-mute hover:text-white border-t border-stroke py-2.5 cursor-pointer transition-colors">
         View all →
-      </Link>
-    </section>
+      </div>
+    </PanelCard>
   );
 }

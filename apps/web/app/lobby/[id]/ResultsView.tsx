@@ -1,10 +1,17 @@
 "use client";
 
+// FACEIT-style post-match summary. Hero strip with winner banner (medal
+// accent on the border) + sharp standings table with per-player aggregate
+// stats pulled from the event log.
+
 import Link from "next/link";
 import { PLAYER_COLORS } from "@/app/lib/constants";
+import PanelCard from "@/app/components/ui/PanelCard";
+import Slash from "@/app/components/ui/Slash";
 
 type Player = {
   id: string;
+  abandoned?: boolean;
   profile: { nickname: string };
 };
 
@@ -65,7 +72,6 @@ export default function ResultsView({
 
   const totalPoints = countries.reduce((s, c) => s + (c.points ?? 0), 0);
 
-  // Per-player stats from event log.
   const stats = new Map<
     string,
     {
@@ -95,7 +101,9 @@ export default function ResultsView({
 
   const winner = winnerId ? players.find((p) => p.id === winnerId) : null;
   const winnerColor = winner
-    ? PLAYER_COLORS[players.findIndex((p) => p.id === winner.id) % PLAYER_COLORS.length]
+    ? PLAYER_COLORS[
+        players.findIndex((p) => p.id === winner.id) % PLAYER_COLORS.length
+      ]
     : null;
   const isWinnerMe = winner?.id === currentPlayerId;
   const totalCountries = countries.length;
@@ -106,65 +114,69 @@ export default function ResultsView({
       ? Math.round((winnerLands / totalCountries) * 100)
       : 0;
 
-  return (
-    <div className="min-h-screen text-white flex flex-col">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-[#1f1f24] bg-[#0a0a0f]/80 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-400 via-yellow-300 to-teal-400" />
-          <div className="leading-tight">
-            <div className="text-sm font-semibold">EuropeQuiz</div>
-            <div className="text-[10px] uppercase tracking-widest text-gray-500">
-              Match · Final
-            </div>
-          </div>
-        </div>
-        <Link
-          href="/dashboard"
-          className="text-xs text-gray-400 hover:text-white transition-colors px-4 py-2 border border-[#4f4f4f] rounded-lg"
-        >
-          Back to dashboard
-        </Link>
-      </header>
+  const heroAccent = isWinnerMe ? "var(--color-win)" : "var(--color-gold)";
 
-      <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-10 flex flex-col gap-8">
-        {/* Winner banner */}
-        <section className="bg-[#14141a] border border-emerald-400/40 rounded-2xl p-8 flex flex-col items-center text-center gap-3">
-          <div className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
-            Game over
-          </div>
+  return (
+    <div className="min-h-[calc(100vh-4rem)] bg-canvas text-white flex flex-col">
+      <section
+        className="relative overflow-hidden border-b border-stroke bg-gradient-to-br from-surface-hi via-panel to-canvas"
+        style={{ borderTop: `3px solid ${heroAccent}` }}
+      >
+        <div
+          className="absolute right-[-80px] top-0 bottom-0 w-[200px] bg-accent/10"
+          style={{ transform: "skewX(-12deg)" }}
+          aria-hidden
+        />
+        <div className="relative max-w-[1600px] mx-auto px-4 sm:px-6 py-8 flex flex-col items-center text-center gap-3">
+          <Slash
+            label={isWinnerMe ? "Victory" : "Game over"}
+            color={heroAccent}
+            dark
+          />
           {winner ? (
             <>
               <div
-                className="w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold text-black"
-                style={{ backgroundColor: winnerColor ?? "#666" }}
+                className="w-16 h-16 flex items-center justify-center text-2xl font-bold text-black border-2"
+                style={{
+                  backgroundColor: winnerColor ?? "#666",
+                  borderColor: heroAccent,
+                }}
               >
                 {winner.profile.nickname.charAt(0).toUpperCase()}
               </div>
-              <h1 className="text-3xl font-bold leading-tight">
+              <h1
+                className="font-head text-white leading-none"
+                style={{ fontSize: "clamp(36px, 5vw, 56px)" }}
+              >
                 {isWinnerMe
-                  ? `You win, ${winner.profile.nickname}!`
-                  : `${winner.profile.nickname} wins`}
+                  ? `YOU WIN, ${winner.profile.nickname.toUpperCase()}!`
+                  : `${winner.profile.nickname.toUpperCase()} WINS`}
               </h1>
-              <p className="text-sm text-gray-400">
-                {winnerPoints.toLocaleString()} points ·{" "}
-                {dominationPct}% of Europe · {winnerLands}{" "}
+              <p className="font-mono text-sm text-mute">
+                {winnerPoints.toLocaleString()} points · {dominationPct}% of
+                Europe · {winnerLands}{" "}
                 {winnerLands === 1 ? "territory" : "territories"}
               </p>
             </>
           ) : (
-            <h1 className="text-3xl font-bold leading-tight">Match ended</h1>
+            <h1 className="font-head text-4xl text-white">MATCH ENDED</h1>
           )}
-          <p className="text-xs text-gray-500 uppercase tracking-widest mt-2">
-            Round {Math.min(warRound, maxRounds)} / {maxRounds} · Match {sessionId.slice(-6)}
+          <p className="font-mono text-[11px] text-dim mt-2">
+            Round {Math.min(warRound, maxRounds)} / {maxRounds} · Match #
+            {sessionId.slice(-6)}
           </p>
-        </section>
+          <Link
+            href="/dashboard"
+            className="font-head text-xs text-white bg-accent hover:bg-accent-dim transition-colors px-5 py-2 mt-3"
+          >
+            Back to dashboard
+          </Link>
+        </div>
+      </section>
 
-        {/* Standings */}
-        <section className="bg-[#14141a] border border-[#1f1f24] rounded-2xl p-6 flex flex-col gap-4">
-          <div className="text-xs uppercase tracking-widest text-gray-500">
-            Final standings
-          </div>
-          <div className="flex flex-col gap-2">
+      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-6">
+        <PanelCard title="Final standings" accent="#1ed3ff" padded={false}>
+          <div>
             {ranking.map((row, idx) => {
               const s = stats.get(row.player.id) ?? {
                 capitalsTaken: 0,
@@ -174,6 +186,7 @@ export default function ResultsView({
               };
               const isYou = row.player.id === currentPlayerId;
               const isWinner = row.player.id === winnerId;
+              const isLeaver = Boolean(row.player.abandoned);
               const initial = row.player.profile.nickname
                 .charAt(0)
                 .toUpperCase();
@@ -183,20 +196,46 @@ export default function ResultsView({
                 totalPoints > 0
                   ? Math.round((points / totalPoints) * 100)
                   : 0;
+              const rankColor =
+                idx === 0
+                  ? "var(--color-gold)"
+                  : idx === 1
+                    ? "#bdc1c8"
+                    : idx === 2
+                      ? "#c08458"
+                      : "var(--color-mute)";
               return (
                 <div
                   key={row.player.id}
-                  className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors ${
-                    isWinner
-                      ? "border-emerald-400/40 bg-emerald-400/5"
-                      : "border-[#1f1f24] bg-[#1a1a20]"
-                  }`}
+                  className="relative flex items-center gap-3 px-4 py-3 border-t border-stroke first:border-t-0"
+                  style={{
+                    background: isWinner
+                      ? "color-mix(in srgb, var(--color-win) 8%, transparent)"
+                      : isLeaver
+                        ? "color-mix(in srgb, var(--color-lose) 6%, transparent)"
+                        : undefined,
+                    opacity: isLeaver ? 0.7 : 1,
+                  }}
                 >
-                  <span className="text-xs text-gray-500 font-mono w-6 text-center">
+                  {(isWinner || isLeaver) && (
+                    <span
+                      className="absolute left-0 top-0 bottom-0 w-[3px]"
+                      style={{
+                        background: isWinner
+                          ? "var(--color-win)"
+                          : "var(--color-lose)",
+                      }}
+                      aria-hidden
+                    />
+                  )}
+                  <span
+                    className="font-head text-sm w-7 text-center"
+                    style={{ color: rankColor }}
+                  >
                     #{idx + 1}
                   </span>
                   <div
-                    className="w-10 h-10 rounded-md flex items-center justify-center text-sm font-bold shrink-0 text-black"
+                    className="w-10 h-10 flex items-center justify-center text-sm font-bold shrink-0 text-black"
                     style={{ backgroundColor: row.color }}
                   >
                     {initial}
@@ -205,33 +244,40 @@ export default function ResultsView({
                     <div className="flex items-baseline gap-2">
                       <Link
                         href={`/profile/${encodeURIComponent(row.player.profile.nickname)}`}
-                        className="text-sm font-semibold truncate hover:text-blue-400 hover:underline transition-colors"
+                        className="font-head text-xs text-white hover:text-accent truncate transition-colors"
                       >
-                        {row.player.profile.nickname}
+                        {row.player.profile.nickname.toUpperCase()}
                       </Link>
                       {isYou && (
-                        <span className="text-[10px] text-gray-500">you</span>
+                        <span className="font-head text-[9px] text-accent">
+                          YOU
+                        </span>
                       )}
                       {isWinner && (
-                        <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
-                          winner
+                        <span className="font-head text-[9px] text-win">
+                          WINNER
+                        </span>
+                      )}
+                      {isLeaver && (
+                        <span className="font-head text-[9px] text-lose">
+                          LEAVER
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-gray-500">
+                    <div className="font-mono text-[11px] text-dim mt-0.5">
                       {points.toLocaleString()} pts ·{" "}
                       {lands} {lands === 1 ? "land" : "lands"} · {sharePct}%
                     </div>
                   </div>
-                  <div className="hidden sm:flex items-center gap-4 text-[11px] text-gray-400">
+                  <div className="hidden sm:flex items-center gap-3">
                     <Stat label="Rounds" value={s.roundsWon} />
                     <Stat label="Attacks" value={s.attacksWon} />
                     <Stat label="Defended" value={s.defended} />
                     <Stat label="Capitals" value={s.capitalsTaken} />
                   </div>
-                  <div className="w-20 h-1 bg-[#1f1f24] rounded-full overflow-hidden shrink-0">
+                  <div className="w-20 h-1 bg-panel overflow-hidden shrink-0">
                     <div
-                      className="h-full rounded-full"
+                      className="h-full"
                       style={{
                         width: `${Math.max(sharePct, 4)}%`,
                         backgroundColor: row.color,
@@ -242,7 +288,7 @@ export default function ResultsView({
               );
             })}
           </div>
-        </section>
+        </PanelCard>
       </main>
     </div>
   );
@@ -251,10 +297,8 @@ export default function ResultsView({
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex flex-col items-center min-w-[42px]">
-      <span className="text-white font-semibold text-sm">{value}</span>
-      <span className="text-[9px] uppercase tracking-widest text-gray-600">
-        {label}
-      </span>
+      <span className="font-mono text-sm font-bold text-white">{value}</span>
+      <span className="font-head text-[9px] text-dim">{label}</span>
     </div>
   );
 }

@@ -1,3 +1,7 @@
+// FACEIT-style settings screen. Hero strip (Slash badge + heading) +
+// research disclaimer + avatar moderation card + a single sharp-bordered
+// edit-profile form broken into PanelCard sections.
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@quiz/db";
@@ -9,6 +13,8 @@ import {
   OCCUPATION_OPTIONS,
   PERSONALITY_TRAITS,
 } from "@/app/lib/profileOptions";
+import PanelCard from "@/app/components/ui/PanelCard";
+import Slash from "@/app/components/ui/Slash";
 import { updateSettings } from "./actions";
 import AvatarUploadSection from "./AvatarUploadSection";
 
@@ -33,34 +39,47 @@ export default async function SettingsPage() {
   });
 
   return (
-    <div className="min-h-screen text-white">
-      <div className="max-w-3xl mx-auto px-8 py-10 flex flex-col gap-6">
-        <header className="flex items-center justify-between">
+    <div className="min-h-[calc(100vh-4rem)] text-white bg-canvas">
+      <section className="relative overflow-hidden border-b border-stroke bg-gradient-to-br from-surface-hi via-panel to-canvas">
+        <div
+          className="absolute right-[-80px] top-0 bottom-0 w-[200px] bg-accent/10"
+          style={{ transform: "skewX(-12deg)" }}
+          aria-hidden
+        />
+        <div className="relative max-w-[1600px] mx-auto px-4 sm:px-6 py-6 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex flex-col gap-2">
+            <Slash label="Settings" />
+            <h1 className="font-head text-4xl text-white leading-none">
+              EDIT PROFILE
+            </h1>
+          </div>
           <Link
             href={`/profile/${encodeURIComponent(profile.nickname)}`}
-            className="text-xs text-gray-400 hover:text-white transition-colors px-4 py-2 border border-[#4f4f4f] rounded-lg"
+            className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2"
           >
             ← Back to profile
           </Link>
-          <span className="text-xs text-gray-500 uppercase tracking-widest">
-            Settings
-          </span>
-        </header>
+        </div>
+      </section>
 
-        <section className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-sm text-blue-100 flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-widest text-blue-300 font-bold">
-            Why we ask
-          </span>
-          <div className="flex flex-col gap-1">
-            <span className="font-semibold">Help our diploma research</span>
-            <span className="text-blue-200/80 text-xs leading-relaxed">
-              These fields help us train an analytical model that better
-              understands player behavior — used in the diploma research
-              accompanying this project. <strong>All fields are optional</strong>{" "}
-              and visible only to you. Thanks for sharing if you choose to!
-            </span>
-          </div>
-        </section>
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-4">
+        <div
+          className="border px-4 py-3 flex flex-col gap-1"
+          style={{
+            background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
+            borderColor: "color-mix(in srgb, var(--color-accent) 35%, transparent)",
+          }}
+        >
+          <span className="font-head text-[10px] text-accent">Why we ask</span>
+          <p className="font-body text-xs text-mute leading-relaxed">
+            These fields help train an analytical model for the diploma
+            research accompanying this project.{" "}
+            <span className="text-white font-semibold">
+              All fields are optional
+            </span>{" "}
+            and visible only to you.
+          </p>
+        </div>
 
         <AvatarUploadSection
           nickname={profile.nickname}
@@ -68,131 +87,136 @@ export default async function SettingsPage() {
           latestSubmission={latestSubmission}
         />
 
-        <form
-          action={updateSettings}
-          className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-6"
-        >
-          <h1 className="text-xl font-semibold">Edit your profile</h1>
-
-          <FormSection title="About you">
-            <Field label="Birth year">
-              <input
-                type="number"
-                name="birthYear"
-                min={1900}
-                max={new Date().getFullYear()}
-                placeholder="e.g. 1998"
-                defaultValue={profile.birthYear ?? ""}
-                className="bg-[#0d0d12] border border-[#4f4f4f] focus:border-blue-400 focus:outline-none rounded-md px-3 py-2 text-sm w-full"
-              />
-            </Field>
-
-            <Field label="Gender">
-              <Select
-                name="gender"
-                value={profile.gender}
-                options={GENDER_OPTIONS}
-              />
-            </Field>
-          </FormSection>
-
-          <FormSection title="Location">
-            <Field label="Country">
-              <input
-                type="text"
-                name="country"
-                placeholder="e.g. Poland"
-                maxLength={60}
-                defaultValue={profile.country ?? ""}
-                className="bg-[#0d0d12] border border-[#4f4f4f] focus:border-blue-400 focus:outline-none rounded-md px-3 py-2 text-sm w-full"
-              />
-            </Field>
-
-            <Field label="City">
-              <input
-                type="text"
-                name="city"
-                placeholder="e.g. Warsaw"
-                maxLength={80}
-                defaultValue={profile.city ?? ""}
-                className="bg-[#0d0d12] border border-[#4f4f4f] focus:border-blue-400 focus:outline-none rounded-md px-3 py-2 text-sm w-full"
-              />
-            </Field>
-          </FormSection>
-
-          <FormSection title="Education & work">
-            <Field label="Education level">
-              <Select
-                name="education"
-                value={profile.education}
-                options={EDUCATION_OPTIONS}
-              />
-            </Field>
-
-            <Field label="Occupation / field">
-              <Select
-                name="occupation"
-                value={profile.occupation}
-                options={OCCUPATION_OPTIONS}
-              />
-            </Field>
-          </FormSection>
-
-          <FormSection title="Self-assessment" columns={1}>
+        <form action={updateSettings} className="flex flex-col gap-4">
+          <PanelCard title="About you" accent="#1ed3ff">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="MBTI personality type">
-                <Select
-                  name="mbti"
-                  value={profile.mbti}
-                  options={MBTI_OPTIONS}
-                />
-              </Field>
-
-              <Field label="IQ score (if known)">
+              <Field label="Birth year">
                 <input
                   type="number"
-                  name="iqScore"
-                  min={50}
-                  max={200}
-                  placeholder="e.g. 120"
-                  defaultValue={profile.iqScore ?? ""}
-                  className="bg-[#0d0d12] border border-[#4f4f4f] focus:border-blue-400 focus:outline-none rounded-md px-3 py-2 text-sm w-full"
+                  name="birthYear"
+                  min={1900}
+                  max={new Date().getFullYear()}
+                  placeholder="e.g. 1998"
+                  defaultValue={profile.birthYear ?? ""}
+                  className={INPUT_CLS}
+                />
+              </Field>
+              <Field label="Gender">
+                <Select
+                  name="gender"
+                  value={profile.gender}
+                  options={GENDER_OPTIONS}
                 />
               </Field>
             </div>
+          </PanelCard>
 
-            <Field label="Personality traits — pick any that fit">
-              <div className="flex flex-wrap gap-2">
-                {PERSONALITY_TRAITS.map((t) => (
-                  <label key={t.value} className="cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      name="trait"
-                      value={t.value}
-                      defaultChecked={checkedTraits.has(t.value)}
-                      className="peer sr-only"
-                    />
-                    <span className="inline-block text-xs px-3 py-1.5 rounded-full border border-[#4f4f4f] bg-[#0d0d12] text-gray-300 peer-checked:bg-blue-500/20 peer-checked:border-blue-400 peer-checked:text-blue-100 hover:border-[#6f6f6f] transition-colors">
-                      {t.label}
-                    </span>
-                  </label>
-                ))}
+          <PanelCard title="Location" accent="#7c8aff">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Country">
+                <input
+                  type="text"
+                  name="country"
+                  placeholder="e.g. Poland"
+                  maxLength={60}
+                  defaultValue={profile.country ?? ""}
+                  className={INPUT_CLS}
+                />
+              </Field>
+              <Field label="City">
+                <input
+                  type="text"
+                  name="city"
+                  placeholder="e.g. Warsaw"
+                  maxLength={80}
+                  defaultValue={profile.city ?? ""}
+                  className={INPUT_CLS}
+                />
+              </Field>
+            </div>
+          </PanelCard>
+
+          <PanelCard title="Education & work" accent="#3fcf6c">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Education level">
+                <Select
+                  name="education"
+                  value={profile.education}
+                  options={EDUCATION_OPTIONS}
+                />
+              </Field>
+              <Field label="Occupation / field">
+                <Select
+                  name="occupation"
+                  value={profile.occupation}
+                  options={OCCUPATION_OPTIONS}
+                />
+              </Field>
+            </div>
+          </PanelCard>
+
+          <PanelCard title="Self-assessment" accent="#ff6cf3">
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Field label="MBTI personality type">
+                  <Select
+                    name="mbti"
+                    value={profile.mbti}
+                    options={MBTI_OPTIONS}
+                  />
+                </Field>
+                <Field label="IQ score (if known)">
+                  <input
+                    type="number"
+                    name="iqScore"
+                    min={50}
+                    max={200}
+                    placeholder="e.g. 120"
+                    defaultValue={profile.iqScore ?? ""}
+                    className={INPUT_CLS}
+                  />
+                </Field>
               </div>
-            </Field>
-          </FormSection>
 
-          <div className="flex justify-end gap-3 pt-2 border-t border-[#2a2a32]">
+              <Field label="Personality traits — pick any that fit">
+                <div className="flex flex-wrap gap-1.5">
+                  {PERSONALITY_TRAITS.map((t) => (
+                    <label key={t.value} className="cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        name="trait"
+                        value={t.value}
+                        defaultChecked={checkedTraits.has(t.value)}
+                        className="peer sr-only"
+                      />
+                      <span className="inline-block font-head text-[11px] px-3 py-1.5 border border-stroke bg-canvas text-mute peer-checked:bg-accent peer-checked:border-accent peer-checked:text-accent-fg hover:border-mute transition-colors">
+                        {t.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            </div>
+          </PanelCard>
+
+          <div className="flex justify-end gap-2 pt-2">
             <Link
               href={`/profile/${encodeURIComponent(profile.nickname)}`}
-              className="border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors px-4 py-2 rounded-lg text-sm"
+              className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-5 py-2"
             >
               Cancel
             </Link>
             <button
               type="submit"
-              className="bg-blue-400 hover:bg-blue-500 transition-colors text-white px-6 py-2 rounded-lg font-medium text-sm"
+              className="font-head text-sm font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-6 py-2"
+              style={{ transform: "skewX(-10deg)" }}
             >
-              Save
+              <span
+                className="inline-block"
+                style={{ transform: "skewX(10deg)" }}
+              >
+                Save
+              </span>
             </button>
           </div>
         </form>
@@ -201,26 +225,8 @@ export default async function SettingsPage() {
   );
 }
 
-function FormSection({
-  title,
-  columns = 2,
-  children,
-}: {
-  title: string;
-  columns?: 1 | 2;
-  children: React.ReactNode;
-}) {
-  const grid =
-    columns === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2";
-  return (
-    <fieldset className="flex flex-col gap-3">
-      <legend className="text-xs uppercase tracking-widest text-gray-500">
-        {title}
-      </legend>
-      <div className={`grid ${grid} gap-4`}>{children}</div>
-    </fieldset>
-  );
-}
+const INPUT_CLS =
+  "bg-canvas border border-stroke focus:border-accent focus:outline-none px-3 py-2 font-mono text-sm text-white placeholder:text-dim w-full";
 
 function Field({
   label,
@@ -231,7 +237,7 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs text-gray-400">{label}</span>
+      <span className="font-head text-[10px] text-dim">{label}</span>
       {children}
     </label>
   );
@@ -247,11 +253,7 @@ function Select({
   options: { value: string; label: string }[];
 }) {
   return (
-    <select
-      name={name}
-      defaultValue={value ?? ""}
-      className="bg-[#0d0d12] border border-[#4f4f4f] focus:border-blue-400 focus:outline-none rounded-md px-3 py-2 text-sm w-full"
-    >
+    <select name={name} defaultValue={value ?? ""} className={INPUT_CLS}>
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}

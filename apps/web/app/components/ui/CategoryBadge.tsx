@@ -1,42 +1,16 @@
-// Visual badge for the category of a quiz question. Colour + label per
-// category make the topic instantly readable in the question UI and
-// gather behavioural data ("which categories does this user click
-// faster on?"). Icons are deliberately kept as plain text — the SVG
-// set will land later via the design system.
+// FACEIT-style category tag. Slash-style parallelogram with category
+// colour as outline + soft fill. The category drives the topic colour
+// so the topic is readable at a glance during the match.
 
-const CATEGORY_META: Record<string, { label: string; tone: string }> = {
-  geography: {
-    label: "Geography",
-    tone: "bg-emerald-500/15 text-emerald-200 border-emerald-500/30",
-  },
-  history: {
-    label: "History",
-    tone: "bg-amber-500/15 text-amber-200 border-amber-500/30",
-  },
-  math: {
-    label: "Math",
-    tone: "bg-blue-500/15 text-blue-200 border-blue-500/30",
-  },
-  science: {
-    label: "Science",
-    tone: "bg-cyan-500/15 text-cyan-200 border-cyan-500/30",
-  },
-  sports: {
-    label: "Sports",
-    tone: "bg-orange-500/15 text-orange-200 border-orange-500/30",
-  },
-  pop_culture: {
-    label: "Pop culture",
-    tone: "bg-pink-500/15 text-pink-200 border-pink-500/30",
-  },
-  language: {
-    label: "Language",
-    tone: "bg-fuchsia-500/15 text-fuchsia-200 border-fuchsia-500/30",
-  },
-  general: {
-    label: "General",
-    tone: "bg-gray-500/15 text-gray-300 border-gray-500/30",
-  },
+const CATEGORY_META: Record<string, { label: string; color: string }> = {
+  geography: { label: "Geography", color: "var(--color-win)" },
+  history: { label: "History", color: "var(--color-gold)" },
+  math: { label: "Math", color: "var(--color-accent)" },
+  science: { label: "Science", color: "var(--color-blue2)" },
+  sports: { label: "Sports", color: "#ff8a2a" },
+  pop_culture: { label: "Pop culture", color: "var(--color-purple2)" },
+  language: { label: "Language", color: "#ff6cf3" },
+  general: { label: "General", color: "var(--color-mute)" },
 };
 
 export default function CategoryBadge({
@@ -49,9 +23,17 @@ export default function CategoryBadge({
   const meta = CATEGORY_META[category] ?? CATEGORY_META.general;
   return (
     <span
-      className={`inline-flex items-center text-[10px] uppercase tracking-widest px-2 py-0.5 rounded-full border font-semibold ${meta.tone} ${className}`}
+      className={`inline-flex items-center font-head text-[10px] px-3 py-0.5 border w-fit ${className}`}
+      style={{
+        background: `color-mix(in srgb, ${meta.color} 12%, transparent)`,
+        borderColor: `color-mix(in srgb, ${meta.color} 50%, transparent)`,
+        color: meta.color,
+        transform: "skewX(-10deg)",
+      }}
     >
-      {meta.label}
+      <span style={{ display: "inline-block", transform: "skewX(10deg)" }}>
+        {meta.label}
+      </span>
     </span>
   );
 }

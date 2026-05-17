@@ -136,10 +136,18 @@ export const ELO_K_FACTOR = 32;
 // Pairwise ELO update for a multiplayer match with one winner.
 // Each loser pays the winner; losers don't exchange rating with each other.
 // Returns a map of profileId → rating delta, rounded to nearest integer.
+//
+// Players in `leavers` are slapped with an anti-abuse penalty: 1.5x the
+// natural loss with a floor of -25, so rage-quitting against a much
+// stronger opponent never costs less ELO than fighting it out.
+export const LEAVER_PENALTY_MULTIPLIER = 1.5;
+export const LEAVER_MIN_PENALTY = -25;
+
 export function computeEloChanges(
   players: { profileId: string; elo: number }[],
   winnerProfileId: string | null,
   k: number = ELO_K_FACTOR,
+  leavers: Set<string> = new Set(),
 ): Map<string, number> {
   const delta = new Map<string, number>();
   for (const p of players) delta.set(p.profileId, 0);
@@ -164,7 +172,14 @@ export function computeEloChanges(
     );
   }
 
-  for (const [id, d] of delta) delta.set(id, Math.round(d));
+  for (const [id, d] of delta) {
+    let rounded = Math.round(d);
+    if (leavers.has(id) && id !== winner.profileId && rounded < 0) {
+      rounded = Math.round(rounded * LEAVER_PENALTY_MULTIPLIER);
+      if (rounded > LEAVER_MIN_PENALTY) rounded = LEAVER_MIN_PENALTY;
+    }
+    delta.set(id, rounded);
+  }
   return delta;
 }
 

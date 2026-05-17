@@ -1,23 +1,23 @@
 "use client";
-import { motion, AnimatePresence } from "framer-motion";
+
+// FACEIT-style sign-up card. Mirror of LoginForm with an extra Nickname
+// field. Controlled inputs survive React 19's implicit form reset after
+// the server action returns so the user doesn't have to retype on every
+// validation error.
+
 import { useActionState, useEffect, useState } from "react";
+import Link from "next/link";
+import { useFormStatus } from "react-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import { register } from "./actions";
-import Input from "../components/ui/Input";
-import { useRouter } from "next/navigation";
-import SubmitButton from "../components/ui/SubmitButton";
 
 export function RegisterForm() {
   const [state, registerAction] = useActionState(register, undefined);
-
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
-  // Controlled inputs survive React 19's implicit form reset after a
-  // server action — otherwise every validation error would force the user
-  // to retype everything.
   const [email, setEmail] = useState("");
   const [nickname, setNickname] = useState("");
   const [password, setPassword] = useState("");
-  const router = useRouter();
 
   useEffect(() => {
     if (state?.errors) {
@@ -25,105 +25,92 @@ export function RegisterForm() {
         state.errors.email?.[0] ||
         state.errors.nickname?.[0] ||
         state.errors.password?.[0];
-
       if (message) {
         setError(message);
         setTimeout(() => setShake(false), 400);
       }
-      if (error) {
-        setShake(true);
-      }
+      if (error) setShake(true);
     }
-  }, [state]);
+  }, [state, error]);
 
   return (
     <form
       action={registerAction}
-      className="flex flex-col gap-4 bg-[#0d0d12]/90 backdrop-blur border border-[#4f4f4f] rounded-2xl p-2 w-full max-w-md transition-all duration-300"
+      className={`w-full max-w-md bg-surface border border-stroke ${
+        shake ? "animate-shake" : ""
+      }`}
     >
-      <div className="flex justify-between px-4 pt-4">
-        <div className="flex justify-center items-center gap-4">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 448 512"
-            className="w-6 h-6 text-[#757575]"
-            fill="currentColor"
-          >
-            <path d="M224 248a120 120 0 1 0 0-240 120 120 0 1 0 0 240zm-29.7 56C95.8 304 16 383.8 16 482.3 16 498.7 29.3 512 45.7 512l356.6 0c16.4 0 29.7-13.3 29.7-29.7 0-98.5-79.8-178.3-178.3-178.3l-59.4 0z" />
-          </svg>
-          <h1 className="text-white text-xl font-bold">Sign Up</h1>
+      <header className="flex items-center justify-between px-5 py-4 border-b border-stroke">
+        <div className="flex items-center gap-3">
+          <HexLogo />
+          <div className="flex flex-col leading-tight">
+            <span className="font-head text-sm text-white">EUROPEQUIZ</span>
+            <span className="font-mono text-[10px] text-dim uppercase">
+              Create account
+            </span>
+          </div>
         </div>
-        <button
-          onClick={() => router.push("/login")}
-          type="button"
-          className="text-white border border-[#4f4f4f] bg-[#1a1a1a] hover:bg-[#292929] transition-colors rounded-lg px-4 py-2 cursor-pointer text-sm"
+        <Link
+          href="/login"
+          className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2"
         >
-          Sign In
-        </button>
-      </div>
+          Sign in
+        </Link>
+      </header>
 
       <motion.div
         layout
         transition={{ duration: 0.5 }}
-        className={`flex flex-col gap-4 bg-[#1a1a1a] h-full p-4 rounded-xl origin-top ${
-          shake ? "animate-shake" : ""
-        }`}
+        className="flex flex-col gap-4 p-5"
       >
-        <div className="flex flex-col gap-2">
-          <label htmlFor="email" className="text-[#fafafa]">
-            Email
-          </label>
-          <Input
+        <Field label="Email">
+          <input
             id="email"
             name="email"
             type="email"
-            placeholder="Email"
+            placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
+            className={INPUT_CLS}
           />
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-2">
-          <label htmlFor="nickname" className="text-[#fafafa]">
-            Nickname
-          </label>
-          <Input
+        <Field label="Nickname">
+          <input
             id="nickname"
             name="nickname"
             type="text"
-            placeholder="Nickname"
+            placeholder="In-game name"
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
             autoComplete="username"
+            className={INPUT_CLS}
           />
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-2">
-          <label htmlFor="password" className="text-[#fafafa]">
-            Password
-          </label>
-          <Input
+        <Field label="Password">
+          <input
             id="password"
             name="password"
             type="password"
-            placeholder="Password"
+            placeholder="••••••••"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="new-password"
+            className={INPUT_CLS}
           />
-        </div>
-        <div>
-          <SubmitButton text="Sign Up" />
-        </div>
+        </Field>
+
+        <Submit text="Create account" />
 
         <AnimatePresence>
           {error && (
             <motion.div
               initial={{ scale: 0.6, y: -10 }}
               animate={{ scale: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="bg-[#e02424] rounded-lg text-white px-4 py-2"
+              transition={{ duration: 0.4 }}
+              className="bg-lose/15 border border-lose font-mono text-xs text-lose px-3 py-2"
             >
               {error}
             </motion.div>
@@ -131,5 +118,63 @@ export function RegisterForm() {
         </AnimatePresence>
       </motion.div>
     </form>
+  );
+}
+
+const INPUT_CLS =
+  "bg-canvas border border-stroke focus:border-accent focus:outline-none px-3 py-2.5 font-mono text-sm text-white placeholder:text-dim w-full";
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="font-head text-[10px] text-dim">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Submit({ text }: { text: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="font-head text-sm font-extrabold text-white bg-accent hover:bg-accent-dim disabled:opacity-60 disabled:cursor-wait transition-colors px-6 py-3 w-full"
+      style={{ transform: "skewX(-10deg)" }}
+    >
+      <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
+        {pending ? "Creating…" : text}
+      </span>
+    </button>
+  );
+}
+
+function HexLogo() {
+  return (
+    <svg width="32" height="36" viewBox="0 0 32 36" aria-hidden="true">
+      <polygon
+        points="16,1 31,9 31,27 16,35 1,27 1,9"
+        fill="#121822"
+        stroke="#1ed3ff"
+        strokeWidth="1.5"
+      />
+      <text
+        x="16"
+        y="22"
+        textAnchor="middle"
+        fill="#1ed3ff"
+        fontSize="11"
+        fontWeight="800"
+        fontFamily="var(--font-geist-sans), system-ui"
+      >
+        EQ
+      </text>
+    </svg>
   );
 }

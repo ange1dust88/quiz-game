@@ -4,7 +4,8 @@
 //
 // Two style flavours are exposed via `shape`:
 //   - "circle"  → round avatar (header / settings / floating chips)
-//   - "square"  → rounded-md (PlayerPanel / lobby seats / leaderboard)
+//   - "square"  → sharp square (FACEIT-style — PlayerPanel / lobby
+//                seats / leaderboard rows). No rounded corners by design.
 // Colour is either explicit (player seat colour) or a default gradient.
 
 import { CSSProperties } from "react";
@@ -14,7 +15,7 @@ type Props = {
   avatarUrl?: string | null;
   // px — used for both width and height.
   size?: number;
-  // "circle" = rounded-full, "square" = rounded-md.
+  // "circle" = rounded-full, "square" = no rounding.
   shape?: "circle" | "square";
   // Background when there's no image (e.g. seat colour). Defaults to a
   // blue→purple gradient.
@@ -30,7 +31,7 @@ export default function Avatar({
   color,
   className = "",
 }: Props) {
-  const rounded = shape === "circle" ? "rounded-full" : "rounded-md";
+  const rounded = shape === "circle" ? "rounded-full" : "";
   const initial = (nickname || "?").charAt(0).toUpperCase();
   const style: CSSProperties = { width: size, height: size };
   if (!avatarUrl && color) style.backgroundColor = color;

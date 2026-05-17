@@ -41,7 +41,13 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       players: {
         include: {
           profile: {
-            select: { nickname: true, avatarUrl: true },
+            select: {
+              nickname: true,
+              avatarUrl: true,
+              level: true,
+              elo: true,
+              country: true,
+            },
           },
           choices: { select: { key: true, value: true } },
         },
@@ -77,6 +83,21 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
         )
       : 1;
 
+  // For finished matches we want to mark abandoners as "leavers" in the
+  // results screen. The snapshot's finalState.players carries that flag.
+  const abandonedByPlayerId = new Map<string, boolean>();
+  if (session.status === "completed") {
+    const snap = await prisma.matchSnapshot.findUnique({
+      where: { sessionId: id },
+      select: { finalState: true },
+    });
+    type SnapPlayer = { id: string; abandoned?: boolean };
+    const fs = snap?.finalState as { players?: SnapPlayer[] } | null;
+    fs?.players?.forEach((sp) => {
+      abandonedByPlayerId.set(sp.id, Boolean(sp.abandoned));
+    });
+  }
+
   const initialSession = {
     id: session.id,
     status: session.status,
@@ -88,9 +109,13 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       id: p.id,
       profileId: p.profileId,
       role: p.role,
+      abandoned: abandonedByPlayerId.get(p.id) ?? false,
       profile: {
         nickname: p.profile.nickname,
         avatarUrl: p.profile.avatarUrl ?? null,
+        level: p.profile.level,
+        elo: p.profile.elo,
+        country: p.profile.country ?? null,
       },
       choices: p.choices.map((c) => ({ key: c.key, value: c.value })),
     })),

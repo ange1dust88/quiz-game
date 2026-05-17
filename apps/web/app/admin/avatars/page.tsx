@@ -1,7 +1,8 @@
-// Admin moderation queue for avatar submissions. Same admin gating as
-// /analytics — comma-separated email list in ADMIN_EMAILS. Non-admins
-// get redirected to dashboard. Pending submissions are shown newest
-// last so the queue feels like FIFO when an admin works through it.
+// FACEIT-style admin moderation queue for avatar submissions. Same admin
+// gating as /analytics — comma-separated email list in ADMIN_EMAILS.
+// Non-admins get redirected to dashboard. Pending submissions are shown
+// oldest-first so the queue feels like FIFO when an admin works through
+// it.
 //
 // Approve and Reject are both POST forms hitting server actions which
 // move the file in Supabase Storage and update the AvatarSubmission row.
@@ -11,6 +12,8 @@ import { redirect } from "next/navigation";
 import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
 import { approveAvatar, rejectAvatar } from "@/app/lib/avatarActions";
+import PanelCard from "@/app/components/ui/PanelCard";
+import Slash from "@/app/components/ui/Slash";
 
 function parseAdminEmails(): string[] {
   return (process.env.ADMIN_EMAILS ?? "")
@@ -50,46 +53,47 @@ export default async function AdminAvatarsPage() {
   });
 
   return (
-    <div className="min-h-screen text-white">
-      <div className="max-w-5xl mx-auto px-4 sm:px-8 py-10 flex flex-col gap-8">
-        <header className="flex items-center justify-between flex-wrap gap-3">
+    <div className="min-h-[calc(100vh-4rem)] text-white bg-canvas">
+      <section className="relative overflow-hidden border-b border-stroke bg-gradient-to-br from-surface-hi via-panel to-canvas">
+        <div
+          className="absolute right-[-80px] top-0 bottom-0 w-[200px] bg-purple2/10"
+          style={{ transform: "skewX(-12deg)" }}
+          aria-hidden
+        />
+        <div className="relative max-w-[1600px] mx-auto px-4 sm:px-6 py-6 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex flex-col gap-2">
+            <Slash label="Moderation" color="#ff6cf3" />
+            <h1 className="font-head text-4xl text-white leading-none">
+              AVATAR REVIEWS
+            </h1>
+          </div>
           <Link
             href="/dashboard"
-            className="text-xs text-gray-400 hover:text-white transition-colors px-4 py-2 border border-[#4f4f4f] rounded-lg"
+            className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2"
           >
             ← Dashboard
           </Link>
-          <div className="text-right">
-            <p className="text-xs uppercase tracking-widest text-gray-400">
-              Moderation
-            </p>
-            <h1 className="text-2xl sm:text-3xl font-bold">Avatar reviews</h1>
-          </div>
-        </header>
+        </div>
+      </section>
 
-        <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-4">
-          <div className="flex items-baseline justify-between flex-wrap gap-2">
-            <h2 className="text-sm uppercase tracking-widest text-gray-400">
-              Pending queue
-            </h2>
-            <span className="text-xs text-gray-500">
-              {pending.length} waiting
-            </span>
-          </div>
-
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-4">
+        <PanelCard
+          title={`Pending queue · ${pending.length}`}
+          accent="#ffc24a"
+        >
           {pending.length === 0 ? (
-            <p className="text-sm text-gray-500">
+            <p className="font-body text-sm text-dim text-center py-6">
               Nothing to review — queue is empty.
             </p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {pending.map((p) => (
                 <div
                   key={p.id}
-                  className="flex flex-col gap-3 bg-[#14141a] border border-[#2a2a32] rounded-xl p-4"
+                  className="flex flex-col gap-3 bg-panel border border-stroke p-3"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-20 h-20 rounded-lg overflow-hidden bg-[#0d0d12] shrink-0">
+                    <div className="w-20 h-20 overflow-hidden bg-canvas border border-stroke shrink-0">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={p.publicUrl}
@@ -100,11 +104,11 @@ export default async function AdminAvatarsPage() {
                     <div className="flex flex-col min-w-0">
                       <Link
                         href={`/profile/${encodeURIComponent(p.profile.nickname)}`}
-                        className="text-sm font-semibold hover:underline truncate"
+                        className="font-head text-sm text-white hover:text-accent truncate transition-colors"
                       >
-                        {p.profile.nickname}
+                        {p.profile.nickname.toUpperCase()}
                       </Link>
-                      <span className="text-[11px] text-gray-500">
+                      <span className="font-mono text-[11px] text-dim mt-0.5">
                         submitted{" "}
                         {new Date(p.createdAt).toLocaleString("en-US", {
                           month: "short",
@@ -114,8 +118,8 @@ export default async function AdminAvatarsPage() {
                         })}
                       </span>
                       {p.profile.avatarUrl && (
-                        <span className="text-[10px] text-amber-300 uppercase tracking-widest mt-1">
-                          replaces current
+                        <span className="font-head text-[9px] text-gold mt-1">
+                          REPLACES CURRENT
                         </span>
                       )}
                     </div>
@@ -123,14 +127,10 @@ export default async function AdminAvatarsPage() {
 
                   <div className="flex flex-col sm:flex-row gap-2">
                     <form action={approveAvatar} className="flex-1">
-                      <input
-                        type="hidden"
-                        name="submissionId"
-                        value={p.id}
-                      />
+                      <input type="hidden" name="submissionId" value={p.id} />
                       <button
                         type="submit"
-                        className="w-full text-sm bg-emerald-500 hover:bg-emerald-600 text-black font-semibold px-3 py-1.5 rounded-md"
+                        className="w-full font-head text-xs font-extrabold text-accent-fg bg-win hover:opacity-90 transition-opacity px-3 py-1.5"
                       >
                         Approve
                       </button>
@@ -139,21 +139,17 @@ export default async function AdminAvatarsPage() {
                       action={rejectAvatar}
                       className="flex-1 flex gap-1"
                     >
-                      <input
-                        type="hidden"
-                        name="submissionId"
-                        value={p.id}
-                      />
+                      <input type="hidden" name="submissionId" value={p.id} />
                       <input
                         type="text"
                         name="reason"
                         placeholder="reason (optional)"
                         maxLength={200}
-                        className="flex-1 min-w-0 text-xs bg-[#0d0d12] border border-[#3a3a3a] focus:border-red-400/60 focus:outline-none rounded-md px-2 py-1.5"
+                        className="flex-1 min-w-0 font-mono text-xs bg-canvas border border-stroke focus:border-lose focus:outline-none px-2 py-1.5 text-white placeholder:text-dim"
                       />
                       <button
                         type="submit"
-                        className="text-sm bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-500/40 font-semibold px-3 py-1.5 rounded-md shrink-0"
+                        className="font-head text-xs text-lose bg-lose/15 hover:bg-lose/25 border border-lose/40 px-3 py-1.5 shrink-0 transition-colors"
                       >
                         Reject
                       </button>
@@ -163,45 +159,46 @@ export default async function AdminAvatarsPage() {
               ))}
             </div>
           )}
-        </section>
+        </PanelCard>
 
-        <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-3">
-          <h2 className="text-sm uppercase tracking-widest text-gray-400">
-            Recent decisions
-          </h2>
+        <PanelCard title="Recent decisions" accent="#7c8aff" padded={false}>
           {recent.length === 0 ? (
-            <p className="text-sm text-gray-500">No decisions yet.</p>
+            <p className="font-body text-sm text-dim text-center py-6">
+              No decisions yet.
+            </p>
           ) : (
-            <ul className="flex flex-col gap-1">
+            <div>
               {recent.map((r) => (
-                <li
+                <div
                   key={r.id}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#14141a] border border-[#2a2a32]"
+                  className="flex items-center gap-3 px-4 py-2 border-t border-stroke first:border-t-0"
                 >
                   <span
-                    className={`text-[10px] uppercase tracking-widest font-semibold w-20 ${
-                      r.status === "approved"
-                        ? "text-emerald-400"
-                        : "text-red-400"
-                    }`}
+                    className="font-head text-[10px] w-20"
+                    style={{
+                      color:
+                        r.status === "approved"
+                          ? "var(--color-win)"
+                          : "var(--color-lose)",
+                    }}
                   >
-                    {r.status}
+                    {r.status.toUpperCase()}
                   </span>
-                  <span className="text-sm font-semibold truncate flex-1">
-                    {r.profile.nickname}
+                  <span className="font-head text-xs text-white truncate flex-1">
+                    {r.profile.nickname.toUpperCase()}
                   </span>
                   {r.rejectionReason && (
                     <span
-                      className="text-[11px] text-gray-400 italic truncate max-w-[200px]"
+                      className="font-mono text-[11px] text-mute italic truncate max-w-[200px]"
                       title={r.rejectionReason}
                     >
                       {r.rejectionReason}
                     </span>
                   )}
-                  <span className="text-[10px] text-gray-500 shrink-0">
+                  <span className="font-mono text-[10px] text-dim shrink-0">
                     by {r.reviewer?.nickname ?? "—"}
                   </span>
-                  <span className="text-[10px] text-gray-500 shrink-0">
+                  <span className="font-mono text-[10px] text-dim shrink-0">
                     {r.reviewedAt
                       ? new Date(r.reviewedAt).toLocaleDateString("en-US", {
                           month: "short",
@@ -209,11 +206,11 @@ export default async function AdminAvatarsPage() {
                         })
                       : ""}
                   </span>
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
-        </section>
+        </PanelCard>
       </div>
     </div>
   );

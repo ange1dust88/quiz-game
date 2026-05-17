@@ -1,6 +1,10 @@
-import Link from "next/link";
+// Small "complete your demographic profile" nudge. Lives in the right
+// sidebar of the dashboard so it doesn't disrupt the hero / stats flow
+// in the main column. Gold accent because it's optional + research-y.
 
-// Inputs the banner cares about — any one filled flips the profile to "started".
+import Link from "next/link";
+import PanelCard from "./PanelCard";
+
 type ProfileSnapshot = {
   birthYear: number | null;
   gender: string | null;
@@ -13,6 +17,7 @@ type ProfileSnapshot = {
   personalityTraits: string[];
 };
 
+// Any one filled flips the profile to "started" so we stop pestering.
 export function hasDemographicData(profile: ProfileSnapshot): boolean {
   return Boolean(
     profile.birthYear ||
@@ -27,41 +32,22 @@ export function hasDemographicData(profile: ProfileSnapshot): boolean {
   );
 }
 
-export default function ProfileReminderBanner({
-  variant = "default",
-}: {
-  variant?: "default" | "compact";
-}) {
-  const isCompact = variant === "compact";
+export default function ProfileReminderBanner() {
   return (
-    <section
-      className={`bg-amber-500/10 border border-amber-500/30 rounded-xl ${
-        isCompact ? "p-3" : "p-4"
-      } flex items-start gap-3`}
-    >
-      <div className="flex-1 flex flex-col gap-2">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[10px] uppercase tracking-widest text-amber-300 font-bold">
-            Research
-          </span>
-          <span className="font-semibold text-amber-100 text-sm">
-            Help our research — finish your profile
-          </span>
-          <span className="text-xs text-amber-200/80 leading-relaxed">
-            A few optional details (age, education, MBTI, traits…) make your
-            game data way more useful for the diploma analysis. Visible only
-            to you, takes under a minute.
-          </span>
-        </div>
-        <div>
-          <Link
-            href="/settings"
-            className="inline-block bg-amber-400 hover:bg-amber-500 transition-colors text-black font-medium text-xs px-4 py-1.5 rounded-md"
-          >
-            Complete profile →
-          </Link>
-        </div>
+    <PanelCard title="Complete profile" accent="#ffc24a">
+      <div className="flex flex-col gap-2.5">
+        <p className="font-body text-[12px] text-mute leading-relaxed">
+          A few optional details (age, education, MBTI, traits…) make your
+          game data way more useful for the diploma research. Visible only
+          to you, under a minute.
+        </p>
+        <Link
+          href="/settings"
+          className="font-head text-[11px] font-extrabold text-accent-fg bg-gold hover:opacity-90 transition-opacity px-4 py-1.5 w-fit"
+        >
+          Complete profile →
+        </Link>
       </div>
-    </section>
+    </PanelCard>
   );
 }

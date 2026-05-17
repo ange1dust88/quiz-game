@@ -133,17 +133,11 @@ function QuestionView({
   }, [question.id, question.expiresAt]);
 
   return (
-    <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-5 flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
-            Question
-          </span>
-          <CategoryBadge category={question.category} />
-        </div>
-        <Timer seconds={remaining} />
-      </div>
-      <h2 className="text-lg font-bold leading-tight">{question.text}</h2>
+    <ActionShell accent="var(--color-accent)" label="Question" right={<Timer seconds={remaining} />}>
+      <CategoryBadge category={question.category} />
+      <h2 className="font-head text-lg leading-tight text-white">
+        {question.text}
+      </h2>
       {!submitted ? (
         <div className="flex flex-col gap-2 mt-1">
           <input
@@ -157,21 +151,57 @@ function QuestionView({
             }}
             placeholder="Your answer…"
             autoFocus
-            className="bg-[#1f1f24] border border-[#2a2a32] focus:border-emerald-400/50 focus:outline-none rounded-md px-3 py-2 text-sm text-white placeholder:text-gray-600"
+            className="bg-canvas border border-stroke focus:border-accent focus:outline-none px-3 py-2 font-mono text-sm text-white placeholder:text-dim"
           />
           <button
             onClick={submit}
-            className="bg-emerald-400 hover:bg-emerald-500 text-black px-4 py-2 rounded-md font-semibold text-sm"
+            className="font-head text-sm font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-4 py-2"
+            style={{ transform: "skewX(-10deg)" }}
           >
-            Submit
+            <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
+              Submit
+            </span>
           </button>
         </div>
       ) : (
-        <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
+        <div className="bg-panel border border-stroke px-3 py-2 font-mono text-[11px] text-mute italic">
           Waiting for other players…
         </div>
       )}
-    </div>
+    </ActionShell>
+  );
+}
+
+// Shared shell for every action view — sharp bordered panel with
+// coloured accent strip + label and optional right-side control.
+function ActionShell({
+  accent,
+  label,
+  right,
+  children,
+}: {
+  accent: string;
+  label: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="border border-stroke bg-surface">
+      <header className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-stroke">
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-block w-[3px] h-3.5"
+            style={{ background: accent }}
+            aria-hidden
+          />
+          <span className="font-head text-xs" style={{ color: accent }}>
+            {label}
+          </span>
+        </div>
+        {right}
+      </header>
+      <div className="p-4 flex flex-col gap-3">{children}</div>
+    </section>
   );
 }
 
@@ -244,20 +274,16 @@ function WarView({
 
   if (isInTie) {
     return (
-      <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-5 flex flex-col gap-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] uppercase tracking-widest text-amber-400 font-semibold">
-              Tie-breaker
-            </span>
-            <CategoryBadge category={attack.category} />
-          </div>
-          <Timer seconds={remaining} />
-        </div>
-        <p className="text-xs text-gray-400">
+      <ActionShell
+        accent="var(--color-gold)"
+        label="Tie-breaker"
+        right={<Timer seconds={remaining} />}
+      >
+        <CategoryBadge category={attack.category} />
+        <p className="font-mono text-[11px] text-mute">
           {attacker?.nickname} vs {defender?.nickname} — closest answer wins.
         </p>
-        <h2 className="text-lg font-bold leading-tight">
+        <h2 className="font-head text-lg leading-tight text-white">
           {attack.tieQuestionText}
         </h2>
         {isTieRevealing ? (
@@ -267,7 +293,7 @@ function WarView({
             defender={defender}
           />
         ) : !isInvolved ? (
-          <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
+          <div className="bg-panel border border-stroke px-3 py-2 font-mono text-[11px] text-mute italic">
             Watching…
           </div>
         ) : !tieSubmitted ? (
@@ -283,43 +309,47 @@ function WarView({
               }}
               placeholder="Your answer…"
               autoFocus
-              className="bg-[#1f1f24] border border-[#2a2a32] focus:border-amber-400/50 focus:outline-none rounded-md px-3 py-2 text-sm"
+              className="bg-canvas border border-stroke focus:border-gold focus:outline-none px-3 py-2 font-mono text-sm text-white placeholder:text-dim"
             />
             <button
               onClick={submitTie}
-              className="bg-amber-400 hover:bg-amber-500 text-black px-4 py-2 rounded-md font-semibold text-sm"
+              className="font-head text-sm font-extrabold text-black bg-gold transition-colors px-4 py-2"
+              style={{ transform: "skewX(-10deg)" }}
             >
-              Submit
+              <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
+                Submit
+              </span>
             </button>
           </div>
         ) : (
-          <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
+          <div className="bg-panel border border-stroke px-3 py-2 font-mono text-[11px] text-mute italic">
             Waiting for opponent…
           </div>
         )}
-      </div>
+      </ActionShell>
     );
   }
 
+  const roleLabel =
+    myPlayerId === attack.attackerId
+      ? "You attack"
+      : myPlayerId === attack.defenderId
+        ? "You defend"
+        : "War";
+
   return (
-    <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-5 flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] uppercase tracking-widest text-red-400 font-semibold">
-            {myPlayerId === attack.attackerId
-              ? "You attack"
-              : myPlayerId === attack.defenderId
-                ? "You defend"
-                : "War"}
-          </span>
-          <CategoryBadge category={attack.category} />
-        </div>
-        <Timer seconds={remaining} />
-      </div>
-      <p className="text-xs text-gray-400">
+    <ActionShell
+      accent="var(--color-lose)"
+      label={roleLabel}
+      right={<Timer seconds={remaining} />}
+    >
+      <CategoryBadge category={attack.category} />
+      <p className="font-mono text-[11px] text-mute">
         {attacker?.nickname} → {defender?.nickname}
       </p>
-      <h2 className="text-lg font-bold leading-tight">{attack.questionText}</h2>
+      <h2 className="font-head text-lg leading-tight text-white">
+        {attack.questionText}
+      </h2>
       <div className="grid grid-cols-2 gap-2">
         {attack.options.map((opt) => {
           const isCorrect = isRevealing && opt === attack.correctOption;
@@ -342,25 +372,47 @@ function WarView({
               title: `${defender.nickname} — ${attack.lastDefenderCorrect ? "correct" : "wrong"}`,
             });
           }
-          let cls =
-            "bg-[#1f1f24] border-[#2a2a32] text-gray-200 hover:bg-[#2a2a32]";
+          let style: React.CSSProperties = {
+            background: "var(--color-panel)",
+            borderColor: "var(--color-stroke)",
+            color: "var(--color-mute)",
+          };
           if (isRevealing) {
             if (isCorrect) {
-              cls = "bg-emerald-500/15 border-emerald-400 text-emerald-100";
+              style = {
+                background:
+                  "color-mix(in srgb, var(--color-win) 15%, transparent)",
+                borderColor: "var(--color-win)",
+                color: "var(--color-win)",
+              };
             } else if (pickerDots.length > 0) {
-              cls = "bg-[#1a1a20] border-[#3a2a2a] text-gray-300";
+              style = {
+                background: "var(--color-panel)",
+                borderColor: "var(--color-stroke)",
+                color: "var(--color-mute)",
+              };
             } else {
-              cls = "bg-[#1a1a20] border-[#2a2a32] text-gray-500";
+              style = {
+                background: "var(--color-panel)",
+                borderColor: "var(--color-stroke)",
+                color: "var(--color-dim)",
+              };
             }
           } else if (picked === opt) {
-            cls = "bg-emerald-400/20 border-emerald-400 text-white";
+            style = {
+              background:
+                "color-mix(in srgb, var(--color-accent) 20%, transparent)",
+              borderColor: "var(--color-accent)",
+              color: "var(--color-white)",
+            };
           }
           return (
             <button
               key={opt}
               onClick={() => pickOption(opt)}
               disabled={!isInvolved || picked !== null || isRevealing}
-              className={`flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm font-semibold border-2 transition-all text-left disabled:cursor-default ${cls}`}
+              className="flex items-center justify-between gap-2 px-3 py-2 font-head text-xs border transition-colors text-left disabled:cursor-default hover:bg-surface-hi"
+              style={style}
             >
               <span className="leading-tight">{opt}</span>
               <span className="flex items-center gap-1 shrink-0">
@@ -368,14 +420,12 @@ function WarView({
                   <span
                     key={d.id}
                     title={d.title}
-                    className="w-2.5 h-2.5 rounded-full ring-1 ring-black/40"
+                    className="w-2.5 h-2.5"
                     style={{ backgroundColor: d.color }}
                   />
                 ))}
                 {isCorrect && (
-                  <span className="text-emerald-300 text-base leading-none">
-                    ✓
-                  </span>
+                  <span className="text-win text-base leading-none">✓</span>
                 )}
               </span>
             </button>
@@ -383,11 +433,11 @@ function WarView({
         })}
       </div>
       {!isInvolved && !isRevealing && (
-        <div className="bg-[#1f1f24] rounded-md px-3 py-2 text-xs text-gray-400 italic">
+        <div className="bg-panel border border-stroke px-3 py-2 font-mono text-[11px] text-mute italic">
           Watching…
         </div>
       )}
-    </div>
+    </ActionShell>
   );
 }
 
@@ -442,42 +492,50 @@ function TieRevealView({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="bg-emerald-500/15 border border-emerald-400/40 rounded-md px-3 py-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-widest text-emerald-300">
-          Correct answer
-        </span>
-        <span className="text-base font-mono font-bold text-emerald-200">
+      <div
+        className="border px-3 py-2 flex items-center justify-between gap-2"
+        style={{
+          background: "color-mix(in srgb, var(--color-win) 15%, transparent)",
+          borderColor: "var(--color-win)",
+        }}
+      >
+        <span className="font-head text-[10px] text-win">Correct answer</span>
+        <span className="font-mono text-base font-bold text-win">
           {attack.tieCorrectAnswer}
         </span>
       </div>
       {[...ranked, ...missed].map((r, idx) => (
         <div
           key={r.id}
-          className="flex items-center gap-2 bg-[#1f1f24] rounded-md px-3 py-2 border-2"
+          className="flex items-center gap-2 bg-panel px-3 py-2 border"
           style={{ borderColor: `${r.color}66` }}
         >
           <span
-            className="w-2.5 h-2.5 rounded-full shrink-0"
+            className="w-2.5 h-2.5 shrink-0"
             style={{ backgroundColor: r.color }}
           />
-          <span className="text-sm font-semibold truncate flex-1">
-            {r.nickname}
+          <span className="font-head text-xs text-white truncate flex-1">
+            {r.nickname.toUpperCase()}
           </span>
           {r.answered ? (
             <>
-              <span className="text-sm font-mono">{r.answer}</span>
+              <span className="font-mono text-sm text-white">{r.answer}</span>
               <span
-                className={`text-[11px] font-mono w-14 text-right ${
-                  idx === 0 && ranked.length > 0
-                    ? "text-emerald-300"
-                    : "text-gray-500"
-                }`}
+                className="font-mono text-[11px] w-14 text-right"
+                style={{
+                  color:
+                    idx === 0 && ranked.length > 0
+                      ? "var(--color-win)"
+                      : "var(--color-dim)",
+                }}
               >
                 Δ{r.diff}
               </span>
             </>
           ) : (
-            <span className="text-[11px] italic text-gray-600">no answer</span>
+            <span className="font-mono text-[11px] italic text-dim">
+              no answer
+            </span>
           )}
         </div>
       ))}
@@ -499,52 +557,55 @@ function ResultsView({
   const expires = useRef(Date.now() + RESULTS_REVEAL_MS).current;
   const remaining = useRemaining(expires);
   return (
-    <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-5 flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
-          Round results
-        </span>
+    <ActionShell
+      accent="var(--color-win)"
+      label="Round results"
+      right={
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-400">
+          <span className="font-mono text-[11px] text-mute">
             correct:{" "}
-            <span className="font-mono text-emerald-300 font-bold">
+            <span className="text-win font-bold">
               {results.correctAnswer}
             </span>
           </span>
           <Timer seconds={remaining} />
         </div>
-      </div>
-      <div className="flex flex-col gap-2">
+      }
+    >
+      <div className="flex flex-col gap-1.5">
         {results.results.map((r) => {
           const isExact = r.answer !== null && r.diff === 0;
           return (
             <div
               key={r.playerId}
-              className="flex items-center gap-2 px-2.5 py-2 rounded-md bg-[#1f1f24]"
+              className="flex items-center gap-2 px-2.5 py-2 bg-panel border border-stroke"
             >
-              <span className="text-xs text-gray-500 w-5 text-center font-mono">
+              <span className="font-mono text-[11px] text-dim w-5 text-center">
                 #{r.place}
               </span>
-              <span className="text-sm font-semibold truncate flex-1">
-                {r.nickname}
+              <span className="font-head text-xs text-white truncate flex-1">
+                {r.nickname.toUpperCase()}
               </span>
               {r.answer !== null ? (
                 <>
                   <span
-                    className={`font-mono text-sm font-bold ${
-                      isExact ? "text-emerald-300" : "text-white"
-                    }`}
+                    className="font-mono text-sm font-bold"
+                    style={{
+                      color: isExact
+                        ? "var(--color-win)"
+                        : "var(--color-white)",
+                    }}
                   >
                     {r.answer}
                   </span>
                   {r.timeMs !== null && (
-                    <span className="text-[11px] text-gray-500 font-mono w-14 text-right">
+                    <span className="font-mono text-[11px] text-dim w-14 text-right">
                       {(r.timeMs / 1000).toFixed(1)}s
                     </span>
                   )}
                 </>
               ) : (
-                <span className="text-[11px] italic text-gray-600">
+                <span className="font-mono text-[11px] italic text-dim">
                   no answer
                 </span>
               )}
@@ -552,7 +613,7 @@ function ResultsView({
           );
         })}
       </div>
-    </div>
+    </ActionShell>
   );
 }
 
@@ -608,16 +669,21 @@ function InstructionView({
       : "Stand by — your turn is coming.";
   }
 
+  const accent =
+    stage === "war"
+      ? "var(--color-lose)"
+      : stage === "expand"
+        ? "var(--color-blue2)"
+        : "var(--color-accent)";
   return (
-    <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-5 flex flex-col gap-2">
-      <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">
-        {stage}
-      </span>
-      <h2 className="text-xl font-bold leading-tight">{title}</h2>
+    <ActionShell accent={accent} label={stage}>
+      <h2 className="font-head text-xl text-white leading-tight">{title}</h2>
       {description && (
-        <p className="text-sm text-gray-400 leading-relaxed">{description}</p>
+        <p className="font-body text-sm text-mute leading-relaxed">
+          {description}
+        </p>
       )}
-    </div>
+    </ActionShell>
   );
 }
 
@@ -626,9 +692,9 @@ function InstructionView({
 function Timer({ seconds }: { seconds: number | null }) {
   if (seconds === null) return null;
   const tone =
-    seconds <= 5 ? "text-red-400" : seconds <= 10 ? "text-yellow-300" : "text-gray-400";
+    seconds <= 5 ? "text-lose" : seconds <= 10 ? "text-gold" : "text-mute";
   return (
-    <span className={`text-base font-mono font-bold ${tone}`}>{seconds}s</span>
+    <span className={`font-mono text-base font-bold ${tone}`}>{seconds}s</span>
   );
 }
 

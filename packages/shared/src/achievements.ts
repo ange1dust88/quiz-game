@@ -14,12 +14,27 @@ export type AchievementInput = {
   demographicComplete: boolean;
 };
 
+export type AchievementRarity =
+  | "common"
+  | "uncommon"
+  | "rare"
+  | "epic"
+  | "legendary";
+
 export type AchievementDef = {
   code: string;
   name: string;
   description: string;
   icon: string;
   category: "play" | "skill" | "rating" | "profile";
+  // Drives the colour of the chip on the AchievementCard. Roughly
+  // calibrated to how rare the unlock is in practice:
+  //   common     — first-step / easy
+  //   uncommon   — moderate (e.g. 5 wins, demographic profile)
+  //   rare       — sustained (50 matches, streak 5)
+  //   epic       — top-tier rating
+  //   legendary  — grandmaster threshold
+  rarity: AchievementRarity;
   check: (i: AchievementInput) => boolean;
 };
 
@@ -39,6 +54,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Play your first match.",
     icon: "🎮",
     category: "play",
+    rarity: "common",
     check: (i) => i.gamesPlayed >= 1,
   },
   {
@@ -47,6 +63,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Win a match.",
     icon: "🥇",
     category: "play",
+    rarity: "common",
     check: (i) => i.gamesWon >= 1,
   },
   {
@@ -55,6 +72,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Play 10 matches.",
     icon: "📅",
     category: "play",
+    rarity: "common",
     check: (i) => i.gamesPlayed >= 10,
   },
   {
@@ -63,6 +81,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Play 50 matches.",
     icon: "🛡️",
     category: "play",
+    rarity: "uncommon",
     check: (i) => i.gamesPlayed >= 50,
   },
   {
@@ -71,6 +90,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Play 100 matches.",
     icon: "🏛️",
     category: "play",
+    rarity: "rare",
     check: (i) => i.gamesPlayed >= 100,
   },
   {
@@ -79,6 +99,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Win 5 matches.",
     icon: "🎯",
     category: "skill",
+    rarity: "uncommon",
     check: (i) => i.gamesWon >= 5,
   },
   {
@@ -87,6 +108,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Win 25 matches.",
     icon: "👑",
     category: "skill",
+    rarity: "rare",
     check: (i) => i.gamesWon >= 25,
   },
   {
@@ -95,6 +117,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Win 3 matches in a row.",
     icon: "🔥",
     category: "skill",
+    rarity: "uncommon",
     check: (i) => longestWinStreak(i.recentWins) >= 3,
   },
   {
@@ -103,6 +126,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Win 5 matches in a row.",
     icon: "⚡",
     category: "skill",
+    rarity: "epic",
     check: (i) => longestWinStreak(i.recentWins) >= 5,
   },
   {
@@ -111,6 +135,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Reach 1100 ELO.",
     icon: "⭐",
     category: "rating",
+    rarity: "rare",
     check: (i) => i.elo >= 1100,
   },
   {
@@ -119,6 +144,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Reach 1300 ELO.",
     icon: "💎",
     category: "rating",
+    rarity: "epic",
     check: (i) => i.elo >= 1300,
   },
   {
@@ -127,6 +153,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Reach 1500 ELO.",
     icon: "🏆",
     category: "rating",
+    rarity: "legendary",
     check: (i) => i.elo >= 1500,
   },
   {
@@ -135,6 +162,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "Fill out your demographic profile.",
     icon: "📝",
     category: "profile",
+    rarity: "uncommon",
     check: (i) => i.demographicComplete,
   },
 ];

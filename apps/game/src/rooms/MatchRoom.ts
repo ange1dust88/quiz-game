@@ -68,7 +68,13 @@ const TICK_INTERVAL_MS = 250;
 // win. Covers the case where opponents close the tab and don't come back
 // — otherwise the lone survivor sits forever, watching their opponent's
 // turn auto-action through random territories until rounds run out.
-const WALKOVER_TIMEOUT_MS = 60_000;
+//
+// We use a short timer when the missing player(s) abandoned explicitly
+// (consented leave — no chance of reconnect) and a longer one while the
+// 30s reconnect window is still open, so transient disconnects don't
+// hand out instant wins.
+const WALKOVER_TIMEOUT_MS_CONSENTED = 1_500;
+const WALKOVER_TIMEOUT_MS_DISCONNECT = 30_000;
 
 // Per-question telemetry collected from clients while the question is live.
 // Held outside the synced state so other players can't see opponents'
@@ -1536,9 +1542,9 @@ export class MatchRoom extends Room<MatchState> {
   // --- Game end ---------------------------------------------------------
 
   // Walkover detection — runs every tick. If everyone except one player
-  // has dropped (browser closed, network lost beyond the 30s reconnect
-  // window), wait WALKOVER_TIMEOUT_MS to make sure it's not a transient
-  // dip, then hand the win to whoever's still around.
+  // has dropped, wait a short window (longer if anyone is still inside
+  // the 30s reconnect grace, shorter if everyone left explicitly) and
+  // hand the win to whoever's still around.
   private checkWalkover(now: number): void {
     if (this.state.stage === "ended") return;
     // "Total seats that started the match" — including abandoned ones.
@@ -1549,20 +1555,29 @@ export class MatchRoom extends Room<MatchState> {
     if (totalSeats < 2) return;
     let activeCount = 0;
     let lone: Player | null = null;
+    // If any non-survivor is "disconnected but not yet abandoned" they
+    // might still come back within the 30s reconnect window. In that
+    // case we wait longer than for an explicit Leave.
+    let anyReconnectable = false;
     this.state.players.forEach((p) => {
       if (p.connected && !p.abandoned) {
         activeCount += 1;
         lone = p;
+      } else if (!p.connected && !p.abandoned) {
+        anyReconnectable = true;
       }
     });
     if (activeCount === 1 && lone) {
       const survivor = lone as Player;
+      const timeoutMs = anyReconnectable
+        ? WALKOVER_TIMEOUT_MS_DISCONNECT
+        : WALKOVER_TIMEOUT_MS_CONSENTED;
       if (this.walkoverStartedAtMs === null) {
         this.walkoverStartedAtMs = now;
         console.log(
-          `[match ${this.roomId}] walkover countdown — ${survivor.nickname} alone`,
+          `[match ${this.roomId}] walkover countdown — ${survivor.nickname} alone (${timeoutMs}ms)`,
         );
-      } else if (now - this.walkoverStartedAtMs >= WALKOVER_TIMEOUT_MS) {
+      } else if (now - this.walkoverStartedAtMs >= timeoutMs) {
         const winnerId = survivor.id;
         this.walkoverStartedAtMs = null;
         console.log(
@@ -1632,6 +1647,7 @@ export class MatchRoom extends Room<MatchState> {
       nickname: string;
       turnOrder: number;
       capitalStyle: string;
+      abandoned: boolean;
     }> = [];
     this.state.players.forEach((p) => {
       players.push({
@@ -1640,6 +1656,7 @@ export class MatchRoom extends Room<MatchState> {
         nickname: p.nickname,
         turnOrder: p.turnOrder,
         capitalStyle: p.capitalStyle,
+        abandoned: p.abandoned,
       });
     });
     const countries: Array<{
@@ -1735,12 +1752,23 @@ export class MatchRoom extends Room<MatchState> {
         );
     });
 
+    // Anti-abuse: anyone who walked out mid-match pays an extra penalty
+    // on top of the natural loss, so rage-quitting against a stronger
+    // opponent never costs less ELO than just losing the match.
+    const leavers = new Set<string>();
+    for (const p of playerArr) {
+      if (p.abandoned && p.profileId !== winnerProfileId) {
+        leavers.add(p.profileId);
+      }
+    }
     const eloDelta = computeEloChanges(
       playerArr.map((p) => ({
         profileId: p.profileId,
         elo: profileById.get(p.profileId)?.elo ?? 1000,
       })),
       winnerProfileId,
+      undefined,
+      leavers,
     );
 
     for (const p of playerArr) {

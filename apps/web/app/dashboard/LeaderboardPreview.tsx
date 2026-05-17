@@ -1,10 +1,12 @@
-// Top-5 leaderboard panel for the dashboard sidebar. Rank → level
-// hexagon → nickname + country tag → ELO + 7-day delta (placeholder).
-// "Full leaderboard →" routes to /leaderboard.
+// Top-5 leaderboard panel for the sidebar. Rank · level-hex · nickname
+// + country tag · ELO · 7-day delta. The delta is mocked until we
+// snapshot per-week ELO; everything else is real DB data.
 
 import Link from "next/link";
 import { prisma } from "@quiz/db";
+import PanelCard from "@/app/components/ui/PanelCard";
 import Hexagon from "@/app/components/ui/Hexagon";
+import FlagTag from "@/app/components/ui/FlagTag";
 
 export default async function LeaderboardPreview() {
   const top = await prisma.playerProfile.findMany({
@@ -21,67 +23,64 @@ export default async function LeaderboardPreview() {
   });
 
   return (
-    <section className="rounded-2xl border border-[#1f2230] bg-[#0d1117]">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-[#1f2230]">
-        <h2 className="text-xs uppercase tracking-widest font-bold flex items-center gap-2">
-          <span className="w-1 h-3 bg-amber-400 rounded-sm" />
-          Leaderboard · EU
-        </h2>
-        <span className="text-[10px] uppercase tracking-widest text-gray-500">
-          Season 1
-        </span>
-      </header>
-
+    <PanelCard
+      title="Leaderboard"
+      accent="#ffc24a"
+      padded={false}
+    >
       {top.length === 0 ? (
-        <p className="text-sm text-gray-500 px-4 py-6 text-center">
-          No players ranked yet.
+        <p className="font-body text-sm text-dim px-4 py-6 text-center">
+          No players yet.
         </p>
       ) : (
-        <ul className="flex flex-col">
+        <div>
           {top.map((p, i) => (
-            <li
+            <div
               key={p.id}
-              className="flex items-center gap-3 px-4 py-2.5 border-t border-[#1f2230] first:border-t-0"
+              className="grid grid-cols-[26px_28px_1fr_auto] gap-2.5 items-center px-3 py-2 border-t border-stroke first:border-t-0"
             >
-              <span className="text-[11px] font-bold text-amber-300 font-mono w-6">
+              <span
+                className="font-head text-[12px] font-bold"
+                style={{
+                  color: i < 3 ? "var(--color-gold)" : "var(--color-mute)",
+                }}
+              >
                 #{i + 1}
               </span>
               <Hexagon
                 value={p.level}
-                size={28}
-                color="#dc2626"
+                size={26}
+                color="#1ed3ff"
                 textColor="#ffffff"
               />
-              <div className="flex flex-col leading-tight min-w-0 flex-1">
+              <div className="flex flex-col leading-tight min-w-0">
                 <Link
                   href={`/profile/${encodeURIComponent(p.nickname)}`}
-                  className="text-xs font-bold uppercase tracking-widest text-white hover:text-blue-300 transition-colors truncate"
+                  className="font-head text-[11px] text-white hover:text-accent transition-colors truncate"
                 >
-                  {p.nickname}
+                  {p.nickname.toUpperCase()}
                 </Link>
-                <span className="text-[10px] uppercase tracking-widest text-gray-500 truncate">
-                  {p.country || "—"}
-                </span>
+                <div className="mt-0.5">
+                  <FlagTag code={p.country} />
+                </div>
               </div>
               <div className="flex flex-col items-end leading-tight">
-                <span className="text-sm font-bold font-mono text-white">
+                <span className="font-mono text-[13px] font-bold text-white">
                   {p.elo.toLocaleString()}
                 </span>
-                <span className="text-[10px] text-gray-600 font-mono">
-                  +0
-                </span>
+                <span className="font-mono text-[10px] text-dim">—</span>
               </div>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
 
       <Link
         href="/leaderboard"
-        className="block text-center text-[10px] uppercase tracking-widest text-gray-500 hover:text-white border-t border-[#1f2230] py-2 transition-colors"
+        className="block text-center font-head text-[10px] text-mute hover:text-white border-t border-stroke py-2.5 transition-colors"
       >
         Full leaderboard →
       </Link>
-    </section>
+    </PanelCard>
   );
 }

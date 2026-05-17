@@ -7,9 +7,9 @@ import Spinner from "@/app/components/ui/Spinner";
 
 export default function MatchLoading() {
   return (
-    <div className="min-h-screen text-white flex flex-col items-center justify-center gap-4">
+    <div className="min-h-screen bg-canvas text-white flex flex-col items-center justify-center gap-4">
       <Spinner size={40} />
-      <span className="text-sm text-gray-400">Preparing match…</span>
+      <span className="font-mono text-sm text-mute">Preparing match…</span>
     </div>
   );
 }

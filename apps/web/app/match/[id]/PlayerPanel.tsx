@@ -1,7 +1,9 @@
 "use client";
 
 // Sidebar list of players + their current land/point totals. Highlights
-// the player whose turn it is and "you".
+// the player whose turn it is and "you". FACEIT-style: sharp bordered
+// panel with cyan title strip, sharp player rows with coloured seat
+// stripe, capital HP as filled amber pips.
 
 import {
   useActivePlayerId,
@@ -10,6 +12,7 @@ import {
 } from "@/app/lib/gameStore";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 import Avatar from "@/app/components/ui/Avatar";
+import PanelCard from "@/app/components/ui/PanelCard";
 
 type Props = { myPlayerId: string };
 
@@ -18,8 +21,10 @@ export default function PlayerPanel({ myPlayerId }: Props) {
   const countries = useCountries();
   const activeId = useActivePlayerId();
 
-  // Per-player aggregates from countries.
-  const stats = new Map<string, { lands: number; points: number; capHp: number | null; capMax: number | null }>();
+  const stats = new Map<
+    string,
+    { lands: number; points: number; capHp: number | null; capMax: number | null }
+  >();
   players.forEach((p) =>
     stats.set(p.id, { lands: 0, points: 0, capHp: null, capMax: null }),
   );
@@ -37,31 +42,40 @@ export default function PlayerPanel({ myPlayerId }: Props) {
   const totalPoints = countries.reduce((acc, c) => acc + c.points, 0);
 
   return (
-    <div className="bg-[#14141a] border border-[#1f1f24] rounded-xl p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between text-xs uppercase tracking-widest text-gray-500">
-        <span>Players</span>
-        <span>{players.length}</span>
-      </div>
-      <div className="flex flex-col gap-1">
+    <PanelCard
+      title={`Players · ${players.length}`}
+      accent="#1ed3ff"
+      padded={false}
+    >
+      <div className="flex flex-col">
         {players.map((p) => {
           const isYou = p.id === myPlayerId;
           const isActive = p.id === activeId;
           const color = PLAYER_COLORS[p.turnOrder % PLAYER_COLORS.length];
-          const s = stats.get(p.id) ?? { lands: 0, points: 0, capHp: null, capMax: null };
-          const share = totalPoints > 0 ? Math.round((s.points / totalPoints) * 100) : 0;
-          const rowStyle = isActive
-            ? {
-                borderColor: color,
-                backgroundColor: `${color}1c`,
-                boxShadow: `0 0 0 1px ${color}33`,
-              }
-            : { borderColor: "transparent" };
+          const s =
+            stats.get(p.id) ?? {
+              lands: 0,
+              points: 0,
+              capHp: null,
+              capMax: null,
+            };
+          const share =
+            totalPoints > 0 ? Math.round((s.points / totalPoints) * 100) : 0;
           return (
             <div
               key={p.id}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg border-2 transition-all"
-              style={rowStyle}
+              className="relative flex items-center gap-3 px-3 py-2 border-t border-stroke first:border-t-0 transition-colors"
+              style={{
+                background: isActive
+                  ? `color-mix(in srgb, ${color} 12%, transparent)`
+                  : undefined,
+              }}
             >
+              <span
+                className="absolute left-0 top-0 bottom-0 w-[3px]"
+                style={{ background: color }}
+                aria-hidden
+              />
               <Avatar
                 nickname={p.nickname}
                 avatarUrl={p.avatarUrl}
@@ -71,25 +85,23 @@ export default function PlayerPanel({ myPlayerId }: Props) {
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-semibold truncate">
-                    {p.nickname}
+                  <span className="font-head text-xs text-white truncate">
+                    {p.nickname.toUpperCase()}
                   </span>
                   {isYou && (
-                    <span className="text-[10px] text-gray-500">you</span>
+                    <span className="font-head text-[9px] text-accent">YOU</span>
                   )}
                   {p.abandoned ? (
-                    <span className="text-[10px] text-red-400 uppercase tracking-widest">
-                      left
-                    </span>
+                    <span className="font-head text-[9px] text-lose">LEFT</span>
                   ) : (
                     !p.connected && (
-                      <span className="text-[10px] text-amber-400">
-                        offline
+                      <span className="font-head text-[9px] text-gold">
+                        OFFLINE
                       </span>
                     )
                   )}
                 </div>
-                <div className="text-xs text-gray-500 flex items-center gap-2">
+                <div className="font-mono text-[10px] text-dim flex items-center gap-2 mt-0.5">
                   <span>
                     {s.points.toLocaleString()} pts · {s.lands} lands
                   </span>
@@ -101,15 +113,15 @@ export default function PlayerPanel({ myPlayerId }: Props) {
               <div className="flex flex-col items-end gap-1 shrink-0">
                 {isActive && (
                   <span
-                    className="text-[10px] uppercase tracking-widest font-semibold"
+                    className="font-head text-[9px]"
                     style={{ color }}
                   >
-                    Turn
+                    TURN
                   </span>
                 )}
-                <div className="w-16 h-1 bg-[#1f1f24] rounded-full overflow-hidden">
+                <div className="w-14 h-1 bg-panel overflow-hidden">
                   <div
-                    className="h-full rounded-full transition-all"
+                    className="h-full transition-all"
                     style={{
                       width: `${Math.max(share, 4)}%`,
                       backgroundColor: color,
@@ -121,22 +133,22 @@ export default function PlayerPanel({ myPlayerId }: Props) {
           );
         })}
       </div>
-    </div>
+    </PanelCard>
   );
 }
 
-// Capital HP as filled/empty hearts — easier to parse at a glance than
-// "★3/3" text, especially when you only have a quarter-second of side-eye
-// while reading the question.
+// Capital HP as filled/empty pips — easier to parse at a glance than
+// "★3/3" text, especially during a war round.
 function CapitalHearts({ hp, max }: { hp: number; max: number }) {
   const pips = [];
   for (let i = 0; i < max; i++) {
     pips.push(
       <span
         key={i}
-        className={`inline-block w-2 h-2 rounded-full ${
-          i < hp ? "bg-amber-300" : "bg-amber-300/20"
-        }`}
+        className="inline-block w-2 h-2"
+        style={{
+          background: i < hp ? "var(--color-gold)" : "color-mix(in srgb, var(--color-gold) 20%, transparent)",
+        }}
       />,
     );
   }

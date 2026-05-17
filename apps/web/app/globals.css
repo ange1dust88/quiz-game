@@ -1,32 +1,79 @@
 @import "tailwindcss";
 
+/* -------- Theme tokens --------
+   Match the palette spec for the FACEIT-style "competitive cyan" look.
+   Tailwind v4 picks these up from @theme and generates utilities like
+   `bg-canvas`, `text-mute`, `border-stroke`, `bg-accent/16`, etc.
+
+   Surface ladder goes canvas → panel → surface → surface-hi (each
+   slightly lighter / more elevated).
+*/
+@theme {
+  --color-canvas: #0d1218;
+  --color-panel: #121822;
+  --color-surface: #171f2a;
+  --color-surface-hi: #1f2836;
+  --color-stroke: #262f3d;
+
+  --color-mute: #8a93a1;
+  --color-dim: #525c6c;
+
+  --color-accent: #1ed3ff;
+  --color-accent-dim: #0a96b8;
+  --color-accent-fg: #06141c;
+
+  --color-win: #3fcf6c;
+  --color-lose: #ff4244;
+  --color-gold: #ffc24a;
+  --color-blue2: #7c8aff;
+  --color-purple2: #ff6cf3;
+}
+
 :root {
-  --background: #0a0a0f;
-  --foreground: #f5f5f5;
+  --background: #0d1218;
+  --foreground: #ffffff;
+}
+
+/* -------- Typography utility classes --------
+   Fonts are loaded in app/layout.tsx via next/font/google and exposed
+   as CSS variables. These classes are the only surface components
+   touch — never reference the variables directly so font swaps stay
+   centralised.
+
+   .font-head  → Barlow Condensed, heavy, uppercase, +tracking. The
+                 FACEIT-style "spортивный" headline.
+   .font-body  → Barlow regular for paragraphs / captions.
+   .font-num   → JetBrains Mono — ELO, match ids, timers.
+   .font-meadow / .font-midnight / .font-atlas → per-theme match-screen
+                 families (Meadow / Midnight / Atlas decks).
+*/
+.font-head {
+  font-family: var(--font-head), var(--font-oswald), system-ui, sans-serif;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.font-body {
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+.font-num {
+  font-family: var(--font-num), ui-monospace, "SFMono-Regular", Menlo,
+    monospace;
+}
+.font-meadow {
+  font-family: var(--font-meadow), Georgia, serif;
+}
+.font-midnight {
+  font-family: var(--font-midnight), system-ui, sans-serif;
+}
+.font-atlas {
+  font-family: var(--font-atlas), Georgia, serif;
 }
 
 body {
   min-height: 100vh;
   color: var(--foreground);
   background-color: var(--background);
-  background-image:
-    radial-gradient(
-      ellipse 80% 60% at 20% 0%,
-      rgba(96, 165, 250, 0.25),
-      transparent 60%
-    ),
-    radial-gradient(
-      ellipse 70% 50% at 90% 100%,
-      rgba(168, 85, 247, 0.22),
-      transparent 60%
-    ),
-    radial-gradient(
-      ellipse 50% 40% at 50% 50%,
-      rgba(59, 130, 246, 0.08),
-      transparent 70%
-    );
-  background-attachment: fixed;
-  background-repeat: no-repeat;
 }
 
 @keyframes shake {

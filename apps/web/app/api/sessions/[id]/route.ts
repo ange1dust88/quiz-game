@@ -14,7 +14,13 @@ export async function GET(
         players: {
           include: {
             profile: {
-              select: { nickname: true },
+              select: {
+                nickname: true,
+                avatarUrl: true,
+                level: true,
+                elo: true,
+                country: true,
+              },
             },
             choices: { select: { key: true, value: true } },
           },

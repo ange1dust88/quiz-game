@@ -372,6 +372,57 @@ describe("computeEloChanges", () => {
     const delta = computeEloChanges([{ profileId: "a", elo: 1000 }], "a");
     expect(delta.get("a")).toBe(0);
   });
+
+  it("leaver against a peer pays the -25 minimum, not the -16 natural", () => {
+    const delta = computeEloChanges(
+      [
+        { profileId: "winner", elo: 1000 },
+        { profileId: "leaver", elo: 1000 },
+      ],
+      "winner",
+      undefined,
+      new Set(["leaver"]),
+    );
+    // Natural loss would be -16; floor of -25 kicks in.
+    expect(delta.get("leaver")).toBe(-25);
+    // Winner gets the natural amount (not amplified) — they're not the
+    // one being punished.
+    expect(delta.get("winner")).toBe(16);
+  });
+
+  it("leaver against a much stronger opponent pays 1.5x the natural loss", () => {
+    // Natural loss for a 1500-rated player to a 1000-rated player is small
+    // (~-3) — multiplying by 1.5 stays well above the -25 floor only if the
+    // gap is huge; otherwise the floor applies. Pick a gap where 1.5x bites.
+    const delta = computeEloChanges(
+      [
+        { profileId: "weak", elo: 800 },
+        { profileId: "strong_leaver", elo: 2000 },
+      ],
+      "weak",
+      undefined,
+      new Set(["strong_leaver"]),
+    );
+    // Strong player losing to a much weaker one normally loses ~-30; with
+    // 1.5x leaver penalty that's ~-45. The minimum floor doesn't apply
+    // here because the natural loss is already steeper than -25.
+    expect(delta.get("strong_leaver")!).toBeLessThanOrEqual(-40);
+  });
+
+  it("ignores leaver-set entries that didn't lose", () => {
+    // If somehow the winner is also marked as a leaver, they still gain.
+    const delta = computeEloChanges(
+      [
+        { profileId: "a", elo: 1000 },
+        { profileId: "b", elo: 1000 },
+      ],
+      "a",
+      undefined,
+      new Set(["a"]),
+    );
+    expect(delta.get("a")).toBe(16);
+    expect(delta.get("b")).toBe(-16);
+  });
 });
 
 describe("sanitizeHoverTrail", () => {

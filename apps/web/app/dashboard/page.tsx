@@ -12,7 +12,6 @@ import { getProfileSafe } from "@/app/lib/auth";
 import { hasDemographicData } from "@/app/components/ui/ProfileReminderBanner";
 import ProfileReminderBanner from "@/app/components/ui/ProfileReminderBanner";
 import HeroPlay from "./HeroPlay";
-import RankWidget from "./RankWidget";
 import StatTiles from "./StatTiles";
 import MatchHistory from "./MatchHistory";
 import LiveMatches from "./LiveMatches";
@@ -30,6 +29,18 @@ export default async function Dashboard() {
     where: { elo: { gt: profile.elo } },
   });
   const myRank = higherCount + 1;
+
+  // "Online · N players" — best-effort: distinct profiles currently
+  // tied to a session that's either waiting (lobby) or live (match).
+  // It's not "they have a browser tab open right now" (we'd need a
+  // presence heartbeat for that), but it's the most honest proxy we
+  // can give without that infra.
+  const playersInPlay = await prisma.playerInGame.findMany({
+    where: { gameSession: { status: { in: ["waiting", "active"] } } },
+    select: { profileId: true },
+    distinct: ["profileId"],
+  });
+  const onlineCount = playersInPlay.length;
 
   // Streak — walk back through recent results, count consecutive of the
   // same outcome. Sign of the latest match decides the type.
@@ -109,24 +120,20 @@ export default async function Dashboard() {
   const warWinPct = warTotal > 0 ? Math.round((warWins / warTotal) * 100) : 0;
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] text-white bg-[#080a10]">
+    <div className="min-h-[calc(100vh-4rem)] text-white bg-canvas">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
         <div className="flex flex-col gap-4 min-w-0">
-          {showReminder && <ProfileReminderBanner />}
-
-          <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4">
-            <HeroPlay onlineCount={profile.gamesPlayed * 4 + 217} />
-            <RankWidget
-              level={profile.level}
-              elo={profile.elo}
-              experience={profile.experience}
-              xpForNext={profile.level * 1000}
-              rank={myRank}
-              streakKind={streakKind}
-              streakLen={streakLen}
-              kd={kd}
-            />
-          </div>
+          <HeroPlay
+            onlineCount={onlineCount}
+            level={profile.level}
+            elo={profile.elo}
+            experience={profile.experience}
+            xpForNext={profile.level * 1000}
+            rank={myRank}
+            streakKind={streakKind}
+            streakLen={streakLen}
+            kd={kd}
+          />
 
           <StatTiles
             matches={totalSnapshots}
@@ -142,6 +149,7 @@ export default async function Dashboard() {
         </div>
 
         <div className="flex flex-col gap-4 min-w-0">
+          {showReminder && <ProfileReminderBanner />}
           <LiveMatches />
           <LeaderboardPreview />
           <DailyMissions />

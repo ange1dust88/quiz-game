@@ -30,7 +30,7 @@ import { EUROPE_PATHS } from "@/app/lib/europeSvg";
 import { EUROPE_NEIGHBORS } from "@/app/lib/europeNeighbors";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 
-const UNCLAIMED = "#23253a";
+const UNCLAIMED = "#1f2836";
 
 export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
   const stage = useStage();
@@ -339,7 +339,7 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
               .join(" ");
             const highlightColor = isTargeted ? attackerColor : myColor;
             const strokeColor =
-              isTargeted || eligible || isPending ? highlightColor : "#0a0a0f";
+              isTargeted || eligible || isPending ? highlightColor : "#0d1218";
             const strokeW =
               isTargeted || eligible || isPending ? 1.5 : 0.5;
             // While a click is in flight, EVERY country is non-interactive
@@ -406,7 +406,7 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
                 cx={pendingCenter.cx}
                 cy={pendingCenter.cy}
                 r="8"
-                fill="#0a0a0f"
+                fill="#0d1218"
                 opacity="0.75"
               />
               <circle
@@ -432,14 +432,14 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
           {markers.map((m) => {
             const damage = m.maxHp - m.hp;
             const ringColor =
-              damage <= 0 ? "#ffffff" : damage === 1 ? "#fbbf24" : "#ef4444";
+              damage <= 0 ? "#ffffff" : damage === 1 ? "#ffc24a" : "#ff4244";
             return (
               <g key={m.svgId} pointerEvents="none">
                 <circle
                   cx={m.cx}
                   cy={m.cy}
                   r="5"
-                  fill="#0a0a0f"
+                  fill="#0d1218"
                   opacity="0.55"
                 />
                 <circle
@@ -456,7 +456,7 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
           })}
         </svg>
       </div>
-      <footer className="px-6 py-2 border-t border-[#1f1f24] text-[10px] uppercase tracking-widest text-gray-500">
+      <footer className="px-6 py-2 border-t border-stroke font-head text-[10px] text-dim">
         {stage === "capitals" &&
           (isMyTurn
             ? "Pick your capital"

@@ -1,7 +1,15 @@
+// FACEIT-style admin analytics dashboard. Aggregates behavioural +
+// demographic data across the most recent 200 MatchSnapshots and the
+// PlayerProfile demographic fields. Admin-only; non-admins redirect to
+// /dashboard.
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
+import PanelCard from "@/app/components/ui/PanelCard";
+import StatBlock from "@/app/components/ui/StatBlock";
+import Slash from "@/app/components/ui/Slash";
 
 const CATEGORY_LABELS: Record<string, string> = {
   geography: "Geography",
@@ -91,8 +99,6 @@ export default async function AnalyticsPage() {
     }),
   ]);
 
-  // Build (playerInGameId → profileId) lookup from finalState across all
-  // snapshots so we can join answer rows back to demographics.
   const profileByPlayer = new Map<string, string>();
   let totalNumericAnswers = 0;
   let totalWarAnswers = 0;
@@ -195,15 +201,20 @@ export default async function AnalyticsPage() {
     .sort((a, b) => b.value - a.value);
 
   return (
-    <div className="min-h-screen text-white">
-      <div className="max-w-6xl mx-auto px-8 py-10 flex flex-col gap-8">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-sm uppercase tracking-widest text-gray-400">
-              Analytics
-            </p>
-            <h1 className="text-3xl font-bold mt-1">Research dashboard</h1>
-            <p className="text-sm text-gray-500 mt-2 max-w-2xl">
+    <div className="min-h-[calc(100vh-4rem)] bg-canvas text-white">
+      <section className="relative overflow-hidden border-b border-stroke bg-gradient-to-br from-surface-hi via-panel to-canvas">
+        <div
+          className="absolute right-[-80px] top-0 bottom-0 w-[200px] bg-blue2/10"
+          style={{ transform: "skewX(-12deg)" }}
+          aria-hidden
+        />
+        <div className="relative max-w-[1600px] mx-auto px-4 sm:px-6 py-6 flex items-start justify-between flex-wrap gap-3">
+          <div className="flex flex-col gap-2 max-w-2xl">
+            <Slash label="Analytics" color="#7c8aff" />
+            <h1 className="font-head text-4xl text-white leading-none">
+              RESEARCH DASHBOARD
+            </h1>
+            <p className="font-body text-sm text-mute leading-relaxed mt-1">
               Aggregate behavioural and demographic data across all players.
               Telemetry comes from MatchSnapshot rows written by the Colyseus
               game server at game_over.
@@ -211,61 +222,89 @@ export default async function AnalyticsPage() {
           </div>
           <Link
             href="/dashboard"
-            className="text-xs text-gray-400 hover:text-white transition-colors px-4 py-2 border border-[#4f4f4f] rounded-lg shrink-0"
+            className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2 shrink-0"
           >
             ← Dashboard
           </Link>
-        </header>
+        </div>
+      </section>
 
-        <section className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatCard label="Players" value={playerCount} />
-          <StatCard label="Completed games" value={snapshotCount} />
-          <StatCard label="Numeric answers" value={totalNumericAnswers} />
-          <StatCard label="War answers" value={totalWarAnswers} />
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 flex flex-col gap-4">
+        <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatBlock
+            label="Players"
+            value={playerCount.toLocaleString()}
+            sub="total"
+          />
+          <StatBlock
+            label="Games"
+            value={snapshotCount.toLocaleString()}
+            sub="completed"
+            accent="var(--color-win)"
+          />
+          <StatBlock
+            label="Numeric answers"
+            value={totalNumericAnswers.toLocaleString()}
+            sub="last 200"
+            accent="var(--color-accent)"
+          />
+          <StatBlock
+            label="War answers"
+            value={totalWarAnswers.toLocaleString()}
+            sub="last 200"
+            accent="var(--color-lose)"
+          />
         </section>
 
-        <BarSection
+        <BarPanel
           title="War MC accuracy by category"
           subtitle="% correct on the multiple-choice questions during attacks"
+          accent="#3fcf6c"
           data={warAccArr}
           unit="%"
-          color="bg-emerald-400"
+          color="var(--color-win)"
           empty="No war answers yet."
         />
 
-        <BarSection
+        <BarPanel
           title="Avg thinking time before typing — by education"
           subtitle="Milliseconds from question shown to first keystroke"
+          accent="#1ed3ff"
           data={inputByEduArr}
           unit="ms"
-          color="bg-blue-400"
+          color="var(--color-accent)"
           empty="No typing telemetry yet."
         />
 
-        <BarSection
+        <BarPanel
           title="Avg input changes per numeric answer — by category"
           subtitle="Higher = more keystrokes / corrections (proxy for hesitation)"
+          accent="#ffc24a"
           data={changesByCatArr}
           unit=""
-          color="bg-amber-400"
+          color="var(--color-gold)"
           empty="No numeric answers yet."
         />
 
-        <section>
-          <h2 className="text-lg font-semibold mb-4">Player demographics</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <SmallBarCard
-              title="Age groups"
-              data={ageArr}
-              color="bg-pink-400"
-            />
-            <SmallBarCard
-              title="Education"
-              data={eduArr}
-              color="bg-blue-400"
-            />
-            <SmallBarCard title="Gender" data={genderArr} color="bg-cyan-400" />
-          </div>
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <MiniBarPanel
+            title="Age groups"
+            accent="#ff6cf3"
+            data={ageArr}
+            color="var(--color-purple2)"
+          />
+          <MiniBarPanel
+            title="Education"
+            accent="#7c8aff"
+            data={eduArr}
+            color="var(--color-blue2)"
+          />
+          <MiniBarPanel
+            title="Gender"
+            accent="#1ed3ff"
+            data={genderArr}
+            color="var(--color-accent)"
+          />
         </section>
       </div>
     </div>
@@ -274,20 +313,10 @@ export default async function AnalyticsPage() {
 
 type Bar = { label: string; value: number; sample?: number };
 
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-xl p-4 flex flex-col gap-1">
-      <span className="text-xs uppercase tracking-wider text-gray-400">
-        {label}
-      </span>
-      <span className="text-2xl font-bold text-white">{value}</span>
-    </div>
-  );
-}
-
-function BarSection({
+function BarPanel({
   title,
   subtitle,
+  accent,
   data,
   unit,
   color,
@@ -295,6 +324,7 @@ function BarSection({
 }: {
   title: string;
   subtitle?: string;
+  accent: string;
   data: Bar[];
   unit: string;
   color: string;
@@ -302,34 +332,34 @@ function BarSection({
 }) {
   const max = data.reduce((m, d) => Math.max(m, d.value), 0);
   return (
-    <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-4">
-      <div>
-        <h2 className="text-base font-semibold">{title}</h2>
-        {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
-      </div>
+    <PanelCard title={title} accent={accent}>
+      {subtitle && (
+        <p className="font-body text-xs text-mute mb-3 -mt-1">{subtitle}</p>
+      )}
       {data.length === 0 ? (
-        <p className="text-sm text-gray-500 italic">{empty}</p>
+        <p className="font-body text-sm text-dim italic">{empty}</p>
       ) : (
         <div className="flex flex-col gap-2">
           {data.map((d) => (
             <div key={d.label} className="flex items-center gap-3">
-              <span className="w-32 text-xs text-gray-300 shrink-0 truncate">
+              <span className="font-head text-[11px] text-mute w-32 shrink-0 truncate">
                 {d.label}
               </span>
-              <div className="flex-1 bg-[#2a2a32] h-6 rounded relative overflow-hidden">
+              <div className="flex-1 bg-panel h-5 relative overflow-hidden">
                 <div
-                  className={`${color} h-full rounded transition-all`}
+                  className="h-full transition-all"
                   style={{
                     width: max > 0 ? `${(d.value / max) * 100}%` : "0%",
+                    background: color,
                   }}
                 />
               </div>
-              <span className="w-24 text-right text-sm font-mono tabular-nums">
+              <span className="font-mono text-sm font-bold tabular-nums w-20 text-right text-white">
                 {d.value}
-                {unit && <span className="text-gray-500 ml-0.5">{unit}</span>}
+                {unit && <span className="text-dim ml-0.5">{unit}</span>}
               </span>
               {d.sample !== undefined && (
-                <span className="w-16 text-right text-[10px] text-gray-600 font-mono">
+                <span className="font-mono text-[10px] text-dim w-14 text-right">
                   n={d.sample}
                 </span>
               )}
@@ -337,49 +367,49 @@ function BarSection({
           ))}
         </div>
       )}
-    </section>
+    </PanelCard>
   );
 }
 
-function SmallBarCard({
+function MiniBarPanel({
   title,
+  accent,
   data,
   color,
 }: {
   title: string;
+  accent: string;
   data: Bar[];
   color: string;
 }) {
   const max = data.reduce((m, d) => Math.max(m, d.value), 0);
   return (
-    <div className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-xl p-4 flex flex-col gap-3">
-      <h3 className="text-xs uppercase tracking-widest text-gray-400">
-        {title}
-      </h3>
+    <PanelCard title={title} accent={accent}>
       {data.length === 0 ? (
-        <p className="text-xs text-gray-600 italic">No data yet.</p>
+        <p className="font-body text-xs text-dim italic">No data yet.</p>
       ) : (
         <div className="flex flex-col gap-1.5">
           {data.map((d) => (
             <div key={d.label} className="flex items-center gap-2">
-              <span className="w-20 text-xs text-gray-300 shrink-0 truncate">
+              <span className="font-head text-[10px] text-mute w-20 shrink-0 truncate">
                 {d.label}
               </span>
-              <div className="flex-1 bg-[#2a2a32] h-3 rounded relative overflow-hidden">
+              <div className="flex-1 bg-panel h-3 relative overflow-hidden">
                 <div
-                  className={`${color} h-full rounded`}
+                  className="h-full"
                   style={{
                     width: max > 0 ? `${(d.value / max) * 100}%` : "0%",
+                    background: color,
                   }}
                 />
               </div>
-              <span className="w-8 text-right text-xs font-mono tabular-nums text-gray-300">
+              <span className="font-mono text-xs tabular-nums w-8 text-right text-white">
                 {d.value}
               </span>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </PanelCard>
   );
 }

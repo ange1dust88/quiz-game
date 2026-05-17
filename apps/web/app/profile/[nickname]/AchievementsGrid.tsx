@@ -1,107 +1,108 @@
-// Grid of every achievement in the catalogue. Unlocked ones show the
-// icon + name + unlock date in colour. Locked ones are greyed out with
-// the description still visible so visitors know what's possible.
+// FACEIT-style achievement card grid. Each card carries a rarity tag
+// (common/uncommon/rare/epic/legendary) coloured to the catalogue spec;
+// locked cards are dimmed with a dark overlay. Layout is the right-rail
+// 2-col grid that sits inside a PanelCard on the profile screen.
 
 import {
   ACHIEVEMENTS,
   type AchievementDef,
+  type AchievementRarity,
 } from "@quiz/shared/achievements";
+import PanelCard from "@/app/components/ui/PanelCard";
 
 type Unlock = { code: string; unlockedAt: Date };
 
 type Props = {
   unlocks: Unlock[];
-  isOwnProfile: boolean;
+  // 2 col is the right-rail default; "wide" expands to 4 cols on lg+
+  // for the dedicated Achievements tab.
+  layout?: "rail" | "wide";
 };
 
-const CATEGORY_BORDER: Record<AchievementDef["category"], string> = {
-  play: "border-blue-400/50 bg-blue-500/10",
-  skill: "border-emerald-400/50 bg-emerald-500/10",
-  rating: "border-amber-400/50 bg-amber-500/10",
-  profile: "border-blue-400/50 bg-blue-500/10",
+const RARITY: Record<
+  AchievementRarity,
+  { color: string; chipText: string }
+> = {
+  common: { color: "var(--color-mute)", chipText: "#06141c" },
+  uncommon: { color: "var(--color-win)", chipText: "#06141c" },
+  rare: { color: "var(--color-blue2)", chipText: "#06141c" },
+  epic: { color: "var(--color-purple2)", chipText: "#06141c" },
+  legendary: { color: "var(--color-gold)", chipText: "#06141c" },
 };
 
-export default function AchievementsGrid({ unlocks, isOwnProfile }: Props) {
+export default function AchievementsGrid({
+  unlocks,
+  layout = "rail",
+}: Props) {
   const byCode = new Map(unlocks.map((u) => [u.code, u.unlockedAt]));
   const earnedCount = unlocks.length;
-
+  const gridCols =
+    layout === "wide"
+      ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+      : "grid-cols-1 sm:grid-cols-2";
   return (
-    <section className="bg-[#1a1a1a]/70 backdrop-blur border border-[#4f4f4f] rounded-2xl p-6 flex flex-col gap-4">
-      <div className="flex items-baseline justify-between flex-wrap gap-2">
-        <h2 className="text-sm uppercase tracking-widest text-gray-400">
-          Achievements
-        </h2>
-        <span className="text-xs text-gray-500">
-          {earnedCount} / {ACHIEVEMENTS.length} unlocked
-        </span>
+    <PanelCard
+      title={`Achievements · ${earnedCount} / ${ACHIEVEMENTS.length}`}
+      accent="#ff6cf3"
+    >
+      <div className={`grid ${gridCols} gap-2`}>
+        {ACHIEVEMENTS.map((a) => (
+          <Card key={a.code} a={a} unlockedAt={byCode.get(a.code)} />
+        ))}
       </div>
+    </PanelCard>
+  );
+}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
-        {ACHIEVEMENTS.map((a) => {
-          const unlockedAt = byCode.get(a.code);
-          const unlocked = Boolean(unlockedAt);
-          return (
-            <div
-              key={a.code}
-              className={`relative flex items-start gap-3 p-3 rounded-xl border-2 transition-colors ${
-                unlocked
-                  ? CATEGORY_BORDER[a.category]
-                  : "border-[#2a2a32] bg-[#0d0d12]/40"
-              }`}
-              title={
-                unlocked && unlockedAt
-                  ? `Unlocked ${unlockedAt.toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}`
-                  : isOwnProfile
-                    ? "Locked — keep playing to unlock"
-                    : "Locked"
-              }
-            >
-              {/* TODO: replace text-letter chip with an SVG icon once the
-                  icon set lands. The catalogue still ships `a.icon` for
-                  the swap. */}
-              <span
-                className={`shrink-0 w-9 h-9 inline-flex items-center justify-center rounded-md text-sm font-bold uppercase tracking-widest ${
-                  unlocked
-                    ? "bg-[#0d0d12] border border-current/30 text-current"
-                    : "bg-[#0d0d12] border border-[#2a2a32] text-gray-600"
-                }`}
-                aria-hidden="true"
-              >
-                {a.name.charAt(0).toUpperCase()}
-              </span>
-              <div className="flex flex-col min-w-0 gap-0.5">
-                <span
-                  className={`text-sm font-semibold leading-tight ${
-                    unlocked ? "text-white" : "text-gray-400"
-                  }`}
-                >
-                  {a.name}
-                </span>
-                <span
-                  className={`text-[11px] leading-snug ${
-                    unlocked ? "text-gray-400" : "text-gray-600"
-                  }`}
-                >
-                  {a.description}
-                </span>
-                {unlocked && unlockedAt && (
-                  <span className="text-[10px] uppercase tracking-widest text-gray-500 mt-0.5">
-                    {unlockedAt.toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
+function Card({
+  a,
+  unlockedAt,
+}: {
+  a: AchievementDef;
+  unlockedAt?: Date;
+}) {
+  const r = RARITY[a.rarity];
+  const unlocked = Boolean(unlockedAt);
+  return (
+    <div
+      className="relative overflow-hidden border px-3 py-3 flex flex-col gap-1"
+      style={{
+        borderColor: unlocked ? r.color : "var(--color-stroke)",
+        background: unlocked ? "var(--color-surface)" : "var(--color-panel)",
+        opacity: unlocked ? 1 : 0.65,
+      }}
+    >
+      {!unlocked && (
+        <div className="absolute inset-0 bg-black/35 pointer-events-none" />
+      )}
+      <span
+        className="absolute top-0 right-0 font-head text-[9px] px-2 py-0.5"
+        style={{ background: r.color, color: r.chipText }}
+      >
+        {a.rarity}
+      </span>
+      <span
+        className="text-2xl"
+        style={{ filter: unlocked ? "none" : "grayscale(1)" }}
+        aria-hidden
+      >
+        {a.icon}
+      </span>
+      <span className="font-head text-xs text-white relative">
+        {a.name}
+      </span>
+      <span className="font-body text-[11px] text-mute leading-snug relative">
+        {a.description}
+      </span>
+      {unlockedAt && (
+        <span className="font-mono text-[10px] text-dim mt-1 relative">
+          {unlockedAt.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </span>
+      )}
+    </div>
   );
 }

@@ -1,57 +1,143 @@
-// Big "CONQUER THE MAP" hero with the headline PLAY NOW button.
-// Mode / pool / region selectors are dropdowns with a single option for
-// now — they exist so the visual hierarchy matches the design; once we
-// have multiple modes / ranked queues, the values become real.
+// Hero card. Left half: ONLINE pill + huge "CONQUER THE MAP" + skewed
+// PLAY NOW + Mode row. Right half: rank panel — level hex, ELO, XP
+// bar, 3 mini stats (Rank / Streak / K/D).
 //
-// Clicking PLAY NOW creates a fresh room and redirects to its lobby
-// (same as the old "Create room" card).
+// One merged card replaces the old HeroPlay + RankWidget two-column
+// arrangement to match the Claude design.
 
 import { createRoom } from "./actions";
+import Hexagon from "@/app/components/ui/Hexagon";
+import Slash from "@/app/components/ui/Slash";
+import MicroBar from "@/app/components/ui/MicroBar";
 
-type Props = { onlineCount: number };
+type Props = {
+  onlineCount: number;
+  level: number;
+  elo: number;
+  experience: number;
+  xpForNext: number;
+  rank: number;
+  streakKind: "W" | "L" | null;
+  streakLen: number;
+  kd: number;
+};
 
-export default function HeroPlay({ onlineCount }: Props) {
+export default function HeroPlay({
+  onlineCount,
+  level,
+  elo,
+  experience,
+  xpForNext,
+  rank,
+  streakKind,
+  streakLen,
+  kd,
+}: Props) {
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-[#1f2230] bg-gradient-to-br from-[#0d1117] via-[#0e1422] to-[#0d1117] p-6 sm:p-8 flex flex-col gap-5 min-h-[260px]">
-      {/* faint europe-map silhouette in the background */}
+    <section className="relative grid grid-cols-1 lg:grid-cols-[1fr_360px] border border-stroke overflow-hidden bg-gradient-to-br from-surface-hi via-surface to-surface min-h-[280px]">
       <div
-        className="absolute inset-0 pointer-events-none opacity-[0.07] bg-no-repeat bg-right bg-contain"
+        className="absolute inset-0 pointer-events-none opacity-30"
         style={{
-          backgroundImage:
-            "radial-gradient(circle at 70% 50%, rgba(31,111,235,0.4), transparent 60%)",
+          background:
+            "radial-gradient(circle at 75% 50%, rgba(30,211,255,0.20), transparent 55%)",
         }}
       />
 
-      <span className="self-start inline-flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold bg-blue-500/15 text-blue-300 border border-blue-500/40 rounded-full px-3 py-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-        Online · {onlineCount.toLocaleString()} players
-      </span>
+      <div className="relative p-6 sm:p-7 flex flex-col gap-5 z-10">
+        <Slash
+          label={`● Online · ${onlineCount.toLocaleString()} players`}
+          color="#1ed3ff"
+        />
 
-      <h1 className="text-4xl sm:text-5xl font-black tracking-tight leading-none">
-        CONQUER
-        <br />
-        THE MAP
-      </h1>
+        <h1 className="font-head text-5xl sm:text-6xl font-extrabold leading-[0.9] tracking-tight text-white">
+          CONQUER
+          <br />
+          THE MAP
+        </h1>
 
-      <p className="text-sm text-gray-400 max-w-md">
-        Pick a mode and queue up. Auto-matched by ELO within 30 seconds.
-      </p>
+        <p className="font-body text-xs text-mute max-w-sm leading-relaxed">
+          Pick a mode and queue up. Auto-matched by ELO within 30 seconds.
+        </p>
 
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-2">
-        <form action={createRoom}>
-          <button
-            type="submit"
-            className="group inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-bold uppercase tracking-widest text-sm px-7 py-3 rounded-md shadow-lg shadow-blue-500/30 transition-colors"
-          >
-            <PlayArrow />
-            Play now
-          </button>
-        </form>
+        <div className="flex items-stretch mt-auto">
+          <form action={createRoom} className="contents">
+            <button
+              type="submit"
+              className="font-head text-lg font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-9 py-4"
+              style={{ transform: "skewX(-10deg)" }}
+            >
+              <span
+                className="inline-block"
+                style={{ transform: "skewX(10deg)" }}
+              >
+                ► Play now
+              </span>
+            </button>
+          </form>
 
-        <div className="flex flex-col gap-1.5 bg-[#0a0d14] border border-[#1f2230] rounded-md p-2 text-[11px] min-w-[240px]">
-          <ModeRow label="Mode" value="Classic 4P" />
-          <ModeRow label="Pool" value="Ranked" />
-          <ModeRow label="Region" value="EU · West" />
+          <div className="flex flex-col ml-5 min-w-[220px]">
+            <ModeRow label="Mode" value="Classic 4P" />
+          </div>
+        </div>
+      </div>
+
+      <div className="relative p-6 flex flex-col gap-4 bg-black/25 border-t lg:border-t-0 lg:border-l border-stroke z-10">
+        <div className="flex items-center justify-between">
+          <span className="font-head text-[10px] text-mute">
+            Your rank · Season 1
+          </span>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <Hexagon
+            value={level}
+            size={64}
+            color="#1ed3ff"
+            textColor="#ffffff"
+          />
+          <div className="flex flex-col leading-tight">
+            <span className="font-head text-3xl font-extrabold text-white">
+              LEVEL {level}
+            </span>
+            <span className="font-mono text-xs text-accent font-bold mt-1">
+              {elo.toLocaleString()} ELO
+            </span>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex justify-between font-mono text-[10px] text-mute mb-1.5">
+            <span>to Level {level + 1}</span>
+            <span className="text-white">
+              {experience} / {xpForNext} XP
+            </span>
+          </div>
+          <MicroBar
+            value={experience}
+            total={xpForNext}
+            height={6}
+            color="#1ed3ff"
+          />
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 mt-1">
+          <MiniStat label="Rank" value={`#${rank}`} />
+          <MiniStat
+            label="Streak"
+            value={
+              streakKind && streakLen > 0
+                ? `${streakKind}${streakLen}`
+                : "—"
+            }
+            color={
+              streakKind === "W"
+                ? "var(--color-win)"
+                : streakKind === "L"
+                  ? "var(--color-lose)"
+                  : undefined
+            }
+          />
+          <MiniStat label="K/D" value={kd.toFixed(2)} />
         </div>
       </div>
     </section>
@@ -60,22 +146,33 @@ export default function HeroPlay({ onlineCount }: Props) {
 
 function ModeRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-2 py-1 hover:bg-[#161a26] rounded transition-colors">
-      <span className="text-[9px] uppercase tracking-widest text-gray-500">
-        {label}
-      </span>
-      <span className="text-xs font-bold text-white">
-        {value}
-        <span className="text-gray-600 ml-1">▾</span>
+    <div className="flex justify-between items-center px-3.5 py-1.5 bg-canvas border border-stroke -mt-px first:mt-0 font-mono text-[11px]">
+      <span className="text-dim">{label.toUpperCase()}</span>
+      <span className="text-white font-bold uppercase">
+        {value} <span className="text-dim">▾</span>
       </span>
     </div>
   );
 }
 
-function PlayArrow() {
+function MiniStat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <polygon points="6,4 20,12 6,20" fill="currentColor" />
-    </svg>
+    <div className="bg-canvas border border-stroke px-2.5 py-2 flex flex-col gap-0.5">
+      <span className="font-head text-[9px] text-mute">{label}</span>
+      <span
+        className="font-mono text-sm font-bold leading-none mt-0.5"
+        style={color ? { color } : undefined}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
