@@ -1,8 +1,7 @@
-// Server-side fetch for any pending lobby invites the signed-in user
-// hasn't dismissed yet. We filter to invites whose target session is
-// still "waiting" — once a host starts or cancels, lingering rows are
-// just dead weight. Render delegates to the client wrapper so the
-// notification can be dismissed without a full nav.
+// Initial server-side fetch for the floating invite widget. Always
+// renders the client wrapper (even with an empty list) so its poller
+// can keep the list fresh without page navs — that's what surfaces an
+// invite that lands while the user is sitting on the dashboard.
 
 import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
@@ -20,13 +19,11 @@ export default async function LobbyInviteWidget() {
     take: 5,
     include: {
       inviter: { select: { nickname: true, avatarUrl: true } },
-      gameSession: { select: { id: true } },
     },
   });
-  if (invites.length === 0) return null;
   return (
     <LobbyInviteWidgetClient
-      invites={invites.map((i) => ({
+      initialInvites={invites.map((i) => ({
         id: i.id,
         sessionId: i.gameSessionId,
         inviterNickname: i.inviter.nickname,

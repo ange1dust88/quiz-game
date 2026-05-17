@@ -1,15 +1,16 @@
 "use client";
 
-// Bottom-left floating card stack showing pending lobby invites. Each
-// card has Join (navigates to /lobby/<id>; the lobby page renders the
-// "join lobby" pill which fires the existing joinGame action) and
-// Dismiss (deletes the LobbyInvite row).
+// Bottom-left floating card stack showing pending lobby invites. Polls
+// /api/lobby-invites every ~12s so a new invite surfaces without
+// requiring a page nav. Each card has Join (links to /lobby/<id>; the
+// lobby page renders the "join lobby" pill that fires the existing
+// joinGame action) and Dismiss (deletes the LobbyInvite row).
 //
-// Hidden on the auth + landing routes and on the very lobby being
-// invited to — once you're there the widget is just noise.
+// Hidden on the auth + landing routes and on the match screen so it
+// doesn't paste invites over a live game.
 
 import Link from "next/link";
-import { useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { usePathname } from "next/navigation";
 import Avatar from "./Avatar";
 import { dismissLobbyInvite } from "@/app/lobby/[id]/inviteActions";
@@ -21,14 +22,44 @@ type Invite = {
   inviterAvatarUrl: string | null;
 };
 
+const POLL_INTERVAL_MS = 12_000;
+
 export default function LobbyInviteWidgetClient({
-  invites,
+  initialInvites,
 }: {
-  invites: Invite[];
+  initialInvites: Invite[];
 }) {
   const pathname = usePathname() ?? "";
+  const [invites, setInvites] = useState<Invite[]>(initialInvites);
+
+  // Re-sync when the server sends a fresh server-rendered list (e.g.
+  // after a revalidatePath from the inviter's invite action).
+  useEffect(() => {
+    setInvites(initialInvites);
+  }, [initialInvites]);
+
+  // Lightweight poller — keeps the widget responsive to incoming
+  // invites without a full router.refresh().
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOnce = async () => {
+      try {
+        const r = await fetch("/api/lobby-invites", { cache: "no-store" });
+        if (!r.ok) return;
+        const data = (await r.json()) as { invites: Invite[] };
+        if (!cancelled) setInvites(data.invites);
+      } catch {
+        // network blip — try again on the next tick
+      }
+    };
+    const t = setInterval(fetchOnce, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
   if (shouldHide(pathname)) return null;
-  // Filter out the invite for the lobby we're currently inside, if any.
   const visible = invites.filter(
     (i) => !pathname.startsWith(`/lobby/${i.sessionId}`),
   );
@@ -37,15 +68,28 @@ export default function LobbyInviteWidgetClient({
   return (
     <div className="fixed left-4 bottom-4 z-40 flex flex-col gap-2 max-w-[calc(100vw-2rem)] sm:max-w-sm">
       {visible.map((inv) => (
-        <InviteCard key={inv.id} invite={inv} />
+        <InviteCard
+          key={inv.id}
+          invite={inv}
+          onDismissed={() =>
+            setInvites((prev) => prev.filter((p) => p.id !== inv.id))
+          }
+        />
       ))}
     </div>
   );
 }
 
-function InviteCard({ invite }: { invite: Invite }) {
+function InviteCard({
+  invite,
+  onDismissed,
+}: {
+  invite: Invite;
+  onDismissed: () => void;
+}) {
   const [pending, startTransition] = useTransition();
   const dismiss = () => {
+    onDismissed();
     startTransition(async () => {
       await dismissLobbyInvite(invite.id);
     });

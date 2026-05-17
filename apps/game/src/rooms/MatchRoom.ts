@@ -1454,15 +1454,30 @@ export class MatchRoom extends Room<MatchState> {
     }
   }
 
-  // Round-robin turnOrder advance that skips abandoned players. Used by
-  // capitals + war turn rotation. Returns the new turnIndex.
+  // Round-robin turnOrder advance that skips players who can't act this
+  // stage. Always skips abandoned players; during war, also skips
+  // anyone whose last land is gone (they're alive but eliminated — no
+  // territory to attack from, so giving them the highlight is just a
+  // dead turn). Returns the new turnIndex.
   private nextActiveTurnIndex(): number {
     const size = Math.max(1, this.state.players.size);
     let idx = (this.state.turnIndex + 1) % size;
     const start = idx;
+    // War-stage land count: precomputed so the predicate doesn't loop
+    // the country map for every candidate.
+    const landByPlayer = new Map<string, number>();
+    if (this.state.stage === "war") {
+      this.state.countries.forEach((c) => {
+        if (c.ownerId)
+          landByPlayer.set(c.ownerId, (landByPlayer.get(c.ownerId) ?? 0) + 1);
+      });
+    }
     do {
       const p = this.playerByTurnOrder(idx);
-      if (p && !p.abandoned) return idx;
+      if (p && !p.abandoned) {
+        if (this.state.stage !== "war") return idx;
+        if ((landByPlayer.get(p.id) ?? 0) > 0) return idx;
+      }
       idx = (idx + 1) % size;
     } while (idx !== start);
     return idx;

@@ -35,6 +35,14 @@ export async function startGame(formData: FormData) {
       gameRoomId: null,
     },
   });
+  // Pending invites for this lobby are dead the moment the match
+  // starts — wipe them so they don't linger as stale cards in the
+  // invitees' bottom-left widget (it filters by status="waiting" so
+  // they'd disappear on the next poll anyway, but instant cleanup
+  // removes the 12s perceived lag).
+  await prisma.lobbyInvite.deleteMany({
+    where: { gameSessionId: sessionId },
+  });
   // Layout-level revalidate so the floating ActiveGameWidget on every
   // page picks up the new "in match" status instead of "in lobby".
   revalidatePath("/", "layout");
@@ -135,6 +143,12 @@ export async function joinGame(sessionId: string) {
       role: "player",
     },
   });
+  // Drop any pending invite for me to this lobby — I'm in, so it's
+  // resolved. Without this the floating widget would keep flashing it
+  // until the next poll cycle.
+  await prisma.lobbyInvite.deleteMany({
+    where: { inviteeId: profile.id, gameSessionId: sessionId },
+  });
   revalidatePath("/", "layout");
 }
 
@@ -184,13 +198,20 @@ export async function leaveLobby(formData: FormData) {
   });
   if (remaining === 0) {
     await prisma.gameSession.delete({ where: { id: sessionId } });
+    // Invites cascade with the session row, but lobbies torn down this
+    // way are rare enough that the explicit no-op is fine.
   } else if (me.role === "host") {
     // Host bailed but guests are still here — flip to "cancelled" so
     // their lobby UIs (subscribed via Supabase realtime) auto-redirect
-    // them home. Their PlayerInGame rows survive for analytics.
+    // them home. Their PlayerInGame rows survive for analytics. Pending
+    // invites to this dead lobby are also wiped so they stop nagging
+    // anyone who hadn't accepted yet.
     await prisma.gameSession.update({
       where: { id: sessionId },
       data: { status: "cancelled" },
+    });
+    await prisma.lobbyInvite.deleteMany({
+      where: { gameSessionId: sessionId },
     });
   }
 
