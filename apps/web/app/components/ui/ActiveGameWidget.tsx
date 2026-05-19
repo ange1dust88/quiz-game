@@ -1,9 +1,9 @@
-// Floating "return to game" pill rendered globally by the root layout.
-// Shows when the signed-in user has an open PlayerInGame attached to a
-// lobby or live match, so they can hop back from any screen with one
-// click. Data is fetched server-side per nav; pathname-driven hiding is
-// handled by the inner client wrapper so we don't duplicate the banner
-// on screens that already advertise the same game.
+// Initial server-side fetch for the floating "return to lobby / rejoin
+// match" pill. Always renders the client wrapper so its poller can
+// keep the pill in sync with the database — after a match ends the
+// server flips the session to "completed" via a Colyseus write, and
+// the polling client picks it up within seconds instead of needing a
+// full nav.
 
 import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
@@ -23,11 +23,16 @@ export default async function ActiveGameWidget() {
       gameSession: { select: { status: true } },
     },
   });
-  if (!game) return null;
   return (
     <ActiveGameWidgetClient
-      sessionId={game.gameSessionId}
-      status={game.gameSession.status}
+      initialGame={
+        game
+          ? {
+              sessionId: game.gameSessionId,
+              status: game.gameSession.status,
+            }
+          : null
+      }
       ownNickname={profile.nickname}
     />
   );

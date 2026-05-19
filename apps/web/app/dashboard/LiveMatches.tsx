@@ -1,6 +1,6 @@
-// LIVE matches sidebar card. Lists ongoing games with a Watch CTA.
-// Data is mocked — once we expose Colyseus matchmaker stats over HTTP
-// the rows fill from real sessions and Watch wires into spectator mode.
+// LIVE matches sidebar card. Lists ongoing games for situational
+// awareness ("the matchmaker is alive, here's what's running"). Data
+// is mocked until we expose Colyseus matchmaker stats over HTTP.
 
 import PanelCard from "@/app/components/ui/PanelCard";
 
@@ -31,46 +31,33 @@ export default function LiveMatches() {
         {MOCK.map((m) => (
           <div
             key={m.id}
-            className="grid grid-cols-[1fr_auto] gap-2 px-3 py-2.5 border-t border-stroke first:border-t-0 items-center"
+            className="px-3 py-2.5 border-t border-stroke first:border-t-0"
           >
-            <div>
-              <div className="flex items-center gap-2">
-                <span
-                  className="w-1.5 h-1.5 rounded-full bg-lose"
-                  style={{ boxShadow: "0 0 6px var(--color-lose)" }}
-                />
-                <span className="font-head text-[11px] text-white">
-                  {m.mode}
-                </span>
-                <span className="font-mono text-[10px] text-dim ml-auto">
-                  {m.time}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <span
-                  className="font-head text-[10px]"
-                  style={{ color: PHASE_COLOR[m.phase] }}
-                >
-                  {m.phase}
-                </span>
-                <span className="font-mono text-[10px] text-dim">
-                  {m.players}P · #{m.id}
-                </span>
-              </div>
+            <div className="flex items-center gap-2">
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-lose"
+                style={{ boxShadow: "0 0 6px var(--color-lose)" }}
+              />
+              <span className="font-head text-[11px] text-white">
+                {m.mode}
+              </span>
+              <span className="font-mono text-[10px] text-dim ml-auto">
+                {m.time}
+              </span>
             </div>
-            <button
-              type="button"
-              disabled
-              title="Spectator mode coming soon"
-              className="font-head text-[10px] text-mute border border-stroke px-2.5 py-1 cursor-not-allowed"
-            >
-              Watch
-            </button>
+            <div className="flex items-center gap-2 mt-1">
+              <span
+                className="font-head text-[10px]"
+                style={{ color: PHASE_COLOR[m.phase] }}
+              >
+                {m.phase}
+              </span>
+              <span className="font-mono text-[10px] text-dim">
+                {m.players}P · #{m.id}
+              </span>
+            </div>
           </div>
         ))}
-      </div>
-      <div className="text-center font-head text-[10px] text-mute hover:text-white border-t border-stroke py-2.5 cursor-pointer transition-colors">
-        View all →
       </div>
     </PanelCard>
   );

@@ -143,6 +143,19 @@ export const ELO_K_FACTOR = 32;
 export const LEAVER_PENALTY_MULTIPLIER = 1.5;
 export const LEAVER_MIN_PENALTY = -25;
 
+// Fisher–Yates in-place shuffle on a copy of the input. Used by the
+// game server to randomise war-question MC option order — without this
+// the correct answer would always sit at the same index (whatever the
+// seed put it at), which is trivially abusable.
+export function shuffled<T>(arr: readonly T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 export function computeEloChanges(
   players: { profileId: string; elo: number }[],
   winnerProfileId: string | null,

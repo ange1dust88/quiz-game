@@ -1,5 +1,7 @@
-// Full match history table. PanelCard shell with PillTab strip; only
-// the RECENT tab has live data, the others are visual-only.
+// Match history table. Used in two places:
+//   - dashboard: compact preview with a "View all →" link to the
+//     profile's matches tab
+//   - profile (matches tab): the full table, no "view all" link
 //
 // Each row derives the viewer's place + ELO delta + capital count from
 // MatchSnapshot.finalState + telemetry. The W/L badge is a sharp
@@ -8,9 +10,15 @@
 import Link from "next/link";
 import { prisma } from "@quiz/db";
 import PanelCard from "@/app/components/ui/PanelCard";
-import PillTab from "@/app/components/ui/PillTab";
 
-type Props = { profileId: string };
+type Props = {
+  profileId: string;
+  // How many rows to render. Dashboard uses ~5, profile uses more.
+  limit?: number;
+  // When set, a "View all →" footer link is appended pointing at
+  // /profile/<nickname>?tab=matches. Pass undefined to suppress.
+  viewAllNickname?: string;
+};
 
 type SnapshotPlayer = {
   id: string;
@@ -114,12 +122,16 @@ function relativeDate(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default async function MatchHistory({ profileId }: Props) {
+export default async function MatchHistory({
+  profileId,
+  limit = 12,
+  viewAllNickname,
+}: Props) {
   const [snapshots, eloHistory] = await Promise.all([
     prisma.matchSnapshot.findMany({
       where: { session: { players: { some: { profileId } } } },
       orderBy: { createdAt: "desc" },
-      take: 8,
+      take: limit,
       select: {
         sessionId: true,
         winnerId: true,
@@ -132,7 +144,7 @@ export default async function MatchHistory({ profileId }: Props) {
     prisma.eloHistoryEntry.findMany({
       where: { profileId },
       orderBy: { createdAt: "desc" },
-      take: 12,
+      take: Math.max(limit, 12),
       select: { delta: true, createdAt: true },
     }),
   ]);
@@ -145,17 +157,7 @@ export default async function MatchHistory({ profileId }: Props) {
     .filter((r): r is Row => r !== null);
 
   return (
-    <PanelCard
-      title="Match history"
-      accent="#1ed3ff"
-      padded={false}
-      right={
-        <div className="flex">
-          <PillTab label="Recent" active />
-          <PillTab label="Replays" dim />
-        </div>
-      }
-    >
+    <PanelCard title="Match history" accent="#1ed3ff" padded={false}>
       {rows.length === 0 ? (
         <p className="font-body text-sm text-dim px-5 py-8 text-center">
           No matches yet — hit Play now to start.
@@ -166,6 +168,14 @@ export default async function MatchHistory({ profileId }: Props) {
             <Row key={r.sessionId} r={r} />
           ))}
         </div>
+      )}
+      {viewAllNickname && rows.length > 0 && (
+        <Link
+          href={`/profile/${encodeURIComponent(viewAllNickname)}?tab=matches`}
+          className="block text-center font-head text-[10px] text-mute hover:text-white border-t border-stroke py-2.5 transition-colors"
+        >
+          View all →
+        </Link>
       )}
     </PanelCard>
   );

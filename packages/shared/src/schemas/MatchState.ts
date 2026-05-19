@@ -138,6 +138,12 @@ export class ActiveAttack extends Schema {
   declare tieDefenderAnswer: number;
   declare tieAttackerAnswered: boolean;
   declare tieDefenderAnswered: boolean;
+  // Time-to-submit per side, ms from tie question start. 0 when the
+  // player didn't answer in time. Lets the reveal UI show "1.4s" next
+  // to each guess so players can see who replied faster, not just who
+  // got closer.
+  declare tieAttackerTimeMs: number;
+  declare tieDefenderTimeMs: number;
   declare tieResolveRevealEndsAt: number;
 
   constructor() {
@@ -165,6 +171,8 @@ export class ActiveAttack extends Schema {
     this.tieDefenderAnswer = 0;
     this.tieAttackerAnswered = false;
     this.tieDefenderAnswered = false;
+    this.tieAttackerTimeMs = 0;
+    this.tieDefenderTimeMs = 0;
     this.tieResolveRevealEndsAt = 0;
   }
 }
@@ -192,6 +200,8 @@ defineTypes(ActiveAttack, {
   tieDefenderAnswer: "number",
   tieAttackerAnswered: "boolean",
   tieDefenderAnswered: "boolean",
+  tieAttackerTimeMs: "number",
+  tieDefenderTimeMs: "number",
   tieResolveRevealEndsAt: "number",
 });
 

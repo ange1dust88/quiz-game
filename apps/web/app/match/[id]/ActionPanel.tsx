@@ -466,6 +466,7 @@ function TieRevealView({
     answered: boolean;
     answer: number;
     diff: number;
+    timeMs: number;
   }[] = [];
   if (attacker) {
     rows.push({
@@ -476,6 +477,7 @@ function TieRevealView({
       answered: attack.tieAttackerAnswered,
       answer: attack.tieAttackerAnswer,
       diff: Math.abs(attack.tieAttackerAnswer - attack.tieCorrectAnswer),
+      timeMs: attack.tieAttackerTimeMs,
     });
   }
   if (defender) {
@@ -487,6 +489,7 @@ function TieRevealView({
       answered: attack.tieDefenderAnswered,
       answer: attack.tieDefenderAnswer,
       diff: Math.abs(attack.tieDefenderAnswer - attack.tieCorrectAnswer),
+      timeMs: attack.tieDefenderTimeMs,
     });
   }
   // Sort by closest-first so the winner is visually on top.
@@ -526,7 +529,7 @@ function TieRevealView({
             <>
               <span className="font-mono text-sm text-white">{r.answer}</span>
               <span
-                className="font-mono text-[11px] w-14 text-right"
+                className="font-mono text-[11px] w-16 text-right"
                 style={{
                   color:
                     idx === 0 && ranked.length > 0
@@ -534,7 +537,7 @@ function TieRevealView({
                       : "var(--color-dim)",
                 }}
               >
-                Δ{r.diff}
+                {(r.timeMs / 1000).toFixed(1)}s
               </span>
             </>
           ) : (

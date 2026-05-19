@@ -11,6 +11,7 @@ import {
   MAX_HOVER_TRAIL,
   rankAnswers,
   sanitizeHoverTrail,
+  shuffled,
   territoriesForPlace,
   warEndReason,
   winnerByLands,
@@ -579,5 +580,42 @@ describe("checkSessionInvariants", () => {
       activeAttackIds: ["a1", "a2"],
     });
     expect(v.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("shuffled", () => {
+  it("preserves length and elements", () => {
+    const input = ["a", "b", "c", "d"];
+    const out = shuffled(input);
+    expect(out).toHaveLength(input.length);
+    expect([...out].sort()).toEqual([...input].sort());
+  });
+
+  it("doesn't mutate the input", () => {
+    const input = ["a", "b", "c", "d"];
+    const snapshot = [...input];
+    shuffled(input);
+    expect(input).toEqual(snapshot);
+  });
+
+  it("actually randomises — across many runs every position holds the answer roughly evenly", () => {
+    // Statistical sanity check: shuffle [answer, x, x, x] 4000 times and
+    // make sure "answer" lands at index 0 close to 1/4 of the time.
+    // 2σ tolerance leaves plenty of room for honest randomness without
+    // turning into a flaky test.
+    const ITERATIONS = 4000;
+    const ANSWER = "answer";
+    const input = [ANSWER, "a", "b", "c"];
+    const positionCounts = [0, 0, 0, 0];
+    for (let i = 0; i < ITERATIONS; i++) {
+      const out = shuffled(input);
+      positionCounts[out.indexOf(ANSWER)] += 1;
+    }
+    const expected = ITERATIONS / 4;
+    // σ ≈ √(n · p · (1-p)) = √(4000 · 0.25 · 0.75) ≈ 27.4 → tolerate 4σ.
+    const tol = 110;
+    for (const c of positionCounts) {
+      expect(Math.abs(c - expected)).toBeLessThan(tol);
+    }
   });
 });

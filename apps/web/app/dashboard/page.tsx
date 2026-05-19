@@ -145,7 +145,11 @@ export default async function Dashboard() {
             warWins={warWins}
           />
 
-          <MatchHistory profileId={profile.id} />
+          <MatchHistory
+            profileId={profile.id}
+            limit={5}
+            viewAllNickname={profile.nickname}
+          />
         </div>
 
         <div className="flex flex-col gap-4 min-w-0">

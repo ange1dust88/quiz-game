@@ -26,6 +26,7 @@ import {
   computeXpEarned,
   evaluateAchievements,
   rankAnswers,
+  shuffled,
   verifyJwt,
   warEndReason,
   winnerByLands,
@@ -1032,7 +1033,7 @@ export class MatchRoom extends Room<MatchState> {
     aa.countryId = target.id;
     aa.questionId = wq.id;
     aa.questionText = wq.text;
-    aa.options = new ArraySchema<string>(...wq.options);
+    aa.options = new ArraySchema<string>(...shuffled(wq.options));
     aa.category = wq.category;
     aa.expiresAt = Date.now() + WAR_MC_TIMER_MS;
     this.state.activeAttack = aa;
@@ -1170,6 +1171,8 @@ export class MatchRoom extends Room<MatchState> {
     aa.tieDefenderAnswer = 0;
     aa.tieAttackerAnswered = false;
     aa.tieDefenderAnswered = false;
+    aa.tieAttackerTimeMs = 0;
+    aa.tieDefenderTimeMs = 0;
 
     ca.tieQuestionRowId = q.id;
     ca.tieCorrectAnswer = q.answer;
@@ -1229,6 +1232,8 @@ export class MatchRoom extends Room<MatchState> {
     aa.tieDefenderAnswer = def?.value ?? 0;
     aa.tieAttackerAnswered = att !== undefined;
     aa.tieDefenderAnswered = def !== undefined;
+    aa.tieAttackerTimeMs = att ? att.receivedAtMs - ca.tieStartedAtMs : 0;
+    aa.tieDefenderTimeMs = def ? def.receivedAtMs - ca.tieStartedAtMs : 0;
     aa.tieExpiresAt = 0;
     aa.tieResolveRevealEndsAt = Date.now() + WAR_REVEAL_MS;
 
@@ -1314,7 +1319,7 @@ export class MatchRoom extends Room<MatchState> {
     // Reset tie state, restart MC with new question.
     aa.questionId = wq.id;
     aa.questionText = wq.text;
-    aa.options = new ArraySchema<string>(...wq.options);
+    aa.options = new ArraySchema<string>(...shuffled(wq.options));
     aa.category = wq.category;
     aa.expiresAt = Date.now() + WAR_MC_TIMER_MS;
     aa.tieQuestionId = 0;
@@ -1704,6 +1709,21 @@ export class MatchRoom extends Room<MatchState> {
     };
 
     try {
+      // Flip session.status FIRST so the floating "match in progress"
+      // pill on every connected client's dashboard drops within the
+      // next poll tick — the snapshot upsert below ships a heavy JSON
+      // blob and would otherwise stall the status flip by hundreds of
+      // ms. Both writes are independent rows, so order doesn't affect
+      // correctness.
+      await prisma.gameSession.update({
+        where: { id: this.sessionId },
+        data: {
+          status: "completed",
+          stage: "ended",
+          winnerId: this.state.winnerId || null,
+        },
+      });
+
       await prisma.matchSnapshot.upsert({
         where: { sessionId: this.sessionId },
         create: {
@@ -1716,17 +1736,8 @@ export class MatchRoom extends Room<MatchState> {
         update: {
           winnerId: this.state.winnerId || null,
           duration,
-          finalState,
           telemetry: this.telemetry,
-        },
-      });
-
-      await prisma.gameSession.update({
-        where: { id: this.sessionId },
-        data: {
-          status: "completed",
-          stage: "ended",
-          winnerId: this.state.winnerId || null,
+          finalState,
         },
       });
 

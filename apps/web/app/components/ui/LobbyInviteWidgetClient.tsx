@@ -22,7 +22,7 @@ type Invite = {
   inviterAvatarUrl: string | null;
 };
 
-const POLL_INTERVAL_MS = 12_000;
+const POLL_INTERVAL_MS = 2_000;
 
 export default function LobbyInviteWidgetClient({
   initialInvites,

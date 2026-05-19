@@ -1,29 +1,63 @@
 "use client";
 
 // FACEIT-style "return to game" pill — fixed bottom-right. Sharp
-// bordered panel with a coloured top stripe + skewed CTA chip. Hidden
-// on screens that already surface the same info (the match itself, the
-// owning lobby, my own profile's in-game banner, the auth pages).
+// bordered panel with a coloured top stripe + skewed CTA chip. Polls
+// /api/active-game every ~4s so the pill drops off as soon as the
+// match server flips the session to "completed" / "cancelled" — no
+// stale "Return to lobby" after the game ends.
+//
+// Hidden on screens that already surface the same info (the match
+// itself, the owning lobby, own profile's in-game banner, auth pages).
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 
-type Props = {
-  sessionId: string;
-  status: string;
-  ownNickname: string;
-};
+type GameInfo = { sessionId: string; status: string } | null;
+
+const POLL_INTERVAL_MS = 2_000;
 
 export default function ActiveGameWidgetClient({
-  sessionId,
-  status,
+  initialGame,
   ownNickname,
-}: Props) {
+}: {
+  initialGame: GameInfo;
+  ownNickname: string;
+}) {
   const pathname = usePathname() ?? "";
-  if (shouldHide(pathname, sessionId, ownNickname)) return null;
+  const [game, setGame] = useState<GameInfo>(initialGame);
 
-  const isWaiting = status === "waiting";
-  const href = isWaiting ? `/lobby/${sessionId}` : `/match/${sessionId}`;
+  // Resync if the server-rendered prop refreshes (revalidatePath).
+  useEffect(() => {
+    setGame(initialGame);
+  }, [initialGame]);
+
+  // Lightweight polling — the match server updates session.status from
+  // outside Next.js, so revalidatePath alone doesn't catch the flip.
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOnce = async () => {
+      try {
+        const r = await fetch("/api/active-game", { cache: "no-store" });
+        if (!r.ok) return;
+        const data = (await r.json()) as { game: GameInfo };
+        if (!cancelled) setGame(data.game);
+      } catch {
+        // network blip — retry on the next tick
+      }
+    };
+    const t = setInterval(fetchOnce, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  if (!game) return null;
+  if (shouldHide(pathname, game.sessionId, ownNickname)) return null;
+
+  const isWaiting = game.status === "waiting";
+  const href = isWaiting ? `/lobby/${game.sessionId}` : `/match/${game.sessionId}`;
   const title = isWaiting ? "In a lobby" : "Match in progress";
   const cta = isWaiting ? "Return to lobby" : "Rejoin match";
   const accent = isWaiting ? "var(--color-accent)" : "var(--color-gold)";
@@ -63,7 +97,6 @@ function shouldHide(
   sessionId: string,
   ownNickname: string,
 ): boolean {
-  // Auth + landing pages — pre-login UX, no point.
   if (pathname === "/" || pathname === "/login" || pathname === "/register") {
     return true;
   }

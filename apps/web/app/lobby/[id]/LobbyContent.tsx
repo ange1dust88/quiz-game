@@ -449,7 +449,7 @@ function JoinPrompt({ sessionId }: { sessionId: string }) {
   return (
     <div className="bg-surface border border-stroke px-4 py-3 flex items-center gap-3 shadow-xl shadow-black/40">
       <span className="font-body text-sm text-mute">
-        You're spectating — join the lobby to play.
+        You're not in the lobby yet — join to play.
       </span>
       <button
         type="button"
@@ -477,7 +477,6 @@ const HARDCODED_SETTINGS: { label: string; value: string; locked: boolean }[] = 
   { label: "War timer", value: "8s", locked: true },
   { label: "Starting armies", value: "3", locked: true },
   { label: "ELO range", value: "±200", locked: true },
-  { label: "Spectators", value: "Allowed", locked: true },
 ];
 
 function MatchSettingsPanel({

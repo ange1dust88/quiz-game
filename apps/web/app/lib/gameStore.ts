@@ -66,6 +66,8 @@ export type ActiveAttackMirror = {
   tieDefenderAnswer: number;
   tieAttackerAnswered: boolean;
   tieDefenderAnswered: boolean;
+  tieAttackerTimeMs: number;
+  tieDefenderTimeMs: number;
   tieResolveRevealEndsAt: number;
 };
 
@@ -216,6 +218,8 @@ function snapshot(s: any): GameStateMirror {
           tieDefenderAnswer: aa.tieDefenderAnswer ?? 0,
           tieAttackerAnswered: aa.tieAttackerAnswered ?? false,
           tieDefenderAnswered: aa.tieDefenderAnswered ?? false,
+          tieAttackerTimeMs: aa.tieAttackerTimeMs ?? 0,
+          tieDefenderTimeMs: aa.tieDefenderTimeMs ?? 0,
           tieResolveRevealEndsAt: aa.tieResolveRevealEndsAt ?? 0,
         }
       : null;
