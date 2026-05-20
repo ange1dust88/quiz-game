@@ -10,10 +10,10 @@
 import Link from "next/link";
 import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
-import Avatar from "@/app/components/ui/Avatar";
 import HeaderNav from "./HeaderNav";
 import HeaderHider from "./HeaderHider";
-import { logout } from "@/app/login/actions";
+import UserMenu from "./UserMenu";
+import CoinPurse from "./CoinPurse";
 
 function parseAdminEmails(): string[] {
   return (process.env.ADMIN_EMAILS ?? "")
@@ -35,13 +35,14 @@ export default async function AppHeader() {
     }
   }
 
+  // Admin link lives in the user dropdown (UserMenu) — keep the top
+  // nav focused on player-facing routes.
   const tabs = [
     { href: "/dashboard", label: "Dashboard" },
     { href: "/play", label: "Play" },
     { href: "/tournaments", label: "Tournaments" },
     { href: "/leaderboard", label: "Leaderboard" },
     { href: "/friends", label: "Friends" },
-    ...(isAdmin ? [{ href: "/admin/avatars", label: "Admin" }] : []),
   ];
 
   return (
@@ -79,52 +80,21 @@ export default async function AppHeader() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-2 px-4 border-l border-stroke">
-            <CoinIcon />
-            <span className="text-sm font-bold font-mono text-gold">
-              0
-            </span>
-          </div>
+          {profile && (
+            <div className="hidden md:flex items-center px-2 border-l border-stroke">
+              <CoinPurse coins={profile.coins} />
+            </div>
+          )}
 
-          <div className="flex items-center gap-3 px-3 sm:px-4 border-l border-stroke shrink-0">
+          <div className="flex items-center px-2 sm:px-3 border-l border-stroke shrink-0">
             {profile ? (
-              <>
-                <Link
-                  href={`/profile/${encodeURIComponent(profile.nickname)}`}
-                  className="flex items-center gap-2 hover:bg-surface-hi px-2 py-1 transition-colors"
-                  title="View profile"
-                >
-                  <div className="relative">
-                    <Avatar
-                      nickname={profile.nickname}
-                      avatarUrl={profile.avatarUrl}
-                      size={36}
-                      shape="square"
-                      color="#1ed3ff"
-                    />
-                    <span className="absolute -bottom-1 -right-1 text-[9px] font-bold bg-gold text-black px-1 leading-tight">
-                      {profile.level}
-                    </span>
-                  </div>
-                  <div className="hidden sm:flex flex-col leading-tight items-start">
-                    <span className="text-xs font-bold tracking-widest text-white">
-                      {profile.nickname.toUpperCase()}
-                    </span>
-                    <span className="text-[10px] text-dim font-mono">
-                      {profile.elo} ELO
-                    </span>
-                  </div>
-                </Link>
-                <form action={logout}>
-                  <button
-                    type="submit"
-                    className="text-[10px] uppercase tracking-widest text-dim hover:text-white transition-colors px-2 py-1 border border-stroke hover:border-mute rounded-md"
-                    title="Sign out"
-                  >
-                    Out
-                  </button>
-                </form>
-              </>
+              <UserMenu
+                nickname={profile.nickname}
+                avatarUrl={profile.avatarUrl}
+                level={profile.level}
+                elo={profile.elo}
+                isAdmin={isAdmin}
+              />
             ) : (
               <Link
                 href="/login"
@@ -189,27 +159,3 @@ function SearchIcon() {
   );
 }
 
-function CoinIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <circle
-        cx="12"
-        cy="12"
-        r="9"
-        fill="none"
-        stroke="#ffc24a"
-        strokeWidth="2"
-      />
-      <text
-        x="12"
-        y="17"
-        textAnchor="middle"
-        fill="#ffc24a"
-        fontSize="11"
-        fontWeight="800"
-      >
-        Q
-      </text>
-    </svg>
-  );
-}

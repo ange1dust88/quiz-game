@@ -4,3 +4,4 @@ export * from "./gameLogic.js";
 export * from "./matchChoices.js";
 export * from "./auth.js";
 export * from "./achievements.js";
+export * from "./europeMap.js";

@@ -725,7 +725,7 @@ function MapPreviewPanel() {
     >
       <div className="relative bg-panel h-[220px] px-3 py-3">
         <svg
-          viewBox="320 320 400 310"
+          viewBox="0 0 1000 684"
           preserveAspectRatio="xMidYMid meet"
           className="w-full h-full"
         >

@@ -27,6 +27,11 @@ model PlayerProfile {
   gamesPlayed Int            @default(0)
   gamesWon    Int            @default(0)
   gamesLost   Int            @default(0)
+  // Soft currency ("Q-coins") players earn by levelling up, finishing
+  // daily missions and unlocking achievements. Spending sinks (cosmetic
+  // shop, tournament entry) come later — for now this is read-only and
+  // surfaces as the chip in the app header.
+  coins       Int            @default(0)
   eloHistory  EloHistoryEntry[]
   achievements Achievement[]
   avatarSubmissions AvatarSubmission[] @relation("submitter")

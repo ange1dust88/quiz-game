@@ -10,6 +10,8 @@
     "./gameLogic": "./src/gameLogic.ts",
     "./matchChoices": "./src/matchChoices.ts",
     "./achievements": "./src/achievements.ts",
+    "./auth": "./src/auth.ts",
+    "./europeMap": "./src/europeMap.ts",
     "./schemas": "./src/schemas/index.ts"
   },
   "dependencies": {

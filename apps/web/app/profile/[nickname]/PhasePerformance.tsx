@@ -1,19 +1,20 @@
-// Phase-by-phase performance breakdown derived from telemetry that's
-// already in MatchSnapshot. Five horizontal bars:
-//   - Capitals · pick first   → fraction of matches where I was first
-//                               in turnOrder (proxy for getting the
-//                               opening pick)
-//   - Expand · trivia accuracy → numericAnswers with diff===0
-//   - Expand · pick optimal    → win rate of expand-question rounds
-//                               where I placed top-2 (proxy for
-//                               "I picked good territories")
-//   - War · attack win         → warAnswers where I was attacker and
-//                               isCorrect (best-effort: we don't tag
-//                               attacker vs defender in telemetry, so
-//                               we use overall war isCorrect rate)
-//   - War · defend win         → inverse approximation — pairs better
-//                               with attack rate to give a sense of
-//                               balance
+// Phase-by-phase performance breakdown derived from MatchSnapshot
+// telemetry. Five horizontal bars — every metric is real, no
+// fake-constant fillers:
+//   - Capitals · risky picks    → fraction of capital picks where the
+//                                  player chose the "risky" style
+//   - Expand · trivia exact     → numericAnswers with diff===0 (you
+//                                  hit the answer on the nose)
+//   - Expand · close (≤10%)     → numericAnswers within 10% of the
+//                                  correct value. Relative threshold,
+//                                  works across categories where the
+//                                  answer scale varies wildly
+//                                  (km of border vs millions of pop.)
+//   - War · attacker accuracy   → warAnswers where role=attacker and
+//                                  isCorrect
+//   - War · defender accuracy   → warAnswers where role=defender and
+//                                  isCorrect
+//
 // Footer surfaces the highest bar as the "strongest phase" insight.
 
 import PanelCard from "@/app/components/ui/PanelCard";
@@ -30,46 +31,75 @@ type Props = {
 };
 
 type FsT = {
-  players?: { id: string; profileId: string; turnOrder: number }[];
+  players?: { id: string; profileId: string }[];
 };
 type TelT = {
+  capitalPicks?: {
+    playerId: string;
+    capitalStyle: string;
+  }[];
   numericAnswers?: {
     playerId: string;
     diff: number;
+    correctAnswer?: number;
   }[];
   warAnswers?: {
     playerId: string;
     isCorrect: boolean;
+    role?: "attacker" | "defender";
   }[];
 };
 
+// "Close enough" threshold for the expand-phase close-guess metric.
+// Relative — 10% of the correct value works whether the answer is
+// 200 (km of border) or 50_000_000 (population).
+const CLOSE_REL = 0.1;
+
 export default function PhasePerformance({ profileId, snapshots }: Props) {
-  let firstPickHits = 0;
-  let firstPickPossible = 0;
+  let capitalPicksTotal = 0;
+  let capitalPicksRisky = 0;
   let numTotal = 0;
   let numExact = 0;
-  let numClose = 0; // diff <= 10% of value, used as "good pick" proxy
-  let warTotal = 0;
-  let warCorrect = 0;
+  let numCloseTotal = 0;
+  let numClose = 0;
+  let attackerTotal = 0;
+  let attackerCorrect = 0;
+  let defenderTotal = 0;
+  let defenderCorrect = 0;
 
   for (const s of snapshots) {
     const fs = s.finalState as FsT | null;
     const me = fs?.players?.find((p) => p.profileId === profileId);
     if (!me) continue;
-    firstPickPossible += 1;
-    if (me.turnOrder === 0) firstPickHits += 1;
 
     const tel = s.telemetry as TelT | null;
+    for (const c of tel?.capitalPicks ?? []) {
+      if (c.playerId !== me.id) continue;
+      capitalPicksTotal += 1;
+      if (c.capitalStyle === "risky") capitalPicksRisky += 1;
+    }
     for (const a of tel?.numericAnswers ?? []) {
       if (a.playerId !== me.id) continue;
       numTotal += 1;
       if (a.diff === 0) numExact += 1;
-      if (a.diff <= 5) numClose += 1;
+      // Older snapshots don't have correctAnswer in telemetry — skip
+      // them from the close-rate sample rather than misreporting.
+      if (typeof a.correctAnswer === "number" && a.correctAnswer > 0) {
+        numCloseTotal += 1;
+        if (a.diff / Math.abs(a.correctAnswer) <= CLOSE_REL) {
+          numClose += 1;
+        }
+      }
     }
     for (const a of tel?.warAnswers ?? []) {
       if (a.playerId !== me.id) continue;
-      warTotal += 1;
-      if (a.isCorrect) warCorrect += 1;
+      if (a.role === "attacker") {
+        attackerTotal += 1;
+        if (a.isCorrect) attackerCorrect += 1;
+      } else if (a.role === "defender") {
+        defenderTotal += 1;
+        if (a.isCorrect) defenderCorrect += 1;
+      }
     }
   }
 
@@ -78,28 +108,28 @@ export default function PhasePerformance({ profileId, snapshots }: Props) {
 
   const bars = [
     {
-      label: "Capitals · pick first",
-      value: pct(firstPickHits, firstPickPossible),
+      label: "Capitals · risky picks",
+      value: pct(capitalPicksRisky, capitalPicksTotal),
       color: "var(--color-blue2)",
     },
     {
-      label: "Expand · trivia accuracy",
+      label: "Expand · trivia exact",
       value: pct(numExact, numTotal),
       color: "var(--color-accent)",
     },
     {
-      label: "Expand · close guesses",
-      value: pct(numClose, numTotal),
+      label: "Expand · close (≤10%)",
+      value: pct(numClose, numCloseTotal),
       color: "var(--color-accent)",
     },
     {
-      label: "War · MC correct",
-      value: pct(warCorrect, warTotal),
+      label: "War · attacker accuracy",
+      value: pct(attackerCorrect, attackerTotal),
       color: "var(--color-lose)",
     },
     {
-      label: "War · defend win",
-      value: pct(Math.round(warCorrect * 0.85), warTotal),
+      label: "War · defender accuracy",
+      value: pct(defenderCorrect, defenderTotal),
       color: "var(--color-win)",
     },
   ];

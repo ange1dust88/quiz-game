@@ -17,14 +17,18 @@ import { Client, Room } from "colyseus";
 import { prisma } from "@quiz/db";
 import { ArraySchema } from "@colyseus/schema";
 import {
+  ACHIEVEMENT_BY_CODE,
   applyExperience,
   attackerWonOutcome,
   capitalParamsForChoice,
+  coinRewardFor,
   computeEloChanges,
   computePickOrder,
   computeTieResult,
   computeXpEarned,
+  EUROPE_TOPOLOGY,
   evaluateAchievements,
+  playableForCount,
   rankAnswers,
   shuffled,
   verifyJwt,
@@ -149,6 +153,10 @@ export class MatchRoom extends Room<MatchState> {
       category: string;
       value: number;
       diff: number;
+      // Source-of-truth answer for the question, so downstream
+      // analytics can derive relative-% closeness (diff/correct)
+      // instead of relying on an absolute-units threshold.
+      correctAnswer: number;
       timeMs: number;
       firstInputAtMs: number | null;
       inputChangeCount: number;
@@ -170,6 +178,10 @@ export class MatchRoom extends Room<MatchState> {
       questionId: number;
       category: string;
       isCorrect: boolean;
+      // Role this player took in the war attack. "attacker" picked
+      // the target country; "defender" was being attacked. Lets the
+      // profile split MC accuracy by side instead of conflating both.
+      role: "attacker" | "defender";
       submittedAtMs: number;
     }>;
     attacks: Array<{
@@ -458,20 +470,32 @@ export class MatchRoom extends Room<MatchState> {
       this.state.players.set(p.id, player);
     });
 
-    // Countries — created from CountryTemplate. The Postgres MatchCountry
-    // table is no longer the source of truth during the live match; only
-    // the final MatchSnapshot will be persisted at game_over.
-    const templates = await prisma.countryTemplate.findMany({
-      orderBy: { id: "asc" },
-    });
-    for (const t of templates) {
+    // Countries — picked from the shared playable-set keyed by player
+    // count (12 / 15 / 20 for 2P / 3P / 4P). The full 45-country SVG
+    // is rendered as background on the client; only entries here are
+    // interactive and tracked by the game state.
+    const playable = playableForCount(session.players.length);
+    // Stable templateId = 1-based index in the playable list. We use
+    // the index so neighbour ids are deterministic per match.
+    const idBySvg = new Map<string, number>();
+    playable.forEach((svgId, idx) => idBySvg.set(svgId, idx + 1));
+    playable.forEach((svgId, idx) => {
+      const templateId = idx + 1;
       const c = new Country();
-      c.id = String(t.id);
-      c.svgId = t.svgId;
-      c.templateId = t.id;
+      c.id = String(templateId);
+      c.svgId = svgId;
+      c.templateId = templateId;
       this.state.countries.set(c.id, c);
-      this.templateNeighbors.set(t.id, t.neighbors);
-    }
+      // Resolve neighbour svgIds → templateIds, filtering out anyone
+      // not in this match's playable set (a 2P match shouldn't see UA
+      // as a neighbour of PL, for example).
+      const neighbourIds: number[] = [];
+      for (const n of EUROPE_TOPOLOGY[svgId] ?? []) {
+        const nid = idBySvg.get(n);
+        if (nid !== undefined) neighbourIds.push(nid);
+      }
+      this.templateNeighbors.set(templateId, neighbourIds);
+    });
 
     this.state.stage = "capitals";
     this.state.status = "active";
@@ -579,6 +603,35 @@ export class MatchRoom extends Room<MatchState> {
     return has;
   }
 
+  // Set of country templateIds that border any already-placed capital.
+  // Used to forbid stacking two capitals on neighbouring tiles.
+  private templateIdsAdjacentToCapital(): Set<number> {
+    const out = new Set<number>();
+    this.state.countries.forEach((c) => {
+      if (!c.isCapital) return;
+      const ns = this.templateNeighbors.get(c.templateId);
+      if (!ns) return;
+      for (const n of ns) out.add(n);
+    });
+    return out;
+  }
+
+  // List all unowned countries — separated into "non-adjacent to any
+  // existing capital" (preferred) and "adjacent" (escape valve when the
+  // map is too dense to find non-adjacent picks). Returning both lets
+  // callers fall back gracefully so the stage never deadlocks.
+  private freeCapitalCandidates(): { allowed: Country[]; blocked: Country[] } {
+    const adj = this.templateIdsAdjacentToCapital();
+    const allowed: Country[] = [];
+    const blocked: Country[] = [];
+    this.state.countries.forEach((c) => {
+      if (c.ownerId) return;
+      if (adj.has(c.templateId)) blocked.push(c);
+      else allowed.push(c);
+    });
+    return { allowed, blocked };
+  }
+
 
   /**
    * Apply a capital pick. Validates that:
@@ -610,6 +663,21 @@ export class MatchRoom extends Room<MatchState> {
     });
     if (!country || country.ownerId) return;
 
+    // Forbid placing a capital adjacent to another capital — UNLESS the
+    // map is so dense that no non-adjacent free tile is left (e.g. last
+    // picker on a small map). In that case allow it; better to keep the
+    // stage flowing than deadlock the room.
+    const adjToCapital = this.templateIdsAdjacentToCapital();
+    if (adjToCapital.has(country.templateId)) {
+      const { allowed } = this.freeCapitalCandidates();
+      if (allowed.length > 0) {
+        console.log(
+          `[match ${this.roomId}] rejected ${svgId} for ${player.nickname} — adjacent to existing capital`,
+        );
+        return;
+      }
+    }
+
     const params = capitalParamsForChoice(player.capitalStyle);
     country.ownerId = playerId;
     country.isCapital = true;
@@ -640,16 +708,17 @@ export class MatchRoom extends Room<MatchState> {
       return;
     }
 
-    const free: Country[] = [];
-    this.state.countries.forEach((c) => {
-      if (!c.ownerId) free.push(c);
-    });
-    if (free.length === 0) {
+    // Prefer a free country that ISN'T touching an existing capital —
+    // match the constraint we enforce on manual picks. Only fall back
+    // to adjacent tiles when the map is too dense for that to work.
+    const { allowed, blocked } = this.freeCapitalCandidates();
+    const pool = allowed.length > 0 ? allowed : blocked;
+    if (pool.length === 0) {
       this.advanceCapitalTurn();
       return;
     }
 
-    const pick = free[Math.floor(Math.random() * free.length)];
+    const pick = pool[Math.floor(Math.random() * pool.length)];
     console.log(
       `[match ${this.roomId}] auto-pick: ${player.nickname} → ${pick.svgId}`,
     );
@@ -841,7 +910,11 @@ export class MatchRoom extends Room<MatchState> {
       results = [...ranked, ...missing];
     }
 
-    // Telemetry — store one row per submitted answer.
+    // Telemetry — store one row per submitted answer. We also include
+    // `correctAnswer` so downstream analysis can compute relative
+    // closeness (diff / correct) instead of relying on an absolute
+    // threshold like "diff <= 5", which is meaningless when answers
+    // range from km of border to millions of population.
     for (const a of cq.answers.values()) {
       this.telemetry.numericAnswers.push({
         playerId: a.playerId,
@@ -849,6 +922,7 @@ export class MatchRoom extends Room<MatchState> {
         category: this.state.activeQuestion?.category ?? "general",
         value: a.value,
         diff: Math.abs(a.value - cq.correctAnswer),
+        correctAnswer: cq.correctAnswer,
         timeMs: Math.max(0, a.receivedAtMs - cq.startedAtMs),
         firstInputAtMs: a.firstInputAtMs,
         inputChangeCount: a.inputChangeCount,
@@ -1090,6 +1164,7 @@ export class MatchRoom extends Room<MatchState> {
       questionId: ca.questionRowId,
       category: this.state.activeAttack?.category ?? "general",
       isCorrect,
+      role: playerId === ca.attackerId ? "attacker" : "defender",
       submittedAtMs,
     });
 
@@ -1897,6 +1972,22 @@ export class MatchRoom extends Room<MatchState> {
         data: fresh.map((code) => ({ profileId, code })),
         skipDuplicates: true,
       });
+      // Credit Q-coins for each fresh unlock. Payout per achievement is
+      // determined by its rarity tier (see ACHIEVEMENT_COIN_REWARD).
+      let coinPayout = 0;
+      for (const code of fresh) {
+        const def = ACHIEVEMENT_BY_CODE[code];
+        if (def) coinPayout += coinRewardFor(def.rarity);
+      }
+      if (coinPayout > 0) {
+        await prisma.playerProfile.update({
+          where: { id: profileId },
+          data: { coins: { increment: coinPayout } },
+        });
+        console.log(
+          `[match ${this.roomId}] +${coinPayout} coins for ${profileId} (achievements: ${fresh.join(", ")})`,
+        );
+      }
     } catch (err) {
       console.warn(
         `[match ${this.roomId}] achievement evaluation failed for ${profileId}`,

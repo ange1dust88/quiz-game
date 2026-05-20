@@ -243,12 +243,17 @@ export default async function ProfilePage({
     }
   }
 
-  let myCapitals = 0;
-  let myTerritories = 0;
-  let warWins = 0;
-  let warLosses = 0;
-  let placeSum = 0;
-  let placeMatches = 0;
+  // Per-category MC accuracy + average answer time, derived from
+  // telemetry across all of this profile's snapshots. The category
+  // counter only tracks WAR multiple-choice (binary correct/wrong);
+  // numeric expand answers don't have a binary truth so they're
+  // excluded from "best category" but DO contribute to avg time.
+  const categoryStats = new Map<
+    string,
+    { correct: number; total: number }
+  >();
+  let answerTimeSum = 0;
+  let answerTimeCount = 0;
 
   type FsT = {
     players?: {
@@ -265,78 +270,105 @@ export default async function ProfilePage({
     }[];
   };
   type TelT = {
-    warAnswers?: { playerId: string; isCorrect: boolean }[];
+    warAnswers?: {
+      playerId: string;
+      isCorrect: boolean;
+      category?: string;
+      submittedAtMs?: number;
+    }[];
+    numericAnswers?: {
+      playerId: string;
+      category?: string;
+      timeMs?: number;
+    }[];
   };
 
   for (const s of snapshots) {
     const fs = s.finalState as FsT | null;
-    if (!fs?.players || !fs.countries) continue;
+    if (!fs?.players) continue;
     const me = fs.players.find((p) => p.profileId === profile.id);
     if (!me) continue;
-
-    const points = new Map<string, number>();
-    for (const c of fs.countries) {
-      if (!c.ownerId) continue;
-      points.set(c.ownerId, (points.get(c.ownerId) ?? 0) + c.points);
-      if (c.ownerId === me.id) {
-        myTerritories += 1;
-        if (c.isCapital) myCapitals += 1;
-      }
-    }
-    const ranked = [...fs.players].sort(
-      (a, b) => (points.get(b.id) ?? 0) - (points.get(a.id) ?? 0),
-    );
-    const place = ranked.findIndex((p) => p.id === me.id) + 1;
-    if (place > 0) {
-      placeSum += place;
-      placeMatches += 1;
-    }
 
     const tel = s.telemetry as TelT | null;
     for (const a of tel?.warAnswers ?? []) {
       if (a.playerId !== me.id) continue;
-      if (a.isCorrect) warWins += 1;
-      else warLosses += 1;
+      const cat = a.category ?? "general";
+      const entry = categoryStats.get(cat) ?? { correct: 0, total: 0 };
+      entry.total += 1;
+      if (a.isCorrect) entry.correct += 1;
+      categoryStats.set(cat, entry);
+      if (typeof a.submittedAtMs === "number" && a.submittedAtMs > 0) {
+        answerTimeSum += a.submittedAtMs;
+        answerTimeCount += 1;
+      }
+    }
+    for (const n of tel?.numericAnswers ?? []) {
+      if (n.playerId !== me.id) continue;
+      if (typeof n.timeMs === "number" && n.timeMs > 0) {
+        answerTimeSum += n.timeMs;
+        answerTimeCount += 1;
+      }
     }
   }
-  const totalSnapshots = snapshots.length;
   const winRate =
     profile.gamesPlayed > 0
       ? Math.round((profile.gamesWon / profile.gamesPlayed) * 100)
       : 0;
-  const warTotal = warWins + warLosses;
-  const warWinPct = warTotal > 0 ? Math.round((warWins / warTotal) * 100) : 0;
-  const avgPlace =
-    placeMatches > 0 ? (placeSum / placeMatches).toFixed(2) : "—";
+
+  // Best category: highest accuracy with at least 3 attempts so a
+  // 1-for-1 lucky guess in some niche category doesn't claim the
+  // crown. Sub-3 sample? Just fall back to "—".
+  const CATEGORY_LABELS: Record<string, string> = {
+    geography: "Geography",
+    history: "History",
+    math: "Math",
+    science: "Science",
+    sports: "Sports",
+    pop_culture: "Pop culture",
+    language: "Language",
+    general: "General",
+  };
+  const MIN_CATEGORY_SAMPLE = 3;
+  let bestCategory: { label: string; pct: number } | null = null;
+  for (const [cat, v] of categoryStats) {
+    if (v.total < MIN_CATEGORY_SAMPLE) continue;
+    const pct = Math.round((v.correct / v.total) * 100);
+    if (!bestCategory || pct > bestCategory.pct) {
+      bestCategory = { label: CATEGORY_LABELS[cat] ?? cat, pct };
+    }
+  }
+
+  const avgAnswerSec =
+    answerTimeCount > 0 ? answerTimeSum / answerTimeCount / 1000 : null;
 
   const statTiles = (
-    <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
       <StatBlock
         label="Matches"
-        value={totalSnapshots.toLocaleString()}
+        value={profile.gamesPlayed.toLocaleString()}
         sub="lifetime"
       />
       <StatBlock
-        label="Wins"
-        value={profile.gamesWon.toLocaleString()}
-        sub={`${winRate}% rate`}
+        label="Win rate"
+        value={`${winRate}%`}
+        sub={`${profile.gamesWon.toLocaleString()} of ${profile.gamesPlayed.toLocaleString()}`}
         accent="var(--color-win)"
       />
-      <StatBlock label="Avg place" value={avgPlace} sub="of N" />
       <StatBlock
-        label="Capitals"
-        value={myCapitals.toLocaleString()}
-        sub={
-          totalSnapshots > 0
-            ? `${(myCapitals / totalSnapshots).toFixed(1)} / match`
-            : "—"
-        }
+        label="Best category"
+        value={bestCategory ? `${bestCategory.pct}%` : "—"}
+        sub={bestCategory ? bestCategory.label : "Not enough answers yet"}
+        accent="var(--color-accent)"
       />
       <StatBlock
-        label="War W%"
-        value={`${warWinPct}%`}
-        sub={`${warWins} / ${warTotal}`}
-        accent="var(--color-accent)"
+        label="Avg answer"
+        value={avgAnswerSec !== null ? `${avgAnswerSec.toFixed(1)}s` : "—"}
+        sub={
+          answerTimeCount > 0
+            ? `${answerTimeCount.toLocaleString()} answers`
+            : "No data yet"
+        }
+        accent="var(--color-blue2)"
       />
       <StatBlock
         label="Peak ELO"

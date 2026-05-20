@@ -31,6 +31,28 @@ import { EUROPE_NEIGHBORS } from "@/app/lib/europeNeighbors";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 
 const UNCLAIMED = "#1f2836";
+// Countries that aren't in this match's playable set — rendered for
+// visual context (full Europe outline) but get no ownership / hover /
+// click. Dimmer than UNCLAIMED so the eye doesn't read them as "free
+// territory I could click".
+const OFFMAP_FILL = "#0e1420";
+const OFFMAP_STROKE = "#1a2030";
+
+// Pre-computed viewBox per player count so the camera frames just the
+// playable cluster with ~30 SVG units of padding. The full Europe is
+// `0 0 1000 684` — too zoomed out when only 12 central tiles are
+// playable. Values come from running tools/compute-bbox over the
+// playable subsets at build time.
+//
+// 3P and 4P share a viewBox because Ukraine defines the east edge in
+// both, and Balkans (added in 4P) stay vertically inside Italy's south
+// reach already covered by 3P.
+const VIEWBOX_BY_PLAYERS: Record<number, string> = {
+  2: "314 310 407 340",
+  3: "314 310 604 340",
+  4: "314 310 604 340",
+};
+const VIEWBOX_FALLBACK = "0 0 1000 684";
 
 export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
   const stage = useStage();
@@ -95,21 +117,39 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
   }, [activeAttack?.countryId, countries]);
 
   // Build set of svgIds that are CLICKABLE for me right now. Used to
-  // highlight only the LEGAL targets — capitals can be anywhere, expand
-  // and war need adjacency to my existing territories. We read the static
-  // adjacency from EUROPE_NEIGHBORS; the server still validates.
+  // highlight only the LEGAL targets — capitals can't sit next to
+  // another capital; expand and war need adjacency to my existing
+  // territories. We read the static adjacency from EUROPE_NEIGHBORS;
+  // the server still validates.
   //
-  // Expand has an isolation fallback: if I own land but none of my
-  // territories border a free country, the server lets me pick ANY free
-  // country (otherwise I'd be stuck). The eligible set mirrors that, so
-  // the highlight doesn't lie when an isolated player is up.
+  // Both capitals and expand have density-fallbacks: if the strict
+  // legal set is empty (capitals → every free tile borders a capital,
+  // expand → no free neighbour) the server lets the player pick any
+  // free country. The eligible set mirrors that fallback so the
+  // highlight doesn't lie when the strict rule gives nothing.
   const eligibleSvgIds = useMemo(() => {
     if (!isMyTurn) return new Set<string>();
     const out = new Set<string>();
     if (stage === "capitals") {
+      // SvgIds bordering any existing capital — those are blocked.
+      const blocked = new Set<string>();
+      for (const c of countries) {
+        if (!c.isCapital) continue;
+        const ns = EUROPE_NEIGHBORS[c.svgId];
+        if (!ns) continue;
+        for (const n of ns) blocked.add(n);
+      }
+      const allFree: string[] = [];
+      const allowed = new Set<string>();
       countries.forEach((c) => {
-        if (!c.ownerId) out.add(c.svgId);
+        if (c.ownerId) return;
+        allFree.push(c.svgId);
+        if (!blocked.has(c.svgId)) allowed.add(c.svgId);
       });
+      // Density-fallback: if every free tile is adjacent to a capital,
+      // server allows any free pick — mirror that here.
+      if (allowed.size > 0) return allowed;
+      allFree.forEach((s) => out.add(s));
       return out;
     }
 
@@ -262,6 +302,10 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
     if (!c) return;
     if (stage === "capitals") {
       if (c.ownerId) return;
+      // Adjacent-to-capital tiles aren't in eligibleSvgIds (unless the
+      // density-fallback kicked in). Silently ignore — saves a round
+      // trip the server would reject anyway.
+      if (!eligibleSvgIds.has(svgId)) return;
       setPendingSvgId(svgId);
       claimCapital(svgId);
     } else if (stage === "expand") {
@@ -308,19 +352,33 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
       <div className="flex-1 flex items-center justify-center overflow-hidden">
         <svg
           ref={svgRef}
-          viewBox="320 320 400 310"
-          className="max-w-225 w-full h-full"
+          viewBox={VIEWBOX_BY_PLAYERS[players.length] ?? VIEWBOX_FALLBACK}
+          className="max-w-[1200px] w-full h-full"
         >
           {EUROPE_PATHS.map((p) => {
             const c = countryBySvg[p.svgId];
-            const owner = c?.ownerId ?? null;
+            // No state row → this country isn't part of the playable
+            // set for this match. Render it as background with no
+            // interaction at all.
+            if (!c) {
+              return (
+                <path
+                  key={p.svgId}
+                  id={p.svgId}
+                  d={p.d}
+                  fill={OFFMAP_FILL}
+                  stroke={OFFMAP_STROKE}
+                  strokeWidth={0.5}
+                  pointerEvents="none"
+                >
+                  <title>{p.name}</title>
+                </path>
+              );
+            }
+            const owner = c.ownerId ?? null;
             const fill = owner ? colorByPlayer[owner] ?? UNCLAIMED : UNCLAIMED;
             const eligible = eligibleSvgIds.has(p.svgId);
-            const cursor = !c
-              ? "default"
-              : stageAllowsClick(stage, isMyTurn, c.ownerId, myPlayerId)
-                ? "pointer"
-                : "not-allowed";
+            const cursor = isMyTurn && eligible ? "pointer" : "not-allowed";
             const flash = flashIds.has(p.svgId);
             const isTargeted = attackedSvgId === p.svgId;
             const warMode = stage === "war";
@@ -369,9 +427,7 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
               >
                 <title>
                   {p.name}
-                  {c
-                    ? ` — ${c.points}pts${c.isCapital ? ` (capital ${c.armies}/${c.maxArmies})` : ""}`
-                    : ""}
+                  {` — ${c.points}pts${c.isCapital ? ` (capital ${c.armies}/${c.maxArmies})` : ""}`}
                 </title>
               </path>
             );
@@ -476,15 +532,3 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
   );
 }
 
-function stageAllowsClick(
-  stage: string,
-  isMyTurn: boolean,
-  ownerId: string | null,
-  myId: string,
-): boolean {
-  if (!isMyTurn) return false;
-  if (stage === "capitals") return !ownerId;
-  if (stage === "expand") return !ownerId;
-  if (stage === "war") return ownerId !== null && ownerId !== myId;
-  return false;
-}

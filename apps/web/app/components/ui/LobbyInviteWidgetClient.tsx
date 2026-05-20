@@ -66,7 +66,20 @@ export default function LobbyInviteWidgetClient({
   if (visible.length === 0) return null;
 
   return (
-    <div className="fixed left-4 bottom-4 z-40 flex flex-col gap-2 max-w-[calc(100vw-2rem)] sm:max-w-sm">
+    <div
+      className="fixed right-4 z-40 flex flex-col gap-2 max-w-[calc(100vw-2rem)] sm:max-w-md animate-invite-slide"
+      // Sit just below the 64px app header — toast-style notification
+      // tray. More visible than the old bottom-left corner; standard
+      // pattern for incoming invites.
+      style={{ top: "calc(4rem + 12px)" }}
+    >
+      <style>{`
+        @keyframes invite-slide {
+          0%   { opacity: 0; transform: translateX(20px); }
+          100% { opacity: 1; transform: translateX(0); }
+        }
+        .animate-invite-slide { animation: invite-slide 0.25s ease-out; }
+      `}</style>
       {visible.map((inv) => (
         <InviteCard
           key={inv.id}
@@ -96,27 +109,30 @@ function InviteCard({
   };
   return (
     <div
-      className="bg-surface border border-stroke flex items-center gap-3 px-3 py-2.5 shadow-xl shadow-black/40"
+      className="bg-surface border border-stroke flex items-center gap-3 px-4 py-3 shadow-xl shadow-black/50"
       style={{ borderTop: "3px solid var(--color-accent)" }}
     >
       <Avatar
         nickname={invite.inviterNickname}
         avatarUrl={invite.inviterAvatarUrl}
-        size={36}
+        size={48}
         shape="square"
       />
-      <div className="flex-1 min-w-0 flex flex-col leading-tight">
+      <div className="flex-1 min-w-0 flex flex-col leading-tight gap-0.5">
         <span className="font-head text-[10px] text-accent">
           Lobby invite
         </span>
-        <span className="font-head text-xs text-white truncate">
-          {invite.inviterNickname.toUpperCase()} wants you in
+        <span className="font-head text-sm text-white truncate">
+          {invite.inviterNickname.toUpperCase()}
+        </span>
+        <span className="font-body text-[11px] text-mute">
+          wants you in their lobby
         </span>
       </div>
-      <div className="flex gap-1.5 shrink-0">
+      <div className="flex flex-col gap-1.5 shrink-0">
         <Link
           href={`/lobby/${invite.sessionId}`}
-          className="font-head text-[10px] font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-3 py-1.5"
+          className="font-head text-xs font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-4 py-2 text-center"
         >
           Join
         </Link>
@@ -124,10 +140,10 @@ function InviteCard({
           type="button"
           onClick={dismiss}
           disabled={pending}
-          className="font-head text-[10px] text-mute hover:text-lose border border-stroke hover:border-lose disabled:opacity-60 transition-colors px-2 py-1.5"
+          className="font-head text-[10px] text-mute hover:text-lose border border-stroke hover:border-lose disabled:opacity-60 transition-colors px-4 py-1.5"
           title="Dismiss"
         >
-          ✕
+          Dismiss
         </button>
       </div>
     </div>

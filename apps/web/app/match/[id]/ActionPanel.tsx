@@ -372,51 +372,36 @@ function WarView({
               title: `${defender.nickname} — ${attack.lastDefenderCorrect ? "correct" : "wrong"}`,
             });
           }
-          // Background comes from a Tailwind class so hover can override
-          // it. Inline style only sets borderColor + text colour (those
-          // don't need a hover variant). Three visual states:
-          //   - clickable    → bg-panel, hover bg-surface-hi
-          //   - picked       → bg-accent tint, no hover (commitment)
-          //   - revealing    → fixed bg per outcome, no hover
+          // Pure Tailwind classes for the clickable state so all three
+          // hover targets (bg, border, text) respond together — using
+          // inline `style` for those would silently override the
+          // `hover:` modifiers. Picked / revealing states pin colours
+          // via inline style since they're not hoverable anyway.
           const clickable =
             isInvolved && picked === null && !isRevealing;
-          let bgClass = "bg-panel";
-          let style: React.CSSProperties = {
-            borderColor: "var(--color-stroke)",
-            color: "var(--color-mute)",
-          };
+          let classes =
+            "bg-panel border-stroke text-mute";
+          let style: React.CSSProperties = {};
           if (isRevealing) {
             if (isCorrect) {
-              bgClass = "bg-win/15";
-              style = {
-                borderColor: "var(--color-win)",
-                color: "var(--color-win)",
-              };
+              classes = "bg-win/15 border-win text-win";
+            } else if (pickerDots.length > 0) {
+              classes = "bg-panel border-stroke text-mute";
             } else {
-              style = {
-                borderColor: "var(--color-stroke)",
-                color:
-                  pickerDots.length > 0
-                    ? "var(--color-mute)"
-                    : "var(--color-dim)",
-              };
+              classes = "bg-panel border-stroke text-dim";
             }
           } else if (picked === opt) {
-            bgClass = "bg-accent/20";
-            style = {
-              borderColor: "var(--color-accent)",
-              color: "#ffffff",
-            };
+            classes = "bg-accent/20 border-accent text-white";
           }
           const hoverClass = clickable
-            ? "hover:bg-surface-hi cursor-pointer"
+            ? "hover:bg-surface-hi hover:border-mute hover:text-white cursor-pointer"
             : "cursor-default";
           return (
             <button
               key={opt}
               onClick={() => pickOption(opt)}
               disabled={!clickable}
-              className={`flex items-center justify-between gap-2 px-3 py-2 font-head text-xs border transition-colors text-left ${bgClass} ${hoverClass}`}
+              className={`flex items-center justify-between gap-2 px-3 py-2 font-head text-xs border transition-colors text-left ${classes} ${hoverClass}`}
               style={style}
             >
               <span className="leading-tight">{opt}</span>

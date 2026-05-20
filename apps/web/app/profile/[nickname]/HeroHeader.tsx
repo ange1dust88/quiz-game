@@ -103,22 +103,22 @@ export default function HeroHeader({
           </div>
         </div>
 
-        <div className="flex-1 min-w-[260px] flex flex-col gap-2">
+        <div className="flex-1 min-w-[260px] flex flex-col gap-2.5">
           <div className="flex items-center gap-3 flex-wrap">
             {isOwnProfile && (
               <Slash label="You" color="#1ed3ff" dark />
             )}
-            <span className="font-mono text-[11px] text-mute">
+            <span className="font-mono text-[13px] text-mute">
               Joined {joinedAt.toLocaleDateString("en-US", { month: "short", year: "numeric" })} · {daysSince(joinedAt)}d
             </span>
           </div>
-          <h1 className="font-head text-4xl sm:text-5xl font-extrabold text-white tracking-wider leading-none">
+          <h1 className="font-head text-5xl sm:text-6xl font-extrabold text-white tracking-wider leading-none">
             {nickname.toUpperCase()}
           </h1>
-          <div className="flex items-center gap-3 flex-wrap text-[11px] text-mute font-body">
+          <div className="flex items-center gap-3 flex-wrap text-sm text-mute font-body">
             <FlagTag code={country} />
             <span className="font-mono">
-              <span className="text-accent font-bold">
+              <span className="text-accent font-bold text-base">
                 {elo.toLocaleString()}
               </span>{" "}
               ELO
@@ -126,13 +126,15 @@ export default function HeroHeader({
             <span className="text-dim">·</span>
             <span>
               Rank{" "}
-              <span className="text-white font-mono font-bold">#{rank}</span>
+              <span className="text-white font-mono font-bold text-base">
+                #{rank}
+              </span>
             </span>
             {streakKind && streakLen > 0 && (
               <>
                 <span className="text-dim">·</span>
                 <span
-                  className="font-mono font-bold"
+                  className="font-mono font-bold text-base"
                   style={{ color: streakColor }}
                 >
                   {streakKind}
@@ -156,14 +158,14 @@ export default function HeroHeader({
             {isOwnProfile && (
               <Link
                 href="/settings"
-                className="font-head text-[11px] text-white bg-accent hover:bg-accent-dim transition-colors px-4 py-2"
+                className="font-head text-sm text-white bg-accent hover:bg-accent-dim transition-colors px-5 py-2.5"
               >
                 Edit settings
               </Link>
             )}
           </div>
           {inGame && (
-            <span className="font-mono text-[10px] text-win">
+            <span className="font-mono text-xs text-win">
               ● Online · in lobby
             </span>
           )}
@@ -182,7 +184,7 @@ export default function HeroHeader({
               <Link
                 key={t.key}
                 href={href}
-                className={`relative font-head text-[10px] px-3 py-1 border-x border-stroke -mx-px transition-colors ${
+                className={`relative font-head text-[13px] px-4 py-2 border-x border-stroke -mx-px transition-colors ${
                   isActive
                     ? "text-white bg-surface-hi"
                     : "text-mute hover:text-white"
