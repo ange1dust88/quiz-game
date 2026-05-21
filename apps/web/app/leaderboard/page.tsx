@@ -175,27 +175,19 @@ export default async function LeaderboardPage() {
           title="Full rankings"
           accent="#1ed3ff"
           padded={false}
-          right={
-            <button
-              type="button"
-              disabled
-              className="font-head text-[10px] text-mute border border-stroke px-2.5 py-1 cursor-not-allowed"
-            >
-              Sort by ELO ▾
-            </button>
-          }
         >
           {top.length === 0 ? (
             <p className="font-body text-sm text-dim px-4 py-12 text-center">
               No players yet — play a match to be the first.
             </p>
           ) : (
-            <div>
+            <div className="overflow-x-auto">
+              <div className="min-w-[680px]">
               <div
                 className="grid items-center gap-2 px-4 py-2 border-b border-stroke bg-panel"
                 style={{
                   gridTemplateColumns:
-                    "70px 38px 1fr 90px 110px 90px 80px 90px 80px",
+                    "70px 38px 1fr 90px 110px 90px 90px 80px",
                 }}
               >
                 <span className="font-head text-[10px] text-dim">Rank</span>
@@ -204,7 +196,6 @@ export default async function LeaderboardPage() {
                 <span className="font-head text-[10px] text-dim">ELO</span>
                 <span className="font-head text-[10px] text-dim">Win rate</span>
                 <span className="font-head text-[10px] text-dim">Matches</span>
-                <span className="font-head text-[10px] text-dim">Avg pl</span>
                 <span className="font-head text-[10px] text-dim">Streak</span>
                 <span className="font-head text-[10px] text-dim">7d Δ</span>
               </div>
@@ -238,6 +229,7 @@ export default async function LeaderboardPage() {
                   />
                 </>
               )}
+              </div>
             </div>
           )}
         </PanelCard>

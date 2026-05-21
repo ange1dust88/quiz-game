@@ -105,6 +105,12 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     winnerId: session.winnerId,
     warRound,
     maxWarRounds: MAX_WAR_ROUNDS,
+    maxPlayers: session.maxPlayers,
+    ranked: session.ranked,
+    capitalsTimerSec: session.capitalsTimerSec,
+    expandTimerSec: session.expandTimerSec,
+    warTimerSec: session.warTimerSec,
+    categories: session.categories as string[],
     players: session.players.map((p) => ({
       id: p.id,
       profileId: p.profileId,
@@ -133,11 +139,22 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     })),
   };
 
-  // Friends + already-sent invites for the invite panel. We only show
-  // friends who aren't already in the lobby; the existing invites flag
-  // them as "Sent ✓" so the host doesn't double-fire.
+  // Sweep expired invites for this lobby before reading. Cheap (one
+  // DELETE WHERE filter) and runs on every page load — keeps the
+  // LobbyInvite table from accumulating stale rows once the TTL kicks
+  // in. Awaited so subsequent queries see the post-cleanup state.
+  const now = new Date();
+  await prisma.lobbyInvite.deleteMany({
+    where: { gameSessionId: id, expiresAt: { lt: now } },
+  });
+
+  // Friends + already-sent invites + active invite roster for slot
+  // rendering. After the sweep above, every LobbyInvite row for this
+  // session is by construction active — we still keep the expiresAt
+  // filter as a safety net against the millisecond between sweep and
+  // read.
   const playerProfileIds = new Set(session.players.map((p) => p.profileId));
-  const [friendships, sentInvites] = await Promise.all([
+  const [friendships, sentInvites, activeInvites] = await Promise.all([
     prisma.friendship.findMany({
       where: {
         status: "accepted",
@@ -170,8 +187,31 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       },
     }),
     prisma.lobbyInvite.findMany({
-      where: { gameSessionId: id, inviterId: profile.id },
+      where: {
+        gameSessionId: id,
+        inviterId: profile.id,
+        expiresAt: { gt: now },
+      },
       select: { inviteeId: true },
+    }),
+    prisma.lobbyInvite.findMany({
+      where: { gameSessionId: id, expiresAt: { gt: now } },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        inviteeId: true,
+        expiresAt: true,
+        invitee: {
+          select: {
+            id: true,
+            nickname: true,
+            avatarUrl: true,
+            level: true,
+            elo: true,
+            country: true,
+          },
+        },
+      },
     }),
   ]);
   const friendList = friendships
@@ -180,6 +220,18 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     )
     .filter((p) => !playerProfileIds.has(p.id));
   const invitedIds = new Set(sentInvites.map((i) => i.inviteeId));
+  const pendingInvites = activeInvites.map((inv) => ({
+    inviteId: inv.id,
+    profile: {
+      id: inv.invitee.id,
+      nickname: inv.invitee.nickname,
+      avatarUrl: inv.invitee.avatarUrl ?? null,
+      level: inv.invitee.level,
+      elo: inv.invitee.elo,
+      country: inv.invitee.country ?? null,
+    },
+    expiresAt: inv.expiresAt.toISOString(),
+  }));
 
   return (
     <LobbyContent
@@ -188,6 +240,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       currentUser={{ id: profile.id, userId }}
       friends={friendList}
       invitedIds={Array.from(invitedIds)}
+      pendingInvites={pendingInvites}
     />
   );
 };

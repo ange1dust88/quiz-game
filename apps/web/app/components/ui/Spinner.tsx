@@ -6,8 +6,12 @@ export default function Spinner({ size = 32 }: { size?: number }) {
     <span
       role="status"
       aria-label="Loading"
-      style={{ width: size, height: size }}
-      className="inline-block animate-spin rounded-full border-2 border-[#2a2a32] border-t-emerald-400"
+      style={{
+        width: size,
+        height: size,
+        borderTopColor: "var(--color-accent)",
+      }}
+      className="inline-block animate-spin rounded-full border-2 border-[var(--color-stroke)]"
     />
   );
 }

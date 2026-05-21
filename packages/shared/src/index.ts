@@ -5,3 +5,5 @@ export * from "./matchChoices.js";
 export * from "./auth.js";
 export * from "./achievements.js";
 export * from "./europeMap.js";
+export * from "./missions.js";
+export * from "./lobbySettings.js";

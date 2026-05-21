@@ -88,7 +88,14 @@ export default async function Dashboard() {
       else warLosses += 1;
     }
   }
-  const kd = warLosses > 0 ? warWins / warLosses : warWins;
+  // War answer accuracy — % of correct MC answers in war attacks.
+  // Replaces the old "K/D ratio" that was warWins/warLosses with a
+  // shooter-game label that didn't reflect what was being measured.
+  const warAnswersTotal = warWins + warLosses;
+  const warAccuracyPct =
+    warAnswersTotal > 0
+      ? Math.round((warWins / warAnswersTotal) * 100)
+      : 0;
 
   // Aggregate stats for the tile row.
   const totalSnapshots = await prisma.matchSnapshot.count({
@@ -132,7 +139,7 @@ export default async function Dashboard() {
             rank={myRank}
             streakKind={streakKind}
             streakLen={streakLen}
-            kd={kd}
+            warAccuracyPct={warAccuracyPct}
           />
 
           <StatTiles

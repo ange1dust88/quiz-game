@@ -3,8 +3,148 @@
 import { getProfile } from "@/app/lib/auth";
 import { prisma } from "@quiz/db";
 import { isValidChoice } from "@quiz/shared/matchChoices";
+import {
+  CAPITALS_TIMER_PRESETS,
+  EXPAND_TIMER_PRESETS,
+  RANKED_DEFAULTS,
+  WAR_TIMER_PRESETS,
+  isQuestionCategory,
+  isValidTimer,
+  type QuestionCategoryKey,
+} from "@quiz/shared/lobbySettings";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+
+export type LobbySettingsResult = { ok: true } | { ok: false; error: string };
+
+async function assertHostInWaitingLobby(
+  sessionId: string,
+): Promise<LobbySettingsResult & { profileId?: string }> {
+  const profile = await getProfile();
+  const player = await prisma.playerInGame.findUnique({
+    where: {
+      gameSessionId_profileId: {
+        gameSessionId: sessionId,
+        profileId: profile.id,
+      },
+    },
+    select: { role: true, gameSession: { select: { status: true } } },
+  });
+  if (!player) return { ok: false, error: "You're not in this lobby." };
+  if (player.role !== "host") {
+    return { ok: false, error: "Only the host can change settings." };
+  }
+  if (player.gameSession.status !== "waiting") {
+    return { ok: false, error: "Settings are locked once the match starts." };
+  }
+  return { ok: true, profileId: profile.id };
+}
+
+// Flip ranked ↔ custom. Switching back to ranked resets all overrides
+// to the canonical defaults so a previous custom config doesn't quietly
+// leak into a ranked match.
+export async function setLobbyRanked(
+  sessionId: string,
+  ranked: boolean,
+): Promise<LobbySettingsResult> {
+  const guard = await assertHostInWaitingLobby(sessionId);
+  if (!guard.ok) return guard;
+  await prisma.gameSession.update({
+    where: { id: sessionId },
+    data: ranked
+      ? {
+          ranked: true,
+          capitalsTimerSec: RANKED_DEFAULTS.capitalsTimerSec,
+          expandTimerSec: RANKED_DEFAULTS.expandTimerSec,
+          warTimerSec: RANKED_DEFAULTS.warTimerSec,
+          categories: [],
+        }
+      : { ranked: false },
+  });
+  revalidatePath(`/lobby/${sessionId}`);
+  return { ok: true };
+}
+
+// Update one or more of the three customisable timers. Only allowed
+// while the lobby is in custom mode — otherwise we silently ignore the
+// write so a stale form submission can't sneak through after switching
+// back to ranked.
+export async function setLobbyTimers(
+  sessionId: string,
+  patch: {
+    capitalsTimerSec?: number;
+    expandTimerSec?: number;
+    warTimerSec?: number;
+  },
+): Promise<LobbySettingsResult> {
+  const guard = await assertHostInWaitingLobby(sessionId);
+  if (!guard.ok) return guard;
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    select: { ranked: true },
+  });
+  if (!session || session.ranked) {
+    return { ok: false, error: "Switch to Custom to edit timers." };
+  }
+
+  const data: Record<string, number> = {};
+  if (patch.capitalsTimerSec !== undefined) {
+    if (!isValidTimer(CAPITALS_TIMER_PRESETS, patch.capitalsTimerSec)) {
+      return { ok: false, error: "Invalid Capitals timer value." };
+    }
+    data.capitalsTimerSec = patch.capitalsTimerSec;
+  }
+  if (patch.expandTimerSec !== undefined) {
+    if (!isValidTimer(EXPAND_TIMER_PRESETS, patch.expandTimerSec)) {
+      return { ok: false, error: "Invalid Expand timer value." };
+    }
+    data.expandTimerSec = patch.expandTimerSec;
+  }
+  if (patch.warTimerSec !== undefined) {
+    if (!isValidTimer(WAR_TIMER_PRESETS, patch.warTimerSec)) {
+      return { ok: false, error: "Invalid War timer value." };
+    }
+    data.warTimerSec = patch.warTimerSec;
+  }
+  if (Object.keys(data).length === 0) return { ok: true };
+
+  await prisma.gameSession.update({ where: { id: sessionId }, data });
+  revalidatePath(`/lobby/${sessionId}`);
+  return { ok: true };
+}
+
+// Replace the enabled-category set. Empty array = "all categories",
+// which we keep as the natural default so existing rows behave the
+// same as before. Refusing to drop the last category prevents the
+// question pool from going empty mid-match.
+export async function setLobbyCategories(
+  sessionId: string,
+  categories: string[],
+): Promise<LobbySettingsResult> {
+  const guard = await assertHostInWaitingLobby(sessionId);
+  if (!guard.ok) return guard;
+
+  const session = await prisma.gameSession.findUnique({
+    where: { id: sessionId },
+    select: { ranked: true },
+  });
+  if (!session || session.ranked) {
+    return { ok: false, error: "Switch to Custom to edit categories." };
+  }
+
+  const filtered = categories.filter(isQuestionCategory) as QuestionCategoryKey[];
+  if (filtered.length === 0) {
+    return { ok: false, error: "Pick at least one category." };
+  }
+
+  await prisma.gameSession.update({
+    where: { id: sessionId },
+    data: { categories: filtered },
+  });
+  revalidatePath(`/lobby/${sessionId}`);
+  return { ok: true };
+}
 
 export async function startGame(formData: FormData) {
   const sessionId = formData.get("sessionId") as string;
@@ -94,6 +234,97 @@ export async function getGameRoomId(
   return row?.gameRoomId ?? null;
 }
 
+export type SendMessageResult = { ok: true } | { ok: false; error: string };
+
+// Lobby chat: append-only. Caller must be a player in the session
+// AND the session must still be waiting (we don't surface chat during
+// the live match — Colyseus has its own broadcast channel).
+export async function sendLobbyMessage(
+  sessionId: string,
+  rawText: string,
+): Promise<SendMessageResult> {
+  const text = rawText.trim();
+  if (!text) return { ok: false, error: "Message can't be empty." };
+  if (text.length > 500) {
+    return { ok: false, error: "Message is too long (max 500)." };
+  }
+
+  const profile = await getProfile();
+  const player = await prisma.playerInGame.findUnique({
+    where: {
+      gameSessionId_profileId: {
+        gameSessionId: sessionId,
+        profileId: profile.id,
+      },
+    },
+    select: { id: true, gameSession: { select: { status: true } } },
+  });
+  if (!player) return { ok: false, error: "You're not in this lobby." };
+  if (player.gameSession.status !== "waiting") {
+    return { ok: false, error: "Lobby chat is closed." };
+  }
+
+  await prisma.lobbyChatMessage.create({
+    data: {
+      gameSessionId: sessionId,
+      authorId: profile.id,
+      text,
+    },
+  });
+  return { ok: true };
+}
+
+// Host kicks a guest from a waiting lobby. Refuses if the caller isn't
+// host, the target is the caller themselves, or the lobby is already
+// running. Tears down their MatchChoice rows first (FK has no cascade)
+// and clears any pending invite that brought them here. Cancelled
+// lobbies follow the leave flow — kick is only for "waiting".
+export async function kickFromLobby(
+  sessionId: string,
+  playerInGameId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const profile = await getProfile();
+  const me = await prisma.playerInGame.findUnique({
+    where: {
+      gameSessionId_profileId: {
+        gameSessionId: sessionId,
+        profileId: profile.id,
+      },
+    },
+    select: { id: true, role: true, gameSession: { select: { status: true } } },
+  });
+  if (!me) return { ok: false, error: "You're not in this lobby." };
+  if (me.role !== "host") {
+    return { ok: false, error: "Only the host can kick players." };
+  }
+  if (me.gameSession.status !== "waiting") {
+    return { ok: false, error: "Lobby is no longer open." };
+  }
+  if (me.id === playerInGameId) {
+    return { ok: false, error: "Use Disband instead of kicking yourself." };
+  }
+
+  const target = await prisma.playerInGame.findUnique({
+    where: { id: playerInGameId },
+    select: { id: true, gameSessionId: true, profileId: true },
+  });
+  if (!target || target.gameSessionId !== sessionId) {
+    return { ok: false, error: "Player not found in this lobby." };
+  }
+
+  await prisma.matchChoice.deleteMany({
+    where: { playerInGameId: target.id },
+  });
+  await prisma.playerInGame.delete({ where: { id: target.id } });
+  // Drop any open invite the kicked player still had so the host can
+  // re-invite them after, and they don't see a ghost notification.
+  await prisma.lobbyInvite.deleteMany({
+    where: { gameSessionId: sessionId, inviteeId: target.profileId },
+  });
+  revalidatePath(`/lobby/${sessionId}`);
+  return { ok: true };
+}
+
 export async function setMatchChoice(
   sessionId: string,
   key: string,
@@ -135,6 +366,11 @@ export async function joinGame(sessionId: string) {
 
   const existing = session.players.find((p) => p.profileId === profile.id);
   if (existing) return;
+
+  // Host's mode pick (2P/3P/4P) caps how many can join.
+  if (session.players.length >= session.maxPlayers) {
+    throw new Error("Lobby is full");
+  }
 
   await prisma.playerInGame.create({
     data: {

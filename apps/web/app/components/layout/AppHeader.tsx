@@ -14,6 +14,7 @@ import HeaderNav from "./HeaderNav";
 import HeaderHider from "./HeaderHider";
 import UserMenu from "./UserMenu";
 import CoinPurse from "./CoinPurse";
+import PlayerSearch from "./PlayerSearch";
 
 function parseAdminEmails(): string[] {
   return (process.env.ADMIN_EMAILS ?? "")
@@ -39,8 +40,6 @@ export default async function AppHeader() {
   // nav focused on player-facing routes.
   const tabs = [
     { href: "/dashboard", label: "Dashboard" },
-    { href: "/play", label: "Play" },
-    { href: "/tournaments", label: "Tournaments" },
     { href: "/leaderboard", label: "Leaderboard" },
     { href: "/friends", label: "Friends" },
   ];
@@ -68,17 +67,11 @@ export default async function AppHeader() {
             {profile && <HeaderNav tabs={tabs} />}
           </div>
 
-          <div className="hidden md:flex items-center px-3 border-l border-stroke">
-            <div className="flex items-center gap-2 bg-panel border border-stroke px-3 py-1.5 w-[220px]">
-              <SearchIcon />
-              <input
-                type="text"
-                placeholder="Search players…"
-                disabled
-                className="bg-transparent text-xs text-mute placeholder:text-dim outline-none flex-1 cursor-not-allowed"
-              />
+          {profile && (
+            <div className="hidden md:flex items-center px-3 border-l border-stroke">
+              <PlayerSearch />
             </div>
-          </div>
+          )}
 
           {profile && (
             <div className="hidden md:flex items-center px-2 border-l border-stroke">
@@ -130,31 +123,6 @@ function HexLogo() {
       >
         EQ
       </text>
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-      <circle
-        cx="11"
-        cy="11"
-        r="7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        className="text-dim"
-      />
-      <line
-        x1="20"
-        y1="20"
-        x2="16.5"
-        y2="16.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        className="text-dim"
-      />
     </svg>
   );
 }

@@ -71,8 +71,7 @@ export default function LeaderboardRow({ rank, isMe, player: p }: Props) {
       href={`/profile/${encodeURIComponent(p.nickname)}`}
       className="relative grid items-center gap-2 px-4 py-2 border-t border-stroke first:border-t-0 hover:bg-surface-hi transition-colors"
       style={{
-        gridTemplateColumns:
-          "70px 38px 1fr 90px 110px 90px 80px 90px 80px",
+        gridTemplateColumns: "70px 38px 1fr 90px 110px 90px 90px 80px",
         background: isMe ? "color-mix(in srgb, var(--color-accent) 12%, transparent)" : undefined,
       }}
     >
@@ -141,8 +140,6 @@ export default function LeaderboardRow({ rank, isMe, player: p }: Props) {
       <span className="font-mono text-[11px] text-mute">
         {p.gamesPlayed.toLocaleString()}
       </span>
-
-      <span className="font-mono text-[11px] text-dim">—</span>
 
       <span
         className="font-head text-[11px]"

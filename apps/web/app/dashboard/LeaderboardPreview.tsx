@@ -1,6 +1,6 @@
 // Top-5 leaderboard panel for the sidebar. Rank · level-hex · nickname
-// + country tag · ELO · 7-day delta. The delta is mocked until we
-// snapshot per-week ELO; everything else is real DB data.
+// + country tag · ELO. Everything is real DB data — links to the full
+// leaderboard for filtering / paging.
 
 import Link from "next/link";
 import { prisma } from "@quiz/db";
@@ -68,7 +68,7 @@ export default async function LeaderboardPreview() {
                 <span className="font-mono text-[13px] font-bold text-white">
                   {p.elo.toLocaleString()}
                 </span>
-                <span className="font-mono text-[10px] text-dim">—</span>
+                <span className="font-mono text-[10px] text-dim">ELO</span>
               </div>
             </div>
           ))}

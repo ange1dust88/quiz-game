@@ -63,6 +63,37 @@ model PlayerProfile {
 
   lobbyInvitesSent     LobbyInvite[] @relation("LobbyInviteInviter")
   lobbyInvitesReceived LobbyInvite[] @relation("LobbyInviteInvitee")
+
+  missions PlayerMission[]
+
+  lobbyChatMessages LobbyChatMessage[]
+}
+
+// One row per (profile, day, missionCode). `day` is a UTC date string
+// (YYYY-MM-DD) so the daily reset rule is timezone-stable. The 3
+// missions per day are generated lazily by the API endpoint when the
+// player first loads the dashboard that day — no background scheduler
+// required. `target` and `reward` are frozen at creation so a catalog
+// rebalance doesn't retroactively change yesterday's payouts.
+model PlayerMission {
+  id          String    @id @default(cuid())
+  profileId   String
+  missionCode String
+  day         String
+  target      Int
+  reward      Int
+  current     Int       @default(0)
+  completedAt DateTime?
+  // When the coin payout was credited. We auto-claim on completion so
+  // claimedAt usually equals completedAt — kept separate so a future
+  // "press to claim" flow can split them.
+  claimedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  profile PlayerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, day, missionCode])
+  @@index([profileId, day])
 }
 
 // Bidirectional friendship — direction is meaningful only while status =
@@ -99,6 +130,14 @@ model LobbyInvite {
   inviteeId     String
   gameSessionId String
   createdAt     DateTime @default(now())
+  // Invites expire after a short window so unanswered invitations
+  // don't keep a slot locked indefinitely. The lobby UI filters by
+  // expiresAt > now() everywhere — expired rows just sit in the DB
+  // until lazy cleanup (re-invite upsert / lobby cascade). The
+  // @default(now()) is only there to give pre-existing rows a value
+  // during the migration — runtime callers always pass an explicit
+  // future timestamp.
+  expiresAt     DateTime @default(now())
 
   inviter     PlayerProfile @relation("LobbyInviteInviter", fields: [inviterId], references: [id], onDelete: Cascade)
   invitee     PlayerProfile @relation("LobbyInviteInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
@@ -197,6 +236,26 @@ model GameSession {
   id                String          @id @default(cuid())
   status            String          @default("waiting")
   createdAt         DateTime        @default(now())
+  // Max players the host chose at lobby creation (2/3/4). Determines
+  // how many seats the lobby UI shows and how the playable-set is
+  // resolved when the match starts. Older rows default to 4 — that's
+  // what the dashboard "Play now" did before mode selection existed.
+  maxPlayers        Int             @default(4)
+  // Ranked vs Custom. Ranked locks all settings to their defaults and
+  // pays out ELO + W/L stats. Custom lets the host tweak timers and
+  // question categories — XP / coins / achievements still credit, but
+  // the match doesn't affect ELO or the W/L counters.
+  ranked            Boolean         @default(true)
+  // Per-phase timer overrides (seconds). Ignored when ranked=true; the
+  // Colyseus room substitutes the hard-coded defaults instead. Stored
+  // as Ints so cheap to read and validate at lobby start.
+  capitalsTimerSec  Int             @default(20)
+  expandTimerSec    Int             @default(10)
+  warTimerSec       Int             @default(15)
+  // Question categories the host enabled. Empty array means "all
+  // categories" — saves us having to enumerate defaults at insert
+  // time. Ignored when ranked=true (always uses the full pool).
+  categories        QuestionCategory[] @default([])
   stage             String          @default("capitals")
   turnIndex         Int             @default(0)
   currentQuestionId String?
@@ -221,6 +280,22 @@ model GameSession {
   events            MatchEvent[]
   eloHistoryEntries EloHistoryEntry[]
   lobbyInvites      LobbyInvite[]
+  chatMessages      LobbyChatMessage[]
+}
+
+// In-lobby chat. One row per message — never edited or soft-deleted. Cascade
+// from GameSession so dropping a disbanded lobby cleans its history.
+model LobbyChatMessage {
+  id            String      @id @default(cuid())
+  gameSessionId String
+  authorId      String
+  text          String      @db.VarChar(500)
+  createdAt     DateTime    @default(now())
+
+  gameSession GameSession   @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  author      PlayerProfile @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([gameSessionId, createdAt])
 }
 
 model PlayerInGame {

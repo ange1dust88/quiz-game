@@ -12,6 +12,8 @@
     "./achievements": "./src/achievements.ts",
     "./auth": "./src/auth.ts",
     "./europeMap": "./src/europeMap.ts",
+    "./missions": "./src/missions.ts",
+    "./lobbySettings": "./src/lobbySettings.ts",
     "./schemas": "./src/schemas/index.ts"
   },
   "dependencies": {

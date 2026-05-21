@@ -28,9 +28,12 @@ import {
   computeXpEarned,
   EUROPE_TOPOLOGY,
   evaluateAchievements,
+  type MatchOutcome,
   playableForCount,
+  progressIncrement,
   rankAnswers,
   shuffled,
+  utcDayKey,
   verifyJwt,
   warEndReason,
   winnerByLands,
@@ -97,6 +100,16 @@ export class MatchRoom extends Room<MatchState> {
   // game_over.
   private sessionId = "";
   private startedAtMs = 0;
+  // Per-session settings hydrated from GameSession at onCreate. Custom
+  // lobbies override timers and the question-category pool; ranked
+  // matches always pay out ELO/W-L, custom matches skip both.
+  private settings = {
+    rankedGame: true as boolean,
+    capitalsTimerMs: CAPITAL_TIMER_MS,
+    expandTimerMs: QUESTION_TIMER_MS,
+    warMcTimerMs: WAR_MC_TIMER_MS,
+    categories: [] as string[],
+  };
 
   // Counts active client sessions per playerInGameId. A player can have
   // multiple tabs open; we only flip player.connected=false when ALL of
@@ -190,6 +203,10 @@ export class MatchRoom extends Room<MatchState> {
       countryId: string;
       outcome: string;
       auto: boolean;
+      // True when this attack ended with the defender's capital
+      // falling (their whole empire transfers to the attacker). The
+      // daily-mission "capture a capital" check needs this flag.
+      capitalFell?: boolean;
     }>;
   } = {
     numericAnswers: [],
@@ -456,6 +473,19 @@ export class MatchRoom extends Room<MatchState> {
       throw new Error(`session ${this.sessionId} not found in DB`);
     }
 
+    // Lock in lobby settings for this match. They can't change after
+    // the host hits Start, so a single snapshot at hydrate time is fine.
+    this.settings = {
+      rankedGame: session.ranked,
+      capitalsTimerMs: session.capitalsTimerSec * 1000,
+      expandTimerMs: session.expandTimerSec * 1000,
+      warMcTimerMs: session.warTimerSec * 1000,
+      // Empty array = all categories (matches the lobby UI's "any
+      // empty selection means everything" convention). Storing the
+      // explicit list of enums lets the DB query stay simple.
+      categories: session.categories.map((c) => String(c)),
+    };
+
     // Players. Turn order = lobby join order (matches old behaviour).
     session.players.forEach((p, idx) => {
       const player = new Player();
@@ -584,7 +614,7 @@ export class MatchRoom extends Room<MatchState> {
   // --- Capitals stage ---------------------------------------------------
 
   private startCapitalTurn(): void {
-    this.state.capitalExpiresAt = Date.now() + CAPITAL_TIMER_MS;
+    this.state.capitalExpiresAt = Date.now() + this.settings.capitalsTimerMs;
   }
 
   private playerByTurnOrder(idx: number): Player | undefined {
@@ -738,7 +768,7 @@ export class MatchRoom extends Room<MatchState> {
       return;
     }
     this.state.turnIndex = this.nextActiveTurnIndex();
-    this.state.capitalExpiresAt = Date.now() + CAPITAL_TIMER_MS;
+    this.state.capitalExpiresAt = Date.now() + this.settings.capitalsTimerMs;
   }
 
   private transitionToExpand(): void {
@@ -748,22 +778,53 @@ export class MatchRoom extends Room<MatchState> {
     // Schedule the first question after a short delay so the UI has time
     // to render the stage change before the question pops in.
     this.state.nextQuestionAt = Date.now() + PHASE_DELAY_MS;
+    void this.syncStageToDb("expand");
     console.log(`[match ${this.roomId}] → stage=expand`);
   }
 
+  // Push the current stage to the GameSession row so the dashboard's
+  // "Live matches" feed can read it (Colyseus is the source of truth
+  // for stage at runtime; without this the DB column stays stuck at
+  // "capitals" until game_over).
+  private async syncStageToDb(stage: string): Promise<void> {
+    try {
+      await prisma.gameSession.update({
+        where: { id: this.sessionId },
+        data: { stage },
+      });
+    } catch (err) {
+      console.warn(
+        `[match ${this.roomId}] failed to sync stage=${stage}:`,
+        err,
+      );
+    }
+  }
+
   // --- Expand stage -----------------------------------------------------
+
+  // Where-clause for question pool filtering. Empty categories list =
+  // "all categories" — return undefined so Prisma issues an unfiltered
+  // query. Cast to `any` because Prisma's generated input type expects
+  // the enum literal union; we already validated the strings at lobby-
+  // setting write time.
+  private questionWhere(): Record<string, unknown> | undefined {
+    if (this.settings.categories.length === 0) return undefined;
+    return { category: { in: this.settings.categories as unknown[] } };
+  }
 
   private async startQuestion(): Promise<void> {
     if (this.state.stage !== "expand") return;
     if (this.state.activeQuestion) return;
     if (this.state.pickOrder.length > 0) return;
 
-    const count = await prisma.question.count();
+    const where = this.questionWhere() as never;
+    const count = await prisma.question.count({ where });
     if (count === 0) {
       console.warn(`[match ${this.roomId}] no Question rows in DB`);
       return;
     }
     const question = await prisma.question.findFirst({
+      where,
       skip: Math.floor(Math.random() * count),
     });
     if (!question) return;
@@ -773,7 +834,7 @@ export class MatchRoom extends Room<MatchState> {
     aq.questionId = question.id;
     aq.text = question.text;
     aq.category = question.category;
-    aq.expiresAt = Date.now() + QUESTION_TIMER_MS;
+    aq.expiresAt = Date.now() + this.settings.expandTimerMs;
     this.state.activeQuestion = aq;
     this.state.nextQuestionAt = 0;
 
@@ -807,7 +868,7 @@ export class MatchRoom extends Room<MatchState> {
 
     const firstInputAtMs =
       typeof payload.firstInputAtMs === "number"
-        ? Math.max(0, Math.min(QUESTION_TIMER_MS, payload.firstInputAtMs))
+        ? Math.max(0, Math.min(this.settings.expandTimerMs, payload.firstInputAtMs))
         : null;
     const inputChangeCount = Math.max(
       0,
@@ -1090,12 +1151,14 @@ export class MatchRoom extends Room<MatchState> {
     const enemyNeighbors = this.enemyNeighborSvgIds(attackerId);
     if (!enemyNeighbors.has(svgId)) return;
 
-    const wqCount = await prisma.warQuestion.count();
+    const wqWhere = this.questionWhere() as never;
+    const wqCount = await prisma.warQuestion.count({ where: wqWhere });
     if (wqCount === 0) {
       console.warn(`[match ${this.roomId}] no WarQuestion rows`);
       return;
     }
     const wq = await prisma.warQuestion.findFirst({
+      where: wqWhere,
       skip: Math.floor(Math.random() * wqCount),
     });
     if (!wq) return;
@@ -1109,7 +1172,7 @@ export class MatchRoom extends Room<MatchState> {
     aa.questionText = wq.text;
     aa.options = new ArraySchema<string>(...shuffled(wq.options));
     aa.category = wq.category;
-    aa.expiresAt = Date.now() + WAR_MC_TIMER_MS;
+    aa.expiresAt = Date.now() + this.settings.warMcTimerMs;
     this.state.activeAttack = aa;
     this.state.warTurnExpiresAt = 0;
 
@@ -1150,7 +1213,7 @@ export class MatchRoom extends Room<MatchState> {
     const isCorrect = payload.option === ca.correctOption;
     const submittedAtMs = Math.max(
       0,
-      Math.min(WAR_MC_TIMER_MS, payload.submittedAtMs ?? Date.now() - ca.mcStartedAtMs),
+      Math.min(this.settings.warMcTimerMs, payload.submittedAtMs ?? Date.now() - ca.mcStartedAtMs),
     );
     ca.answers.set(playerId, {
       option: payload.option,
@@ -1219,12 +1282,14 @@ export class MatchRoom extends Room<MatchState> {
     const aa = this.state.activeAttack;
     if (!ca || !aa) return;
 
-    const count = await prisma.question.count();
+    const where = this.questionWhere() as never;
+    const count = await prisma.question.count({ where });
     if (count === 0) {
       this.endAttack("no_change");
       return;
     }
     const q = await prisma.question.findFirst({
+      where,
       skip: Math.floor(Math.random() * count),
     });
     if (!q) {
@@ -1332,6 +1397,7 @@ export class MatchRoom extends Room<MatchState> {
       return;
     }
 
+    let capitalFell = false;
     if (outcome === "attacker_won") {
       const out = attackerWonOutcome({
         isCapital: country.isCapital,
@@ -1354,6 +1420,7 @@ export class MatchRoom extends Room<MatchState> {
         this.state.countries.forEach((c) => {
           if (c.ownerId === defenderId) c.ownerId = attackerId;
         });
+        capitalFell = true;
       } else {
         country.ownerId = ca.attackerId;
         country.armies = 1;
@@ -1369,6 +1436,7 @@ export class MatchRoom extends Room<MatchState> {
       countryId: ca.countryId,
       outcome,
       auto: false,
+      capitalFell,
     });
 
     this.cleanupAttack();
@@ -1380,13 +1448,15 @@ export class MatchRoom extends Room<MatchState> {
     const aa = this.state.activeAttack;
     if (!ca || !aa) return;
 
-    const wqCount = await prisma.warQuestion.count();
+    const wqWhere = this.questionWhere() as never;
+    const wqCount = await prisma.warQuestion.count({ where: wqWhere });
     if (wqCount === 0) {
       this.cleanupAttack();
       this.advanceWarTurn();
       return;
     }
     const wq = await prisma.warQuestion.findFirst({
+      where: wqWhere,
       skip: Math.floor(Math.random() * wqCount),
     });
     if (!wq) return;
@@ -1396,7 +1466,7 @@ export class MatchRoom extends Room<MatchState> {
     aa.questionText = wq.text;
     aa.options = new ArraySchema<string>(...shuffled(wq.options));
     aa.category = wq.category;
-    aa.expiresAt = Date.now() + WAR_MC_TIMER_MS;
+    aa.expiresAt = Date.now() + this.settings.warMcTimerMs;
     aa.tieQuestionId = 0;
     aa.tieQuestionText = "";
     aa.tieExpiresAt = 0;
@@ -1853,6 +1923,38 @@ export class MatchRoom extends Room<MatchState> {
         );
     });
 
+    // Pre-compute placement (1st, 2nd, …) by points-held so the
+    // mission updater has a stable rank for each player.
+    const rankedPlayerIds = [...playerArr]
+      .sort(
+        (a, b) =>
+          (pointsByPlayer.get(b.id) ?? 0) - (pointsByPlayer.get(a.id) ?? 0),
+      )
+      .map((p) => p.id);
+    const placeByPlayerId = new Map<string, number>();
+    rankedPlayerIds.forEach((id, idx) => placeByPlayerId.set(id, idx + 1));
+
+    // Per-player aggregates derived from this match's telemetry. Used
+    // by the daily-mission updater so missions like "capture a capital"
+    // or "5 correct war answers" can hit their counters in one pass.
+    const capitalsCapturedByPlayer = new Map<string, number>();
+    const warCorrectByPlayer = new Map<string, number>();
+    for (const a of this.telemetry.attacks) {
+      if (a.capitalFell && a.outcome === "attacker_won") {
+        capitalsCapturedByPlayer.set(
+          a.attackerId,
+          (capitalsCapturedByPlayer.get(a.attackerId) ?? 0) + 1,
+        );
+      }
+    }
+    for (const w of this.telemetry.warAnswers) {
+      if (!w.isCorrect) continue;
+      warCorrectByPlayer.set(
+        w.playerId,
+        (warCorrectByPlayer.get(w.playerId) ?? 0) + 1,
+      );
+    }
+
     // Anti-abuse: anyone who walked out mid-match pays an extra penalty
     // on top of the natural loss, so rage-quitting against a stronger
     // opponent never costs less ELO than just losing the match.
@@ -1885,37 +1987,108 @@ export class MatchRoom extends Room<MatchState> {
       );
       const delta = eloDelta.get(p.profileId) ?? 0;
 
+      // Custom matches don't touch ELO or W/L counters — XP / level /
+      // coins / achievements still credit so casual lobbies aren't
+      // completely dead, but the ranked stats stay clean. See the
+      // /lobby settings panel: switching to Custom advertises this in
+      // the Reward row.
+      const ranked = this.settings.rankedGame;
       await prisma.playerProfile.update({
         where: { id: p.profileId },
         data: {
-          gamesPlayed: { increment: 1 },
-          gamesWon: { increment: isWinner ? 1 : 0 },
-          gamesLost: {
-            increment: !isWinner && winnerProfileId !== null ? 1 : 0,
-          },
+          gamesPlayed: ranked ? { increment: 1 } : undefined,
+          gamesWon: ranked && isWinner ? { increment: 1 } : undefined,
+          gamesLost:
+            ranked && !isWinner && winnerProfileId !== null
+              ? { increment: 1 }
+              : undefined,
           experience,
           level,
-          elo: { increment: delta },
+          ...(ranked ? { elo: { increment: delta } } : {}),
         },
       });
 
-      // Append to ELO history so the profile chart has a data point
-      // per match. Stored independently of MatchSnapshot so deleting an
-      // old session (cleanup job) leaves the rating curve intact.
-      await prisma.eloHistoryEntry.create({
-        data: {
-          profileId: p.profileId,
-          sessionId: this.sessionId,
-          eloAfter: profile.elo + delta,
-          delta,
-          isWinner,
-        },
-      });
+      // Only ranked matches feed the ELO chart — custom games would
+      // create misleading "rating dips" on the profile page.
+      if (ranked) {
+        await prisma.eloHistoryEntry.create({
+          data: {
+            profileId: p.profileId,
+            sessionId: this.sessionId,
+            eloAfter: profile.elo + delta,
+            delta,
+            isWinner,
+          },
+        });
+      }
 
       // Evaluate achievement unlocks. Anything new gets a row in the
       // Achievement table — no toast notification yet, the user sees it
       // next time they open their profile.
       await this.unlockAchievementsFor(p.profileId);
+
+      // Daily-mission progress + auto-claim. Reads today's PlayerMission
+      // rows and increments per `progressIncrement(code, outcome)`.
+      // Completion credits coins immediately.
+      const outcome: MatchOutcome = {
+        isWinner,
+        place: placeByPlayerId.get(p.id) ?? playerArr.length,
+        totalPlayers: playerArr.length,
+        capitalsCaptured: capitalsCapturedByPlayer.get(p.id) ?? 0,
+        warCorrect: warCorrectByPlayer.get(p.id) ?? 0,
+      };
+      await this.progressDailyMissionsFor(p.profileId, outcome);
+    }
+  }
+
+  // Walk today's PlayerMission rows for this profile, apply progress
+  // for the just-finished match, and auto-claim coins for any that
+  // just crossed their target. Done in a single update per row so a
+  // crash mid-loop never double-pays.
+  private async progressDailyMissionsFor(
+    profileId: string,
+    outcome: MatchOutcome,
+  ): Promise<void> {
+    try {
+      const day = utcDayKey();
+      const rows = await prisma.playerMission.findMany({
+        where: { profileId, day, completedAt: null },
+      });
+      if (rows.length === 0) return;
+      let coinPayout = 0;
+      const claimedCodes: string[] = [];
+      for (const row of rows) {
+        const inc = progressIncrement(row.missionCode, outcome);
+        if (inc <= 0) continue;
+        const next = Math.min(row.target, row.current + inc);
+        const justCompleted = next >= row.target && row.completedAt === null;
+        const now = justCompleted ? new Date() : null;
+        await prisma.playerMission.update({
+          where: { id: row.id },
+          data: {
+            current: next,
+            ...(justCompleted ? { completedAt: now, claimedAt: now } : {}),
+          },
+        });
+        if (justCompleted) {
+          coinPayout += row.reward;
+          claimedCodes.push(row.missionCode);
+        }
+      }
+      if (coinPayout > 0) {
+        await prisma.playerProfile.update({
+          where: { id: profileId },
+          data: { coins: { increment: coinPayout } },
+        });
+        console.log(
+          `[match ${this.roomId}] +${coinPayout} coins (missions: ${claimedCodes.join(", ")}) → ${profileId}`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[match ${this.roomId}] mission progress failed for ${profileId}:`,
+        err,
+      );
     }
   }
 
@@ -2004,6 +2177,7 @@ export class MatchRoom extends Room<MatchState> {
     this.state.pickExpiresAt = 0;
     this.state.activeQuestion = null;
     this.state.nextQuestionAt = 0;
+    void this.syncStageToDb("war");
 
     // Leader (most lands) attacks first.
     let leader = "";

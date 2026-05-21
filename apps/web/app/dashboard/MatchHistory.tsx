@@ -54,7 +54,7 @@ function buildRow(
     telemetry: unknown;
     createdAt: Date;
   },
-  eloByCreatedAt: Map<string, number>,
+  eloBySessionId: Map<string, number>,
   profileId: string,
 ): Row | null {
   const fs = s.finalState as
@@ -87,8 +87,7 @@ function buildRow(
     else warLosses += 1;
   }
 
-  const isoKey = s.createdAt.toISOString().slice(0, 19);
-  const eloDelta = eloByCreatedAt.get(isoKey) ?? null;
+  const eloDelta = eloBySessionId.get(s.sessionId) ?? null;
 
   return {
     sessionId: s.sessionId,
@@ -145,15 +144,20 @@ export default async function MatchHistory({
       where: { profileId },
       orderBy: { createdAt: "desc" },
       take: Math.max(limit, 12),
-      select: { delta: true, createdAt: true },
+      // Link by sessionId — the previous "match to ELO row by
+      // ISO-truncated-to-seconds timestamp" approach kept missing
+      // when snapshot.createdAt and EloHistoryEntry.createdAt landed
+      // in different seconds (a sub-second race between the snapshot
+      // upsert and the subsequent ELO history insert).
+      select: { delta: true, sessionId: true },
     }),
   ]);
-  const eloByCreatedAt = new Map<string, number>();
+  const eloBySessionId = new Map<string, number>();
   for (const e of eloHistory) {
-    eloByCreatedAt.set(e.createdAt.toISOString().slice(0, 19), e.delta);
+    if (e.sessionId) eloBySessionId.set(e.sessionId, e.delta);
   }
   const rows = snapshots
-    .map((s) => buildRow(s, eloByCreatedAt, profileId))
+    .map((s) => buildRow(s, eloBySessionId, profileId))
     .filter((r): r is Row => r !== null);
 
   return (

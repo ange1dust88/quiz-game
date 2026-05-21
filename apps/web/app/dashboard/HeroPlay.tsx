@@ -1,14 +1,13 @@
 // Hero card. Left half: ONLINE pill + huge "CONQUER THE MAP" + skewed
-// PLAY NOW + Mode row. Right half: rank panel — level hex, ELO, XP
-// bar, 3 mini stats (Rank / Streak / K/D).
-//
-// One merged card replaces the old HeroPlay + RankWidget two-column
-// arrangement to match the Claude design.
+// PLAY NOW button that creates a fresh lobby (default 4 seats; host
+// starts when at least 2 players have joined). Right half: rank
+// panel — level hex, ELO, XP bar, 3 mini stats.
 
 import { createRoom } from "./actions";
 import Hexagon from "@/app/components/ui/Hexagon";
 import Slash from "@/app/components/ui/Slash";
 import MicroBar from "@/app/components/ui/MicroBar";
+import JoinByCodeForm from "./JoinByCodeForm";
 
 type Props = {
   onlineCount: number;
@@ -19,7 +18,7 @@ type Props = {
   rank: number;
   streakKind: "W" | "L" | null;
   streakLen: number;
-  kd: number;
+  warAccuracyPct: number;
 };
 
 export default function HeroPlay({
@@ -31,7 +30,7 @@ export default function HeroPlay({
   rank,
   streakKind,
   streakLen,
-  kd,
+  warAccuracyPct,
 }: Props) {
   return (
     <section className="relative grid grid-cols-1 lg:grid-cols-[1fr_360px] border border-stroke overflow-hidden bg-gradient-to-br from-surface-hi via-surface to-surface min-h-[280px]">
@@ -56,36 +55,28 @@ export default function HeroPlay({
         </h1>
 
         <p className="font-body text-xs text-mute max-w-sm leading-relaxed">
-          Pick a mode and queue up. Auto-matched by ELO within 30 seconds.
+          Create a lobby — invite friends or share the link.
         </p>
 
-        <div className="flex items-stretch mt-auto">
-          <form action={createRoom} className="contents">
+        <div className="mt-auto flex flex-col sm:flex-row sm:items-end gap-4 sm:gap-5">
+          <form action={createRoom}>
             <button
               type="submit"
               className="font-head text-lg font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-9 py-4"
               style={{ transform: "skewX(-10deg)" }}
             >
-              <span
-                className="inline-block"
-                style={{ transform: "skewX(10deg)" }}
-              >
+              <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
                 ► Play now
               </span>
             </button>
           </form>
-
-          <div className="flex flex-col ml-5 min-w-[220px]">
-            <ModeRow label="Mode" value="Classic 4P" />
-          </div>
+          <JoinByCodeForm />
         </div>
       </div>
 
       <div className="relative p-6 flex flex-col gap-4 bg-black/25 border-t lg:border-t-0 lg:border-l border-stroke z-10">
         <div className="flex items-center justify-between">
-          <span className="font-head text-[10px] text-mute">
-            Your rank · Season 1
-          </span>
+          <span className="font-head text-[10px] text-mute">Your rank</span>
         </div>
 
         <div className="flex items-center gap-4">
@@ -137,21 +128,10 @@ export default function HeroPlay({
                   : undefined
             }
           />
-          <MiniStat label="K/D" value={kd.toFixed(2)} />
+          <MiniStat label="War acc" value={`${warAccuracyPct}%`} />
         </div>
       </div>
     </section>
-  );
-}
-
-function ModeRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between items-center px-3.5 py-1.5 bg-canvas border border-stroke -mt-px first:mt-0 font-mono text-[11px]">
-      <span className="text-dim">{label.toUpperCase()}</span>
-      <span className="text-white font-bold uppercase">
-        {value} <span className="text-dim">▾</span>
-      </span>
-    </div>
   );
 }
 

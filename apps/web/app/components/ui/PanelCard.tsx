@@ -14,6 +14,10 @@ type Props = {
   accent?: string;
   right?: ReactNode;
   padded?: boolean;
+  // When true, the panel stretches to fill the height of its grid /
+  // flex parent and its body becomes flex-1 — useful for chat panels
+  // that should grow to the bottom of the viewport.
+  fill?: boolean;
   children?: ReactNode;
 };
 
@@ -22,10 +26,15 @@ export default function PanelCard({
   accent = "#1ed3ff",
   right,
   padded = true,
+  fill = false,
   children,
 }: Props) {
   return (
-    <section className="border border-stroke bg-surface">
+    <section
+      className={`border border-stroke bg-surface${
+        fill ? " h-full flex flex-col min-h-0" : ""
+      }`}
+    >
       <header className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-stroke">
         <div className="flex items-center gap-2">
           <span
@@ -37,7 +46,13 @@ export default function PanelCard({
         </div>
         {right}
       </header>
-      <div className={padded ? "p-4" : ""}>{children}</div>
+      <div
+        className={`${padded ? "p-4" : ""}${
+          fill ? " flex-1 min-h-0" : ""
+        }`}
+      >
+        {children}
+      </div>
     </section>
   );
 }

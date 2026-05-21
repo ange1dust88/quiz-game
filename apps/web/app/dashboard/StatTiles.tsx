@@ -25,12 +25,11 @@ export default function StatTiles({
 }: Props) {
   return (
     <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-      <StatBlock label="Matches" value={matches.toLocaleString()} sub="Season 1" />
+      <StatBlock label="Matches" value={matches.toLocaleString()} />
       <StatBlock
         label="Win rate"
         value={`${winRate}%`}
         accent="var(--color-win)"
-        sub="—"
       />
       <StatBlock
         label="Capitals"
