@@ -20,6 +20,10 @@ import {
   useTurnIndex,
 } from "@/app/lib/gameStore";
 import { PLAYER_COLORS } from "@/app/lib/constants";
+import {
+  pickOptions,
+  pickTranslation,
+} from "@quiz/shared/lobbySettings";
 
 const RESULTS_REVEAL_MS = 3500;
 
@@ -48,14 +52,27 @@ export default function ActionPanel({ myPlayerId }: Props) {
     return () => clearTimeout(t);
   }, [lastResults, clearResults]);
 
+  // Each player's own UI language (set in /settings). Stamped on the
+  // Colyseus Player schema at hydrate; falls back to "en" if anything
+  // upstream skipped populating it.
+  const myLanguage =
+    players.find((p) => p.id === myPlayerId)?.language || "en";
+
   if (lastResults) {
     return <ResultsView results={lastResults} players={players} />;
   }
   if (activeAttack) {
-    return <WarView attack={activeAttack} myPlayerId={myPlayerId} players={players} />;
+    return (
+      <WarView
+        attack={activeAttack}
+        myPlayerId={myPlayerId}
+        players={players}
+        myLanguage={myLanguage}
+      />
+    );
   }
   if (activeQuestion) {
-    return <QuestionView question={activeQuestion} />;
+    return <QuestionView question={activeQuestion} myLanguage={myLanguage} />;
   }
   return (
     <InstructionView
@@ -72,8 +89,10 @@ export default function ActionPanel({ myPlayerId }: Props) {
 
 function QuestionView({
   question,
+  myLanguage,
 }: {
   question: NonNullable<ReturnType<typeof useActiveQuestion>>;
+  myLanguage: string;
 }) {
   const submitAnswer = useGameStore((s) => s.submitAnswer);
   const [value, setValue] = useState("");
@@ -136,7 +155,7 @@ function QuestionView({
     <ActionShell accent="var(--color-accent)" label="Question" right={<Timer seconds={remaining} />}>
       <CategoryBadge category={question.category} />
       <h2 className="font-head text-lg leading-tight text-white">
-        {question.text}
+        {pickTranslation(question.textsJson, myLanguage, question.text)}
       </h2>
       {!submitted ? (
         <div className="flex flex-col gap-2 mt-1">
@@ -211,10 +230,12 @@ function WarView({
   attack,
   myPlayerId,
   players,
+  myLanguage,
 }: {
   attack: NonNullable<ReturnType<typeof useActiveAttack>>;
   myPlayerId: string;
   players: ReturnType<typeof usePlayers>;
+  myLanguage: string;
 }) {
   const submitWarAnswer = useGameStore((s) => s.submitWarAnswer);
   const submitWarTie = useGameStore((s) => s.submitWarTie);
@@ -284,7 +305,11 @@ function WarView({
           {attacker?.nickname} vs {defender?.nickname} — closest answer wins.
         </p>
         <h2 className="font-head text-lg leading-tight text-white">
-          {attack.tieQuestionText}
+          {pickTranslation(
+            attack.tieQuestionTextsJson,
+            myLanguage,
+            attack.tieQuestionText,
+          )}
         </h2>
         {isTieRevealing ? (
           <TieRevealView
@@ -348,10 +373,27 @@ function WarView({
         {attacker?.nickname} → {defender?.nickname}
       </p>
       <h2 className="font-head text-lg leading-tight text-white">
-        {attack.questionText}
+        {pickTranslation(
+          attack.questionTextsJson,
+          myLanguage,
+          attack.questionText,
+        )}
       </h2>
+      {(() => {
+        // Render options in the viewer's language, but click → submit
+        // the canonical EN option string (attack.options) so server
+        // validation stays language-agnostic. Index i is the same
+        // logical option across languages — server applied one shuffle
+        // permutation to all translations during pickWarQuestionGroup.
+        const langOptions = pickOptions(
+          attack.optionsJson,
+          myLanguage,
+          Array.from(attack.options),
+        );
+        return (
       <div className="grid grid-cols-2 gap-2">
-        {attack.options.map((opt) => {
+        {attack.options.map((opt, optIdx) => {
+          const displayText = langOptions[optIdx] ?? opt;
           const isCorrect = isRevealing && opt === attack.correctOption;
           const pickerDots: { id: string; color: string; title: string }[] = [];
           if (isRevealing && attacker && attack.attackerOption === opt) {
@@ -404,7 +446,7 @@ function WarView({
               className={`flex items-center justify-between gap-2 px-3 py-2 font-head text-xs border transition-colors text-left ${classes} ${hoverClass}`}
               style={style}
             >
-              <span className="leading-tight">{opt}</span>
+              <span className="leading-tight">{displayText}</span>
               <span className="flex items-center gap-1 shrink-0">
                 {pickerDots.map((d) => (
                   <span
@@ -422,6 +464,8 @@ function WarView({
           );
         })}
       </div>
+        );
+      })()}
       {!isInvolved && !isRevealing && (
         <div className="bg-panel border border-stroke px-3 py-2 font-mono text-[11px] text-mute italic">
           Watching…

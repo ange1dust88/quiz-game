@@ -156,6 +156,27 @@ export function shuffled<T>(arr: readonly T[]): T[] {
   return out;
 }
 
+// Generate a random permutation of [0, n). Lets the war-MC picker
+// scramble option order once and then apply the SAME ordering to
+// every language's options array — so position N is the same logical
+// option across languages and a single `correctIndex` validates
+// regardless of which language the player saw the question in.
+export function shuffledPermutation(n: number): number[] {
+  const out = Array.from({ length: n }, (_, i) => i);
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+export function applyPermutation<T>(
+  arr: readonly T[],
+  perm: readonly number[],
+): T[] {
+  return perm.map((p) => arr[p]);
+}
+
 export function computeEloChanges(
   players: { profileId: string; elo: number }[],
   winnerProfileId: string | null,

@@ -32,7 +32,8 @@ import {
   playableForCount,
   progressIncrement,
   rankAnswers,
-  shuffled,
+  shuffledPermutation,
+  applyPermutation,
   utcDayKey,
   verifyJwt,
   warEndReason,
@@ -462,7 +463,9 @@ export class MatchRoom extends Room<MatchState> {
       include: {
         players: {
           include: {
-            profile: { select: { nickname: true, avatarUrl: true } },
+            profile: {
+              select: { nickname: true, avatarUrl: true, language: true },
+            },
             choices: { select: { key: true, value: true } },
           },
           orderBy: { joinedAt: "asc" },
@@ -497,6 +500,9 @@ export class MatchRoom extends Room<MatchState> {
       const capChoice = p.choices.find((c) => c.key === "capital_style");
       player.capitalStyle = capChoice?.value ?? "standard";
       player.connected = false;
+      // Stamp the language so the client can pick its own translation
+      // of each question without an extra round trip.
+      player.language = p.profile.language ?? "en";
       this.state.players.set(p.id, player);
     });
 
@@ -812,42 +818,169 @@ export class MatchRoom extends Room<MatchState> {
     return { category: { in: this.settings.categories as unknown[] } };
   }
 
+  // Resolve a random Question groupKey (using category filter), then
+  // pull every language translation of that group. Returns the
+  // English-fallback row (or the first row if no en exists) for
+  // numeric scoring, plus a packed JSON map of text-by-language for
+  // the per-player render path.
+  private async pickQuestionGroup(): Promise<{
+    main: { id: number; text: string; answer: number; category: string };
+    textsJson: string;
+  } | null> {
+    const where = this.questionWhere() as never;
+    const count = await prisma.question.count({ where });
+    if (count === 0) {
+      console.warn(`[match ${this.roomId}] no Question rows in DB`);
+      return null;
+    }
+    const seed = await prisma.question.findFirst({
+      where,
+      skip: Math.floor(Math.random() * count),
+      select: { groupKey: true },
+    });
+    if (!seed) return null;
+
+    const rows = await prisma.question.findMany({
+      where: { groupKey: seed.groupKey },
+      select: {
+        id: true,
+        text: true,
+        answer: true,
+        category: true,
+        language: true,
+      },
+    });
+    if (rows.length === 0) return null;
+
+    const byLang: Record<string, string> = {};
+    for (const r of rows) byLang[String(r.language)] = r.text;
+    const textsJson = JSON.stringify(byLang);
+    const main = rows.find((r) => String(r.language) === "en") ?? rows[0];
+    return {
+      main: {
+        id: main.id,
+        text: main.text,
+        answer: main.answer,
+        category: String(main.category),
+      },
+      textsJson,
+    };
+  }
+
+  // Same pattern as pickQuestionGroup but for the MC war-question
+  // pool. Shuffles option order once and applies the SAME permutation
+  // to every language's options array — so a single correctIndex
+  // validates regardless of which language the answering player saw.
+  private async pickWarQuestionGroup(): Promise<{
+    main: { id: number; text: string; category: string; options: string[] };
+    questionTextsJson: string;
+    optionsJson: string;
+    correctOption: string;
+    correctIndex: number;
+  } | null> {
+    const where = this.questionWhere() as never;
+    const count = await prisma.warQuestion.count({ where });
+    if (count === 0) {
+      console.warn(`[match ${this.roomId}] no WarQuestion rows`);
+      return null;
+    }
+    const seed = await prisma.warQuestion.findFirst({
+      where,
+      skip: Math.floor(Math.random() * count),
+      select: { groupKey: true },
+    });
+    if (!seed) return null;
+
+    const rows = await prisma.warQuestion.findMany({
+      where: { groupKey: seed.groupKey },
+      select: {
+        id: true,
+        text: true,
+        options: true,
+        answer: true,
+        correctIndex: true,
+        category: true,
+        language: true,
+      },
+    });
+    if (rows.length === 0) return null;
+
+    const en = rows.find((r) => String(r.language) === "en") ?? rows[0];
+
+    // Canonical correctIndex: prefer the new explicit column, fall
+    // back to locating the legacy `answer` string in the options array
+    // for pre-translation rows that haven't been regenerated yet.
+    const canonicalCorrectIndex =
+      en.correctIndex >= 0 ? en.correctIndex : en.options.indexOf(en.answer);
+    if (canonicalCorrectIndex < 0) {
+      console.warn(
+        `[match ${this.roomId}] war question ${en.id} has no resolvable correct index`,
+      );
+      return null;
+    }
+
+    const perm = shuffledPermutation(en.options.length);
+    const newCorrectIndex = perm.indexOf(canonicalCorrectIndex);
+
+    const textsByLang: Record<string, string> = {};
+    const optionsByLang: Record<string, string[]> = {};
+    for (const r of rows) {
+      const lang = String(r.language);
+      textsByLang[lang] = r.text;
+      // Skip rows whose options length disagrees with the canonical en
+      // row — translator slip-up. Falling back to en for that language
+      // is safer than rendering a misaligned set.
+      if (r.options.length === en.options.length) {
+        optionsByLang[lang] = applyPermutation(r.options, perm);
+      }
+    }
+    const shuffledEnOptions =
+      optionsByLang.en ?? applyPermutation(en.options, perm);
+    if (!optionsByLang.en) optionsByLang.en = shuffledEnOptions;
+
+    return {
+      main: {
+        id: en.id,
+        text: en.text,
+        category: String(en.category),
+        options: shuffledEnOptions,
+      },
+      questionTextsJson: JSON.stringify(textsByLang),
+      optionsJson: JSON.stringify(optionsByLang),
+      correctOption: shuffledEnOptions[newCorrectIndex] ?? "",
+      correctIndex: newCorrectIndex,
+    };
+  }
+
   private async startQuestion(): Promise<void> {
     if (this.state.stage !== "expand") return;
     if (this.state.activeQuestion) return;
     if (this.state.pickOrder.length > 0) return;
 
-    const where = this.questionWhere() as never;
-    const count = await prisma.question.count({ where });
-    if (count === 0) {
-      console.warn(`[match ${this.roomId}] no Question rows in DB`);
-      return;
-    }
-    const question = await prisma.question.findFirst({
-      where,
-      skip: Math.floor(Math.random() * count),
-    });
-    if (!question) return;
+    const picked = await this.pickQuestionGroup();
+    if (!picked) return;
+    const { main, textsJson } = picked;
 
     const aq = new ActiveQuestion();
-    aq.id = `${question.id}-${Date.now()}`;
-    aq.questionId = question.id;
-    aq.text = question.text;
-    aq.category = question.category;
+    aq.id = `${main.id}-${Date.now()}`;
+    aq.questionId = main.id;
+    aq.text = main.text;
+    aq.textsJson = textsJson;
+    aq.category = main.category;
     aq.expiresAt = Date.now() + this.settings.expandTimerMs;
     this.state.activeQuestion = aq;
     this.state.nextQuestionAt = 0;
 
     this.currentQuestion = {
       matchQuestionLocalId: aq.id,
-      questionRowId: question.id,
-      correctAnswer: question.answer,
+      questionRowId: main.id,
+      correctAnswer: main.answer,
       startedAtMs: Date.now(),
       answers: new Map(),
     };
 
     console.log(
-      `[match ${this.roomId}] question ${question.id} (${question.category}): "${question.text}"`,
+      `[match ${this.roomId}] question ${main.id} (${main.category}): "${main.text}"`,
     );
   }
 
@@ -1151,27 +1284,21 @@ export class MatchRoom extends Room<MatchState> {
     const enemyNeighbors = this.enemyNeighborSvgIds(attackerId);
     if (!enemyNeighbors.has(svgId)) return;
 
-    const wqWhere = this.questionWhere() as never;
-    const wqCount = await prisma.warQuestion.count({ where: wqWhere });
-    if (wqCount === 0) {
-      console.warn(`[match ${this.roomId}] no WarQuestion rows`);
-      return;
-    }
-    const wq = await prisma.warQuestion.findFirst({
-      where: wqWhere,
-      skip: Math.floor(Math.random() * wqCount),
-    });
-    if (!wq) return;
+    const picked = await this.pickWarQuestionGroup();
+    if (!picked) return;
 
     const aa = new ActiveAttack();
-    aa.id = `${wq.id}-${Date.now()}`;
+    aa.id = `${picked.main.id}-${Date.now()}`;
     aa.attackerId = attackerId;
     aa.defenderId = target.ownerId;
     aa.countryId = target.id;
-    aa.questionId = wq.id;
-    aa.questionText = wq.text;
-    aa.options = new ArraySchema<string>(...shuffled(wq.options));
-    aa.category = wq.category;
+    aa.questionId = picked.main.id;
+    aa.questionText = picked.main.text;
+    aa.questionTextsJson = picked.questionTextsJson;
+    aa.options = new ArraySchema<string>(...picked.main.options);
+    aa.optionsJson = picked.optionsJson;
+    aa.correctIndex = picked.correctIndex;
+    aa.category = picked.main.category;
     aa.expiresAt = Date.now() + this.settings.warMcTimerMs;
     this.state.activeAttack = aa;
     this.state.warTurnExpiresAt = 0;
@@ -1180,8 +1307,8 @@ export class MatchRoom extends Room<MatchState> {
       attackerId,
       defenderId: target.ownerId,
       countryId: target.id,
-      questionRowId: wq.id,
-      correctOption: wq.answer,
+      questionRowId: picked.main.id,
+      correctOption: picked.correctOption,
       mcStartedAtMs: Date.now(),
       answers: new Map(),
       tieAnswers: new Map(),
@@ -1282,23 +1409,16 @@ export class MatchRoom extends Room<MatchState> {
     const aa = this.state.activeAttack;
     if (!ca || !aa) return;
 
-    const where = this.questionWhere() as never;
-    const count = await prisma.question.count({ where });
-    if (count === 0) {
+    const picked = await this.pickQuestionGroup();
+    if (!picked) {
       this.endAttack("no_change");
       return;
     }
-    const q = await prisma.question.findFirst({
-      where,
-      skip: Math.floor(Math.random() * count),
-    });
-    if (!q) {
-      this.endAttack("no_change");
-      return;
-    }
+    const { main: q, textsJson } = picked;
 
     aa.tieQuestionId = q.id;
     aa.tieQuestionText = q.text;
+    aa.tieQuestionTextsJson = textsJson;
     aa.tieExpiresAt = Date.now() + WAR_TIE_TIMER_MS;
     aa.expiresAt = 0;
     aa.resolveRevealEndsAt = 0;
@@ -1448,27 +1568,25 @@ export class MatchRoom extends Room<MatchState> {
     const aa = this.state.activeAttack;
     if (!ca || !aa) return;
 
-    const wqWhere = this.questionWhere() as never;
-    const wqCount = await prisma.warQuestion.count({ where: wqWhere });
-    if (wqCount === 0) {
+    const picked = await this.pickWarQuestionGroup();
+    if (!picked) {
       this.cleanupAttack();
       this.advanceWarTurn();
       return;
     }
-    const wq = await prisma.warQuestion.findFirst({
-      where: wqWhere,
-      skip: Math.floor(Math.random() * wqCount),
-    });
-    if (!wq) return;
 
     // Reset tie state, restart MC with new question.
-    aa.questionId = wq.id;
-    aa.questionText = wq.text;
-    aa.options = new ArraySchema<string>(...shuffled(wq.options));
-    aa.category = wq.category;
+    aa.questionId = picked.main.id;
+    aa.questionText = picked.main.text;
+    aa.questionTextsJson = picked.questionTextsJson;
+    aa.options = new ArraySchema<string>(...picked.main.options);
+    aa.optionsJson = picked.optionsJson;
+    aa.correctIndex = picked.correctIndex;
+    aa.category = picked.main.category;
     aa.expiresAt = Date.now() + this.settings.warMcTimerMs;
     aa.tieQuestionId = 0;
     aa.tieQuestionText = "";
+    aa.tieQuestionTextsJson = "";
     aa.tieExpiresAt = 0;
     aa.lastAttackerCorrect = false;
     aa.lastDefenderCorrect = false;
@@ -1477,8 +1595,8 @@ export class MatchRoom extends Room<MatchState> {
     aa.correctOption = "";
     aa.resolveRevealEndsAt = 0;
 
-    ca.questionRowId = wq.id;
-    ca.correctOption = wq.answer;
+    ca.questionRowId = picked.main.id;
+    ca.correctOption = picked.correctOption;
     ca.mcStartedAtMs = Date.now();
     ca.answers.clear();
     ca.tieAnswers.clear();

@@ -61,6 +61,10 @@ export class Player extends Schema {
   // PlayerPanel marks them as "left". Distinct from `connected: false`
   // which only signals a transient drop.
   declare abandoned: boolean;
+  // Preferred language ("en" / "ru" / "uk" / "pl"). Snapshot from
+  // PlayerProfile.language at lobby hydrate; the client uses this to
+  // pick which translation of each question to render.
+  declare language: string;
 
   constructor() {
     super();
@@ -72,6 +76,7 @@ export class Player extends Schema {
     this.capitalStyle = "standard";
     this.connected = false;
     this.abandoned = false;
+    this.language = "en";
   }
 }
 defineTypes(Player, {
@@ -83,12 +88,18 @@ defineTypes(Player, {
   capitalStyle: "string",
   connected: "boolean",
   abandoned: "boolean",
+  language: "string",
 });
 
 export class ActiveQuestion extends Schema {
   declare id: string;
   declare questionId: number;
   declare text: string;
+  // JSON-encoded `{ en, ru, uk, pl }` map of question-text translations.
+  // Clients parse this and pick the entry matching their own
+  // Player.language (falling back to `en` when missing). Server still
+  // populates `text` with the English fallback so legacy clients work.
+  declare textsJson: string;
   declare category: string;
   declare expiresAt: number;
 
@@ -97,6 +108,7 @@ export class ActiveQuestion extends Schema {
     this.id = "";
     this.questionId = 0;
     this.text = "";
+    this.textsJson = "";
     this.category = "general";
     this.expiresAt = 0;
   }
@@ -105,6 +117,7 @@ defineTypes(ActiveQuestion, {
   id: "string",
   questionId: "number",
   text: "string",
+  textsJson: "string",
   category: "string",
   expiresAt: "number",
 });
@@ -116,12 +129,27 @@ export class ActiveAttack extends Schema {
   declare countryId: string;
   declare questionId: number;
   declare questionText: string;
+  // JSON-encoded `{ en, ru, uk, pl }` map of MC question-text
+  // translations. Same fallback rules as ActiveQuestion.textsJson.
+  declare questionTextsJson: string;
   declare correctOption: string;
+  // Position (0-based) of the correct option after shuffle. Same
+  // across every language since translated options are kept in lockstep
+  // order. Clients submit by index and the server validates against
+  // this — language-independent.
+  declare correctIndex: number;
   declare options: ArraySchema<string>;
+  // JSON-encoded `{ en: [...], ru: [...], uk: [...], pl: [...] }` of the
+  // shuffled options arrays per language. Index N in any language is
+  // the same logical option, so `correctIndex` matches across all four.
+  declare optionsJson: string;
   declare category: string;
   declare expiresAt: number;
   declare tieQuestionId: number;
   declare tieQuestionText: string;
+  // Same as questionTextsJson but for the tie-breaker numeric question
+  // shown when both attacker and defender answer MC correctly.
+  declare tieQuestionTextsJson: string;
   declare tieExpiresAt: number;
   declare lastAttackerCorrect: boolean;
   declare lastDefenderCorrect: boolean;
@@ -154,12 +182,16 @@ export class ActiveAttack extends Schema {
     this.countryId = "";
     this.questionId = 0;
     this.questionText = "";
+    this.questionTextsJson = "";
     this.correctOption = "";
+    this.correctIndex = -1;
     this.options = new ArraySchema<string>();
+    this.optionsJson = "";
     this.category = "general";
     this.expiresAt = 0;
     this.tieQuestionId = 0;
     this.tieQuestionText = "";
+    this.tieQuestionTextsJson = "";
     this.tieExpiresAt = 0;
     this.lastAttackerCorrect = false;
     this.lastDefenderCorrect = false;
@@ -183,12 +215,16 @@ defineTypes(ActiveAttack, {
   countryId: "string",
   questionId: "number",
   questionText: "string",
+  questionTextsJson: "string",
   correctOption: "string",
+  correctIndex: "number",
   options: ["string"],
+  optionsJson: "string",
   category: "string",
   expiresAt: "number",
   tieQuestionId: "number",
   tieQuestionText: "string",
+  tieQuestionTextsJson: "string",
   tieExpiresAt: "number",
   lastAttackerCorrect: "boolean",
   lastDefenderCorrect: "boolean",

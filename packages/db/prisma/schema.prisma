@@ -53,6 +53,11 @@ model PlayerProfile {
   iqScore           Int?          // self-reported IQ if known
   personalityTraits String[]       @default([])
 
+  // Preferred language for question text. The match server resolves
+  // each player's question translation against this column at runtime —
+  // mixed-language lobbies are fine, each player just reads their own.
+  language          QuestionLanguage @default(en)
+
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   games       PlayerInGame[]
@@ -375,13 +380,36 @@ enum QuestionCategory {
   general
 }
 
+// Question + UI language. PlayerProfile.language picks which translation
+// each player sees during a match; questions also carry a language so we
+// can group siblings together (a "what is the capital of France" group
+// has one row per supported language sharing the same numeric/index answer).
+enum QuestionLanguage {
+  en
+  ru
+  uk
+  pl
+}
+
 model Question {
   id         Int              @id @default(autoincrement())
+  // Shared key across all translations of the same conceptual question.
+  // Default cuid() lets pre-existing rows survive the migration as
+  // singleton groups — they still work, just only resolve for `en`
+  // players (other languages fall back to en at render time).
+  groupKey   String           @default(dbgenerated("gen_random_uuid()::text"))
+  language   QuestionLanguage @default(en)
   text       String
+  // The numeric answer is invariant across translations of a group —
+  // we duplicate the value on each row so a single read pulls every
+  // field needed to score, without joining to a parent table.
   answer     Float
   category   QuestionCategory @default(general)
   matches    MatchQuestion[]
   warAttacks WarAttack[]
+
+  @@unique([groupKey, language])
+  @@index([category, language])
 }
 
 model MatchQuestion {
@@ -465,12 +493,29 @@ model WarAnswer {
 }
 
 model WarQuestion {
-  id       Int              @id @default(autoincrement())
-  text     String
-  options  String[]
-  answer   String
-  category QuestionCategory @default(general)
-  attacks  WarAttack[]
+  id           Int              @id @default(autoincrement())
+  // Shared across all translations of the same MC question. Like the
+  // numeric Question table, default cuid() lets old rows stay as
+  // singleton en-only groups during migration.
+  groupKey     String           @default(dbgenerated("gen_random_uuid()::text"))
+  language     QuestionLanguage @default(en)
+  text         String
+  options      String[]
+  // Position (0-based) of the correct option inside `options`. Same
+  // value across every translation of a group — translators must keep
+  // option order consistent. `correctIndex = -1` is a sentinel used
+  // only on legacy rows that pre-date this column; runtime code falls
+  // back to `indexOf(answer, options)` when it sees -1.
+  correctIndex Int              @default(-1)
+  // Legacy: the correct option's text. Kept for backward compatibility
+  // with pre-translation data — new rows should populate correctIndex
+  // directly. Phased out once the question pool is regenerated.
+  answer       String           @default("")
+  category     QuestionCategory @default(general)
+  attacks      WarAttack[]
+
+  @@unique([groupKey, language])
+  @@index([category, language])
 }
 
 model MatchEvent {

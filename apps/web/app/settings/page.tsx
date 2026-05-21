@@ -88,6 +88,35 @@ export default async function SettingsPage() {
         />
 
         <form action={updateSettings} className="flex flex-col gap-4">
+          <PanelCard title="Language" accent="#ff6cf3">
+            <Field label="Question language">
+              <div className="flex flex-wrap gap-1.5">
+                {LANGUAGE_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className="cursor-pointer select-none"
+                  >
+                    <input
+                      type="radio"
+                      name="language"
+                      value={opt.value}
+                      defaultChecked={profile.language === opt.value}
+                      className="peer sr-only"
+                    />
+                    <span className="inline-flex items-center gap-2 font-head text-[11px] px-3 py-1.5 border border-stroke bg-canvas text-mute peer-checked:bg-accent peer-checked:border-accent peer-checked:text-accent-fg hover:border-mute transition-colors">
+                      <span aria-hidden>{opt.flag}</span>
+                      {opt.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <span className="font-mono text-[10px] text-dim mt-1.5">
+                Questions in match render in this language. Other players
+                in the lobby see their own language.
+              </span>
+            </Field>
+          </PanelCard>
+
           <PanelCard title="About you" accent="#1ed3ff">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Birth year">
@@ -227,6 +256,15 @@ export default async function SettingsPage() {
 
 const INPUT_CLS =
   "bg-canvas border border-stroke focus:border-accent focus:outline-none px-3 py-2 font-mono text-sm text-white placeholder:text-dim w-full";
+
+// Mirrors packages/shared lobbySettings — kept inline so this server
+// component doesn't need a shared file just for 4 chips.
+const LANGUAGE_OPTIONS: { value: string; label: string; flag: string }[] = [
+  { value: "en", label: "English", flag: "🇬🇧" },
+  { value: "ru", label: "Русский", flag: "🇷🇺" },
+  { value: "uk", label: "Українська", flag: "🇺🇦" },
+  { value: "pl", label: "Polski", flag: "🇵🇱" },
+];
 
 function Field({
   label,

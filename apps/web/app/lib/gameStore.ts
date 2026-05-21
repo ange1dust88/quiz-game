@@ -32,12 +32,17 @@ export type PlayerMirror = {
   capitalStyle: string;
   connected: boolean;
   abandoned: boolean;
+  language: string;
 };
 
 export type ActiveQuestionMirror = {
   id: string;
   questionId: number;
   text: string;
+  // JSON-packed `{ en, ru, uk, pl }` map of question translations.
+  // Empty for legacy / single-language data — pickTranslation()
+  // falls back to `text` when this is empty.
+  textsJson: string;
   category: string;
   expiresAt: number;
 };
@@ -49,11 +54,14 @@ export type ActiveAttackMirror = {
   countryId: string;
   questionId: number;
   questionText: string;
+  questionTextsJson: string;
   options: string[];
+  optionsJson: string;
   category: string;
   expiresAt: number;
   tieQuestionId: number;
   tieQuestionText: string;
+  tieQuestionTextsJson: string;
   tieExpiresAt: number;
   lastAttackerCorrect: boolean;
   lastDefenderCorrect: boolean;
@@ -162,6 +170,7 @@ function snapshot(s: any): GameStateMirror {
       capitalStyle: p.capitalStyle,
       connected: p.connected,
       abandoned: p.abandoned ?? false,
+      language: p.language ?? "en",
     });
   });
 
@@ -186,6 +195,7 @@ function snapshot(s: any): GameStateMirror {
           id: aq.id,
           questionId: aq.questionId,
           text: aq.text,
+          textsJson: aq.textsJson ?? "",
           category: aq.category,
           expiresAt: aq.expiresAt,
         }
@@ -201,11 +211,14 @@ function snapshot(s: any): GameStateMirror {
           countryId: aa.countryId,
           questionId: aa.questionId,
           questionText: aa.questionText,
+          questionTextsJson: aa.questionTextsJson ?? "",
           options: Array.from(aa.options ?? []),
+          optionsJson: aa.optionsJson ?? "",
           category: aa.category,
           expiresAt: aa.expiresAt,
           tieQuestionId: aa.tieQuestionId,
           tieQuestionText: aa.tieQuestionText,
+          tieQuestionTextsJson: aa.tieQuestionTextsJson ?? "",
           tieExpiresAt: aa.tieExpiresAt,
           lastAttackerCorrect: aa.lastAttackerCorrect,
           lastDefenderCorrect: aa.lastDefenderCorrect,

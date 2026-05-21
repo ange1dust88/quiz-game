@@ -19,6 +19,14 @@ const MIN_BIRTH_YEAR = 1900;
 const MIN_IQ = 50;
 const MAX_IQ = 200;
 
+const VALID_LANGUAGES = ["en", "ru", "uk", "pl"] as const;
+type ValidLanguage = (typeof VALID_LANGUAGES)[number];
+function asLanguage(v: string): ValidLanguage {
+  return (VALID_LANGUAGES as readonly string[]).includes(v)
+    ? (v as ValidLanguage)
+    : "en";
+}
+
 function trimmed(formData: FormData, key: string): string {
   const v = formData.get(key);
   return typeof v === "string" ? v.trim() : "";
@@ -65,6 +73,8 @@ export async function updateSettings(formData: FormData) {
     new Set(traitInput.filter((t) => validTraitValues.has(t))),
   ).slice(0, MAX_TRAITS);
 
+  const language = asLanguage(trimmed(formData, "language"));
+
   await prisma.playerProfile.update({
     where: { id: profile.id },
     data: {
@@ -83,6 +93,7 @@ export async function updateSettings(formData: FormData) {
       ),
       mbti: whitelisted(trimmed(formData, "mbti"), MBTI_OPTIONS),
       personalityTraits,
+      language,
     },
   });
 

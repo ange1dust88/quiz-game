@@ -50,3 +50,47 @@ export function isValidTimer(
 ): boolean {
   return Number.isInteger(value) && presets.includes(value);
 }
+
+// Player UI language. Must match PlayerProfile.language enum values in
+// Prisma — used in both the lobby chat / settings UI and as the lookup
+// key when picking translations of a question.
+export const PLAYER_LANGUAGES = ["en", "ru", "uk", "pl"] as const;
+export type PlayerLanguage = (typeof PLAYER_LANGUAGES)[number];
+export const DEFAULT_LANGUAGE: PlayerLanguage = "en";
+
+export function isPlayerLanguage(v: string): v is PlayerLanguage {
+  return (PLAYER_LANGUAGES as readonly string[]).includes(v);
+}
+
+// Pull the right translation out of the JSON-packed map ActiveQuestion /
+// ActiveAttack expose on the wire. Empty / unparseable JSON, or a
+// missing entry for the player's language, both fall back to English
+// — so legacy data (singleton groups with only the en row) still
+// renders cleanly for non-en players.
+export function pickTranslation(
+  json: string,
+  language: string,
+  fallback = "",
+): string {
+  if (!json) return fallback;
+  try {
+    const obj = JSON.parse(json) as Record<string, string>;
+    return obj[language] || obj.en || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function pickOptions(
+  json: string,
+  language: string,
+  fallback: string[] = [],
+): string[] {
+  if (!json) return fallback;
+  try {
+    const obj = JSON.parse(json) as Record<string, string[]>;
+    return obj[language] || obj.en || fallback;
+  } catch {
+    return fallback;
+  }
+}
