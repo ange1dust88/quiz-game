@@ -4,6 +4,12 @@
 // The chip is a clickable button; tapping it opens a centered modal
 // listing the balance and the ways to earn more. Spending sinks aren't
 // built yet — modal copy reflects that.
+//
+// Polling: the chip self-syncs every POLL_INTERVAL_MS so coins credited
+// in the background (match end, daily mission completion, achievement
+// unlock) reflect without forcing a navigation. Also re-fetches on
+// `visibilitychange` so coins appear instantly when the user tabs back
+// in after a match.
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -12,8 +18,43 @@ type Props = {
   coins: number;
 };
 
-export default function CoinPurse({ coins }: Props) {
+const POLL_INTERVAL_MS = 12_000;
+
+export default function CoinPurse({ coins: initialCoins }: Props) {
   const [open, setOpen] = useState(false);
+  const [coins, setCoins] = useState(initialCoins);
+  // If the server-rendered initial value changes (e.g. layout
+  // re-renders on navigation), prefer the fresh server value over our
+  // stale state — both numbers come from the same DB column.
+  useEffect(() => {
+    setCoins(initialCoins);
+  }, [initialCoins]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/me/coins", { cache: "no-store" });
+        if (!r.ok) return;
+        const data = (await r.json()) as { coins: number };
+        if (!cancelled && typeof data.coins === "number") {
+          setCoins(data.coins);
+        }
+      } catch {
+        // network blip — next tick will retry
+      }
+    };
+    const t = setInterval(load, POLL_INTERVAL_MS);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   // Lock body scroll while the modal is up; close on Escape.
   useEffect(() => {
