@@ -109,12 +109,15 @@ export default function MapPanel({ myPlayerId }: { myPlayerId: string }) {
 
   // Country currently being attacked — derived from activeAttack.countryId
   // (the Country.id, not svgId) so we can highlight the target on the map
-  // even though clicks are gated out during reveal.
+  // even though clicks are gated out during reveal. Hoist the id to a
+  // primitive first so the memo dep is a stable string, not an
+  // optional-chain expression.
+  const attackCountryId = activeAttack?.countryId ?? null;
   const attackedSvgId = useMemo(() => {
-    if (!activeAttack?.countryId) return null;
-    const c = countries.find((x) => x.id === activeAttack.countryId);
+    if (!attackCountryId) return null;
+    const c = countries.find((x) => x.id === attackCountryId);
     return c?.svgId ?? null;
-  }, [activeAttack?.countryId, countries]);
+  }, [attackCountryId, countries]);
 
   // Build set of svgIds that are CLICKABLE for me right now. Used to
   // highlight only the LEGAL targets — capitals can't sit next to

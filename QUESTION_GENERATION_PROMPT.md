@@ -70,7 +70,6 @@ Columns to INSERT:
 | text          | text      | Question in that language                   |
 | options       | text[]    | Exactly 4 options, translated, **same logical order across languages** |
 | correctIndex  | integer   | 0–3, SAME across all 4 translations         |
-| answer        | text      | Legacy column — put the EN correct option here as a debug fallback |
 | category      | enum      | Same across all 4 translations              |
 
 **Rules (CRITICAL):**
@@ -113,11 +112,11 @@ INSERT INTO "Question" ("groupKey", language, text, answer, category) VALUES
 
 -- MC: Capital of France
 WITH g AS (SELECT gen_random_uuid()::text AS k)
-INSERT INTO "WarQuestion" ("groupKey", language, text, options, "correctIndex", answer, category) VALUES
-  ((SELECT k FROM g), 'en', 'Capital of France?', ARRAY['Paris','London','Berlin','Madrid'], 0, 'Paris', 'geography'),
-  ((SELECT k FROM g), 'ru', 'Столица Франции?',   ARRAY['Париж','Лондон','Берлин','Мадрид'], 0, 'Париж', 'geography'),
-  ((SELECT k FROM g), 'uk', 'Столиця Франції?',   ARRAY['Париж','Лондон','Берлін','Мадрид'], 0, 'Париж', 'geography'),
-  ((SELECT k FROM g), 'pl', 'Stolica Francji?',   ARRAY['Paryż','Londyn','Berlin','Madryt'], 0, 'Paryż', 'geography');
+INSERT INTO "WarQuestion" ("groupKey", language, text, options, "correctIndex", category) VALUES
+  ((SELECT k FROM g), 'en', 'Capital of France?', ARRAY['Paris','London','Berlin','Madrid'], 0, 'geography'),
+  ((SELECT k FROM g), 'ru', 'Столица Франции?',   ARRAY['Париж','Лондон','Берлин','Мадрид'], 0, 'geography'),
+  ((SELECT k FROM g), 'uk', 'Столиця Франції?',   ARRAY['Париж','Лондон','Берлін','Мадрид'], 0, 'geography'),
+  ((SELECT k FROM g), 'pl', 'Stolica Francji?',   ARRAY['Paryż','Londyn','Berlin','Madryt'], 0, 'geography');
 
 COMMIT;
 ```

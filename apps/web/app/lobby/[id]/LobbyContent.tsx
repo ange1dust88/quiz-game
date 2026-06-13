@@ -144,9 +144,23 @@ export function LobbyContent({
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const router = useRouter();
 
+  // playerInGame ids currently in THIS lobby. MatchChoice realtime rows
+  // only carry playerInGameId (no gameSessionId column), so we can't
+  // scope the Supabase subscription server-side — instead we filter
+  // incoming choice events against this set so a choice change in some
+  // other lobby doesn't trigger a refetch here. Kept in a ref so the
+  // long-lived subscription closure always reads the current set.
+  const lobbyPlayerIdsRef = useRef<Set<string>>(
+    new Set(initialSession.players.map((p) => p.id)),
+  );
+
   useEffect(() => {
     setSession(initialSession);
   }, [initialSession]);
+
+  useEffect(() => {
+    lobbyPlayerIdsRef.current = new Set(session.players.map((p) => p.id));
+  }, [session.players]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -155,6 +169,14 @@ export function LobbyContent({
       const response = await fetch(`/api/sessions/${sessionId}`);
       const freshSession = await response.json();
       setSession((prev) => ({ ...prev, ...freshSession }));
+    };
+
+    // Only refetch for a MatchChoice change that belongs to a player in
+    // this lobby. An unknown id is either another lobby (ignore) or a
+    // brand-new player whose join INSERT will refetch us anyway.
+    const refetchIfMine = (payload: { new?: { playerInGameId?: string } }) => {
+      const pigId = payload.new?.playerInGameId;
+      if (pigId && lobbyPlayerIdsRef.current.has(pigId)) refetch();
     };
 
     const main = supabase
@@ -224,12 +246,12 @@ export function LobbyContent({
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "MatchChoice" },
-        refetch,
+        refetchIfMine,
       )
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "MatchChoice" },
-        refetch,
+        refetchIfMine,
       )
       .subscribe();
 
@@ -458,7 +480,7 @@ function LobbyHeaderStrip({
         <div className="flex items-center gap-4 flex-wrap min-w-0">
           <Slash label="Lobby" color="#1ed3ff" />
           <h1 className="font-head text-2xl text-white truncate">
-            {hostNickname}'s lobby
+            {hostNickname}&apos;s lobby
           </h1>
           <div className="hidden sm:block w-px h-5 bg-stroke" />
           <div className="flex items-center gap-2">
@@ -699,7 +721,7 @@ function JoinPrompt({ sessionId }: { sessionId: string }) {
   return (
     <div className="bg-surface border border-stroke px-4 py-3 flex items-center gap-3 shadow-xl shadow-black/40">
       <span className="font-body text-sm text-mute">
-        You're not in the lobby yet — join to play.
+        You&apos;re not in the lobby yet — join to play.
       </span>
       <button
         type="button"
@@ -1661,22 +1683,24 @@ function LobbyChatPanel({
         refetch,
       )
       .subscribe();
-    // Poll fallback in case the Supabase Realtime publication isn't
-    // configured for LobbyChatMessage yet — keeps the chat from going
-    // silent if the live channel never fires.
-    const t = setInterval(refetch, 3000);
 
     return () => {
       cancelled = true;
-      clearInterval(t);
       channel.unsubscribe();
     };
   }, [sessionId, isMember]);
 
-  // Auto-scroll to bottom whenever a new message lands.
+  // Smart auto-scroll: only follow the bottom when the user is
+  // already pinned within 80px of it. If they scrolled up to read
+  // history, a new message lands silently and they can scroll on
+  // their own time — same convention as Discord / Slack.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 80) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages.length]);
 
   const submit = () => {

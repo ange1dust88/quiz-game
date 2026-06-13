@@ -1,4 +1,4 @@
-// FACEIT-style "coming soon" card used by /play, /tournaments, /friends.
+// FACEIT-style "coming soon" card used for stubbed routes.
 // One sharp bordered panel with a coloured top stripe, a "Coming soon"
 // slash, heading + description, and a back-to-dashboard CTA.
 

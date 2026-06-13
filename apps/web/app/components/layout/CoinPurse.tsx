@@ -5,22 +5,25 @@
 // listing the balance and the ways to earn more. Spending sinks aren't
 // built yet — modal copy reflects that.
 //
-// Polling: the chip self-syncs every POLL_INTERVAL_MS so coins credited
-// in the background (match end, daily mission completion, achievement
-// unlock) reflect without forcing a navigation. Also re-fetches on
-// `visibilitychange` so coins appear instantly when the user tabs back
-// in after a match.
+// Live sync: the chip subscribes to Supabase Realtime UPDATE events on
+// the signed-in player's PlayerProfile row, so coins credited in the
+// background (match end, daily mission completion, achievement unlock)
+// reflect instantly. Falls back to a one-shot fetch on tab focus in
+// case the user's tab was suspended while a credit happened.
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { createClient } from "@/app/lib/supabase/client";
 
 type Props = {
   coins: number;
+  profileId: string;
 };
 
-const POLL_INTERVAL_MS = 12_000;
-
-export default function CoinPurse({ coins: initialCoins }: Props) {
+export default function CoinPurse({
+  coins: initialCoins,
+  profileId,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [coins, setCoins] = useState(initialCoins);
   // If the server-rendered initial value changes (e.g. layout
@@ -31,30 +34,49 @@ export default function CoinPurse({ coins: initialCoins }: Props) {
   }, [initialCoins]);
 
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+    if (!profileId) return;
+    const fetchCoins = async () => {
       try {
         const r = await fetch("/api/me/coins", { cache: "no-store" });
         if (!r.ok) return;
         const data = (await r.json()) as { coins: number };
-        if (!cancelled && typeof data.coins === "number") {
-          setCoins(data.coins);
-        }
+        if (typeof data.coins === "number") setCoins(data.coins);
       } catch {
-        // network blip — next tick will retry
+        /* network blip */
       }
     };
-    const t = setInterval(load, POLL_INTERVAL_MS);
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`coins-${profileId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "PlayerProfile",
+          filter: `id=eq.${profileId}`,
+        },
+        (payload) => {
+          const next = (payload.new as { coins?: number } | null)?.coins;
+          if (typeof next === "number") setCoins(next);
+        },
+      )
+      .subscribe();
+
+    // Catch up after the tab was hidden — Realtime can drop deltas
+    // during long backgrounding, so a single GET on resume is a cheap
+    // re-sync.
     const onVisibility = () => {
-      if (document.visibilityState === "visible") load();
+      if (document.visibilityState === "visible") fetchCoins();
     };
     document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
-      cancelled = true;
-      clearInterval(t);
+      channel.unsubscribe();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [profileId]);
 
   // Lock body scroll while the modal is up; close on Escape.
   useEffect(() => {

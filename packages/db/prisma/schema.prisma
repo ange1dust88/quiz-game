@@ -494,23 +494,15 @@ model WarAnswer {
 
 model WarQuestion {
   id           Int              @id @default(autoincrement())
-  // Shared across all translations of the same MC question. Like the
-  // numeric Question table, default cuid() lets old rows stay as
-  // singleton en-only groups during migration.
+  // Shared across all translations of the same MC question.
   groupKey     String           @default(dbgenerated("gen_random_uuid()::text"))
   language     QuestionLanguage @default(en)
   text         String
   options      String[]
   // Position (0-based) of the correct option inside `options`. Same
   // value across every translation of a group — translators must keep
-  // option order consistent. `correctIndex = -1` is a sentinel used
-  // only on legacy rows that pre-date this column; runtime code falls
-  // back to `indexOf(answer, options)` when it sees -1.
-  correctIndex Int              @default(-1)
-  // Legacy: the correct option's text. Kept for backward compatibility
-  // with pre-translation data — new rows should populate correctIndex
-  // directly. Phased out once the question pool is regenerated.
-  answer       String           @default("")
+  // option order consistent.
+  correctIndex Int
   category     QuestionCategory @default(general)
   attacks      WarAttack[]
 

@@ -183,7 +183,7 @@ function ChartBody({
               sample up to 5 evenly-spaced match indices and label
               each with the date of THAT match. The player can read
               "matches between Apr 19 and May 19" at a glance. */}
-          {sampleMatchTicks(points, range).map((t) => (
+          {sampleMatchTicks(points).map((t) => (
             <g key={t.idx}>
               <line
                 x1={t.x}
@@ -255,7 +255,7 @@ function ChartBody({
         </svg>
       </div>
 
-      <div className="flex flex-col gap-3 w-[140px] pt-2">
+      <div className="flex flex-row flex-wrap sm:flex-col gap-3 w-full sm:w-[140px] pt-2">
         <SideStat
           label="Net change"
           value={`${totalDelta >= 0 ? "+" : ""}${totalDelta}`}
@@ -329,7 +329,7 @@ type ChartPoint = {
 // Up to 5 ticks at evenly-spaced match indices. Each tick's label is
 // the date of THE match at that index, so the X axis tells the player
 // when matches happened even though spacing itself is by index.
-function sampleMatchTicks(points: ChartPoint[], range: Range): MatchTick[] {
+function sampleMatchTicks(points: ChartPoint[]): MatchTick[] {
   if (points.length === 0) return [];
   const TARGET = Math.min(5, points.length);
   const out: MatchTick[] = [];
@@ -340,7 +340,7 @@ function sampleMatchTicks(points: ChartPoint[], range: Range): MatchTick[] {
     out.push({
       idx,
       x: p.x,
-      label: formatTick(new Date(p.createdAt), range),
+      label: formatTick(new Date(p.createdAt)),
       align:
         i === 0 ? "start" : i === TARGET - 1 ? "end" : "middle",
     });
@@ -348,7 +348,7 @@ function sampleMatchTicks(points: ChartPoint[], range: Range): MatchTick[] {
   return out;
 }
 
-function formatTick(d: Date, _range: Range): string {
+function formatTick(d: Date): string {
   // Always show day-level "May 19". The old all-time branch used
   // {month, year:"2-digit"} which produced "May 26" — visually
   // identical to "May 26" (day 26) and confusing. If the all-time

@@ -10,6 +10,16 @@ import { getProfileSafe } from "@/app/lib/auth";
 import PanelCard from "@/app/components/ui/PanelCard";
 import StatBlock from "@/app/components/ui/StatBlock";
 import Slash from "@/app/components/ui/Slash";
+import {
+  extractFeatures,
+  groupMeans,
+  kMeans,
+  mbtiAxes,
+  pearson,
+  zNormalize,
+  type PlayerFeatures,
+  type SnapshotLike,
+} from "@/app/lib/analytics";
 
 const CATEGORY_LABELS: Record<string, string> = {
   geography: "Geography",
@@ -95,9 +105,28 @@ export default async function AnalyticsPage() {
       take: 200,
     }),
     prisma.playerProfile.findMany({
-      select: { id: true, birthYear: true, education: true, gender: true },
+      select: {
+        id: true,
+        birthYear: true,
+        education: true,
+        gender: true,
+        mbti: true,
+        iqScore: true,
+        personalityTraits: true,
+      },
     }),
   ]);
+
+  // ---- Analytical model: behavioural features → clustering + correlation
+  // Per-player behavioural vectors pooled across the loaded snapshots,
+  // joined to each player's demographic + psychometric profile.
+  const features = extractFeatures(snapshots as SnapshotLike[]);
+  const metaById = new Map(profiles.map((p) => [p.id, p]));
+  const currentYearForAge = new Date().getFullYear();
+
+  const clusterAnalysis = buildClusters(features, metaById);
+  const correlations = buildCorrelations(features, metaById, currentYearForAge);
+  const mbtiSplits = buildMbtiSplits(features, metaById);
 
   const profileByPlayer = new Map<string, string>();
   let totalNumericAnswers = 0;
@@ -220,12 +249,20 @@ export default async function AnalyticsPage() {
               game server at game_over.
             </p>
           </div>
-          <Link
-            href="/dashboard"
-            className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2 shrink-0"
-          >
-            ← Dashboard
-          </Link>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/analytics/dataset"
+              className="font-head text-[11px] font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-4 py-2"
+            >
+              Raw dataset →
+            </Link>
+            <Link
+              href="/dashboard"
+              className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2"
+            >
+              ← Dashboard
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -306,9 +343,242 @@ export default async function AnalyticsPage() {
             color="var(--color-accent)"
           />
         </section>
+
+        <div className="border-t border-stroke pt-2 mt-2">
+          <Slash label="Analytical model" color="#ff6cf3" />
+        </div>
+
+        <ClustersPanel clusters={clusterAnalysis} />
+
+        <CorrelationsPanel rows={correlations} />
+
+        <MbtiSplitPanel splits={mbtiSplits} />
       </div>
     </div>
   );
+}
+
+// ---- Analytical model builders -----------------------------------------
+
+type ProfileMeta = {
+  id: string;
+  birthYear: number | null;
+  education: string | null;
+  gender: string | null;
+  mbti: string | null;
+  iqScore: number | null;
+  personalityTraits: string[];
+};
+
+type ClusterDescriptor = {
+  index: number;
+  size: number;
+  label: string;
+  warAccuracy: number;
+  numericCloseness: number;
+  avgThinkMs: number;
+  avgHesitation: number;
+  riskAppetite: number;
+  aggression: number;
+  topEducation: string | null;
+  topMbti: string | null;
+  avgIq: number | null;
+};
+
+// Cluster the behavioural feature vectors (z-normalised so scales are
+// comparable) into up to 3 archetypes, then describe each cluster by its
+// mean behaviour + the demographic / psychometric profile that dominates
+// it. A human-readable label is inferred from the cluster's standout
+// behavioural traits.
+function buildClusters(
+  features: PlayerFeatures[],
+  metaById: Map<string, ProfileMeta>,
+): ClusterDescriptor[] {
+  // Need enough players with real signal to cluster meaningfully.
+  const usable = features.filter(
+    (f) => f.warAnswerCount + f.numericCount >= 3,
+  );
+  if (usable.length < 3) return [];
+
+  const DIMS: (keyof PlayerFeatures)[] = [
+    "warAccuracy",
+    "numericCloseness",
+    "avgThinkMs",
+    "avgHesitation",
+    "riskAppetite",
+    "aggression",
+  ];
+  const rows = usable.map((f) => DIMS.map((d) => f[d] as number));
+  const { normalized } = zNormalize(rows);
+  const k = Math.min(3, usable.length);
+  const { assignments } = kMeans(normalized, k, 42);
+
+  const groups = new Map<number, PlayerFeatures[]>();
+  usable.forEach((f, i) => {
+    const c = assignments[i];
+    const arr = groups.get(c) ?? [];
+    arr.push(f);
+    groups.set(c, arr);
+  });
+
+  const avg = (xs: number[]) =>
+    xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
+  const mode = (xs: (string | null)[]): string | null => {
+    const counts = new Map<string, number>();
+    for (const x of xs) if (x) counts.set(x, (counts.get(x) ?? 0) + 1);
+    let best: string | null = null;
+    let bestN = 0;
+    for (const [k2, n] of counts)
+      if (n > bestN) {
+        bestN = n;
+        best = k2;
+      }
+    return best;
+  };
+
+  const out: ClusterDescriptor[] = [];
+  for (const [index, members] of groups) {
+    const metas = members
+      .map((m) => metaById.get(m.profileId))
+      .filter((m): m is ProfileMeta => Boolean(m));
+    const iqs = metas
+      .map((m) => m.iqScore)
+      .filter((v): v is number => v !== null);
+    const warAccuracy = avg(members.map((m) => m.warAccuracy));
+    const riskAppetite = avg(members.map((m) => m.riskAppetite));
+    const avgThinkMs = avg(members.map((m) => m.avgThinkMs));
+    const aggression = avg(members.map((m) => m.aggression));
+    out.push({
+      index,
+      size: members.length,
+      label: clusterLabel({ warAccuracy, riskAppetite, avgThinkMs, aggression }),
+      warAccuracy,
+      numericCloseness: avg(members.map((m) => m.numericCloseness)),
+      avgThinkMs,
+      avgHesitation: avg(members.map((m) => m.avgHesitation)),
+      riskAppetite,
+      aggression,
+      topEducation: mode(metas.map((m) => m.education)),
+      topMbti: mode(metas.map((m) => m.mbti)),
+      avgIq: iqs.length ? Math.round(avg(iqs)) : null,
+    });
+  }
+  return out.sort((a, b) => b.size - a.size);
+}
+
+// Infer a short archetype name from a cluster's standout traits.
+function clusterLabel(c: {
+  warAccuracy: number;
+  riskAppetite: number;
+  avgThinkMs: number;
+  aggression: number;
+}): string {
+  const speed = c.avgThinkMs > 0 && c.avgThinkMs < 1500 ? "Fast" : "Deliberate";
+  const acc = c.warAccuracy >= 0.6 ? "accurate" : "scrappy";
+  const risk = c.riskAppetite >= 0.5 ? "risk-taker" : "safe";
+  return `${speed} ${acc} ${risk}`;
+}
+
+type CorrelationRow = { label: string; r: number; n: number };
+
+// Pearson correlations between psychometric/demographic predictors and
+// behavioural outcomes. Each row reports r ∈ [-1, 1] and the sample size.
+function buildCorrelations(
+  features: PlayerFeatures[],
+  metaById: Map<string, ProfileMeta>,
+  currentYear: number,
+): CorrelationRow[] {
+  const iq = (f: PlayerFeatures) => metaById.get(f.profileId)?.iqScore ?? null;
+  const age = (f: PlayerFeatures) => {
+    const by = metaById.get(f.profileId)?.birthYear;
+    return by ? currentYear - by : null;
+  };
+  const pairOf = (
+    xs: (f: PlayerFeatures) => number | null,
+    ys: (f: PlayerFeatures) => number | null,
+  ): Array<[number | null, number | null]> =>
+    features.map((f) => [xs(f), ys(f)]);
+
+  const rows: CorrelationRow[] = [
+    {
+      label: "IQ ↔ War accuracy",
+      ...pearson(pairOf(iq, (f) => (f.warAnswerCount > 0 ? f.warAccuracy : null))),
+    },
+    {
+      label: "IQ ↔ Numeric closeness",
+      ...pearson(pairOf(iq, (f) => (f.numericCount > 0 ? f.numericCloseness : null))),
+    },
+    {
+      label: "IQ ↔ Think time (lower = decisive)",
+      ...pearson(pairOf(iq, (f) => (f.avgThinkMs > 0 ? f.avgThinkMs : null))),
+    },
+    {
+      label: "IQ ↔ Hesitation",
+      ...pearson(pairOf(iq, (f) => f.avgHesitation)),
+    },
+    {
+      label: "Age ↔ Think time",
+      ...pearson(pairOf(age, (f) => (f.avgThinkMs > 0 ? f.avgThinkMs : null))),
+    },
+    {
+      label: "Age ↔ War accuracy",
+      ...pearson(pairOf(age, (f) => (f.warAnswerCount > 0 ? f.warAccuracy : null))),
+    },
+    {
+      label: "Risk appetite ↔ Aggression",
+      ...pearson(pairOf((f) => f.riskAppetite, (f) => f.aggression)),
+    },
+  ];
+  return rows.filter((r) => r.n >= 2);
+}
+
+type MbtiSplit = {
+  axis: string;
+  metric: string;
+  groups: Array<{ key: string; mean: number; n: number }>;
+};
+
+// Behaviour split by MBTI binary axes. Directly tests personality
+// hypotheses (e.g. do Judging types hesitate less than Perceiving?).
+function buildMbtiSplits(
+  features: PlayerFeatures[],
+  metaById: Map<string, ProfileMeta>,
+): MbtiSplit[] {
+  const axisLetter =
+    (which: "TF" | "JP" | "EI" | "SN") => (f: PlayerFeatures) => {
+      const ax = mbtiAxes(metaById.get(f.profileId)?.mbti ?? null);
+      return ax ? ax[which] : null;
+    };
+  const splits: MbtiSplit[] = [
+    {
+      axis: "Thinking vs Feeling",
+      metric: "War accuracy %",
+      groups: groupMeans(
+        features.filter((f) => f.warAnswerCount > 0),
+        axisLetter("TF"),
+        (f) => Math.round(f.warAccuracy * 100),
+      ),
+    },
+    {
+      axis: "Judging vs Perceiving",
+      metric: "Hesitation (input changes)",
+      groups: groupMeans(
+        features,
+        axisLetter("JP"),
+        (f) => Math.round(f.avgHesitation * 10) / 10,
+      ),
+    },
+    {
+      axis: "Judging vs Perceiving",
+      metric: "Risk appetite %",
+      groups: groupMeans(
+        features.filter((f) => f.riskAppetite > 0 || f.aggression > 0),
+        axisLetter("JP"),
+        (f) => Math.round(f.riskAppetite * 100),
+      ),
+    },
+  ];
+  return splits.filter((s) => s.groups.length >= 2);
 }
 
 type Bar = { label: string; value: number; sample?: number };
@@ -408,6 +678,211 @@ function MiniBarPanel({
               </span>
             </div>
           ))}
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+// ---- Analytical-model panels -------------------------------------------
+
+function ClustersPanel({ clusters }: { clusters: ClusterDescriptor[] }) {
+  return (
+    <PanelCard
+      title="Behavioural player clusters (k-means)"
+      accent="#ff6cf3"
+    >
+      <p className="font-body text-xs text-mute mb-3 -mt-1">
+        Players grouped by behaviour (war accuracy, numeric closeness,
+        think time, hesitation, risk appetite, aggression — z-normalised).
+        Each cluster is described by its mean behaviour and the
+        demographic / psychometric profile that dominates it.
+      </p>
+      {clusters.length === 0 ? (
+        <p className="font-body text-sm text-dim italic">
+          Not enough match data to cluster yet (need ≥3 players with
+          played answers).
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {clusters.map((c) => (
+            <div
+              key={c.index}
+              className="bg-panel border border-stroke p-3 flex flex-col gap-2"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-head text-[11px] text-white">
+                  {c.label}
+                </span>
+                <span className="font-mono text-[10px] text-dim">
+                  {c.size} player{c.size === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <ClusterStat label="War acc" value={`${Math.round(c.warAccuracy * 100)}%`} />
+                <ClusterStat label="Numeric" value={`${Math.round(c.numericCloseness * 100)}%`} />
+                <ClusterStat label="Think" value={c.avgThinkMs > 0 ? `${Math.round(c.avgThinkMs)}ms` : "—"} />
+                <ClusterStat label="Hesitation" value={c.avgHesitation.toFixed(1)} />
+                <ClusterStat label="Risk" value={`${Math.round(c.riskAppetite * 100)}%`} />
+                <ClusterStat label="Aggression" value={c.aggression.toFixed(2)} />
+              </div>
+              <div className="border-t border-stroke pt-2 mt-1 flex flex-col gap-0.5">
+                <ClusterStat label="Avg IQ" value={c.avgIq !== null ? String(c.avgIq) : "n/a"} muted />
+                <ClusterStat label="Top edu" value={c.topEducation ? (EDUCATION_LABELS[c.topEducation] ?? c.topEducation) : "n/a"} muted />
+                <ClusterStat label="Top MBTI" value={c.topMbti ?? "n/a"} muted />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+function ClusterStat({
+  label,
+  value,
+  muted,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="font-head text-[10px] text-dim">{label}</span>
+      <span
+        className={`font-mono text-[11px] ${muted ? "text-mute" : "text-white"}`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function CorrelationsPanel({ rows }: { rows: CorrelationRow[] }) {
+  return (
+    <PanelCard
+      title="Psychometric correlations (Pearson r)"
+      accent="#1ed3ff"
+    >
+      <p className="font-body text-xs text-mute mb-3 -mt-1">
+        Linear correlation between collected predictors (IQ, age) and
+        behavioural outcomes. r ranges −1…+1; |r| ≥ 0.3 is a notable
+        signal. n = players with both fields present.
+      </p>
+      {rows.length === 0 ? (
+        <p className="font-body text-sm text-dim italic">
+          Not enough paired data yet (need players with IQ / birth year
+          set who have played).
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {rows.map((row) => {
+            const pct = Math.min(100, Math.abs(row.r) * 100);
+            const positive = row.r >= 0;
+            return (
+              <div key={row.label} className="flex items-center gap-3">
+                <span className="font-head text-[11px] text-mute w-56 shrink-0">
+                  {row.label}
+                </span>
+                {/* Diverging bar from a centre line: green right (+),
+                    red left (−). */}
+                <div className="flex-1 h-5 bg-panel relative overflow-hidden flex">
+                  <div className="w-1/2 h-full flex justify-end">
+                    {!positive && (
+                      <div
+                        className="h-full"
+                        style={{ width: `${pct}%`, background: "var(--color-lose)" }}
+                      />
+                    )}
+                  </div>
+                  <div className="absolute left-1/2 top-0 bottom-0 w-px bg-stroke" />
+                  <div className="w-1/2 h-full">
+                    {positive && (
+                      <div
+                        className="h-full"
+                        style={{ width: `${pct}%`, background: "var(--color-win)" }}
+                      />
+                    )}
+                  </div>
+                </div>
+                <span
+                  className="font-mono text-sm font-bold tabular-nums w-16 text-right"
+                  style={{
+                    color: positive ? "var(--color-win)" : "var(--color-lose)",
+                  }}
+                >
+                  {row.r >= 0 ? "+" : ""}
+                  {row.r.toFixed(2)}
+                </span>
+                <span className="font-mono text-[10px] text-dim w-12 text-right">
+                  n={row.n}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </PanelCard>
+  );
+}
+
+function MbtiSplitPanel({ splits }: { splits: MbtiSplit[] }) {
+  return (
+    <PanelCard title="Behaviour by MBTI axis" accent="#7c8aff">
+      <p className="font-body text-xs text-mute mb-3 -mt-1">
+        Behavioural metrics split by personality axis — tests whether
+        self-reported type predicts in-game behaviour.
+      </p>
+      {splits.length === 0 ? (
+        <p className="font-body text-sm text-dim italic">
+          Not enough players with an MBTI type set yet.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {splits.map((s, i) => {
+            const max = s.groups.reduce((m, g) => Math.max(m, g.mean), 0);
+            return (
+              <div
+                key={`${s.axis}-${s.metric}-${i}`}
+                className="bg-panel border border-stroke p-3 flex flex-col gap-2"
+              >
+                <div className="flex flex-col">
+                  <span className="font-head text-[11px] text-white">
+                    {s.axis}
+                  </span>
+                  <span className="font-mono text-[10px] text-dim">
+                    {s.metric}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {s.groups.map((g) => (
+                    <div key={g.key} className="flex items-center gap-2">
+                      <span className="font-head text-[11px] text-mute w-6 shrink-0">
+                        {g.key}
+                      </span>
+                      <div className="flex-1 bg-canvas h-4 relative overflow-hidden">
+                        <div
+                          className="h-full"
+                          style={{
+                            width: max > 0 ? `${(g.mean / max) * 100}%` : "0%",
+                            background: "var(--color-blue2)",
+                          }}
+                        />
+                      </div>
+                      <span className="font-mono text-xs tabular-nums w-12 text-right text-white">
+                        {g.mean}
+                      </span>
+                      <span className="font-mono text-[10px] text-dim w-10 text-right">
+                        n={g.n}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </PanelCard>

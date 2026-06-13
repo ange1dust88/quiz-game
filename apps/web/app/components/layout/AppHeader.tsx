@@ -2,10 +2,8 @@
 // Layout (left → right):
 //   [hex-logo · EUROPEQUIZ / COMPETITIVE · SEASON 1] [tabs] [search] [coin · N] [user chip]
 //
-// Tabs include placeholder routes (/play, /tournaments, /friends) so
-// nothing 404s while the corresponding features land. Search + currency
-// + level number are non-wired today; the markup is in place so the
-// switch is a one-line plumbing job later.
+// Search + currency + level number are wired to live data; tabs link
+// to the implemented routes (no placeholders anymore).
 
 import Link from "next/link";
 import { prisma } from "@quiz/db";
@@ -75,7 +73,7 @@ export default async function AppHeader() {
 
           {profile && (
             <div className="hidden md:flex items-center px-2 border-l border-stroke">
-              <CoinPurse coins={profile.coins} />
+              <CoinPurse coins={profile.coins} profileId={profile.id} />
             </div>
           )}
 

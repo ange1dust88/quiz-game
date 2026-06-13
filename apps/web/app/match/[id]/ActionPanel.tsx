@@ -391,7 +391,7 @@ function WarView({
           Array.from(attack.options),
         );
         return (
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {attack.options.map((opt, optIdx) => {
           const displayText = langOptions[optIdx] ?? opt;
           const isCorrect = isRevealing && opt === attack.correctOption;
@@ -423,7 +423,7 @@ function WarView({
             isInvolved && picked === null && !isRevealing;
           let classes =
             "bg-panel border-stroke text-mute";
-          let style: React.CSSProperties = {};
+          const style: React.CSSProperties = {};
           if (isRevealing) {
             if (isCorrect) {
               classes = "bg-win/15 border-win text-win";

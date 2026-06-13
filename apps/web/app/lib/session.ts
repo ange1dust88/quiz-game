@@ -11,7 +11,12 @@ export async function createSession(userId: string) {
   const cookieStore = await cookies();
   cookieStore.set("session", session, {
     httpOnly: true,
-    secure: true,
+    // `secure` cookies are dropped by the browser over plain http, which
+    // breaks login on http://localhost in dev. Gate it on production so
+    // dev works while prod (https) still gets the secure flag.
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
     expires: expiresAt,
   });
 }
@@ -40,7 +45,8 @@ export async function decrypt(session: string | undefined = "") {
       algorithms: ["HS256"],
     });
     return payload;
-  } catch (error) {
-    console.log("Failed to verify session");
+  } catch {
+    // Invalid / expired / absent token — treat as "no session".
+    return undefined;
   }
 }

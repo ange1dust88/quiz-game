@@ -25,7 +25,7 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     return <div>Invalid session</div>;
   }
 
-  const userId: any = payload.userId;
+  const userId = payload.userId as string;
 
   const profile = await prisma.playerProfile.findUnique({
     where: { userId },

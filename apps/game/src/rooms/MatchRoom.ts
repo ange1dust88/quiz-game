@@ -897,7 +897,6 @@ export class MatchRoom extends Room<MatchState> {
         id: true,
         text: true,
         options: true,
-        answer: true,
         correctIndex: true,
         category: true,
         language: true,
@@ -910,11 +909,13 @@ export class MatchRoom extends Room<MatchState> {
     // Canonical correctIndex: prefer the new explicit column, fall
     // back to locating the legacy `answer` string in the options array
     // for pre-translation rows that haven't been regenerated yet.
-    const canonicalCorrectIndex =
-      en.correctIndex >= 0 ? en.correctIndex : en.options.indexOf(en.answer);
-    if (canonicalCorrectIndex < 0) {
+    // Every row now has an explicit correctIndex (0-3). Legacy data
+    // with correctIndex=-1 is treated as malformed and skipped — the
+    // regenerated pool always sets this column.
+    const canonicalCorrectIndex = en.correctIndex;
+    if (canonicalCorrectIndex < 0 || canonicalCorrectIndex >= en.options.length) {
       console.warn(
-        `[match ${this.roomId}] war question ${en.id} has no resolvable correct index`,
+        `[match ${this.roomId}] war question ${en.id} has invalid correctIndex=${canonicalCorrectIndex}`,
       );
       return null;
     }
@@ -1629,7 +1630,10 @@ export class MatchRoom extends Room<MatchState> {
     // Cancel any active attack involving them — easier than retrofitting
     // the new ownerId mid-MC. attackerId+defenderId both relevant.
     const aa = this.state.activeAttack;
-    if (aa && (aa.attackerId === playerId || aa.defenderId === playerId)) {
+    const cancelledAttack = Boolean(
+      aa && (aa.attackerId === playerId || aa.defenderId === playerId),
+    );
+    if (cancelledAttack) {
       this.cleanupAttack();
     }
 
@@ -1694,12 +1698,18 @@ export class MatchRoom extends Room<MatchState> {
       player.turnOrder === this.state.turnIndex
     ) {
       this.advanceCapitalTurn();
-    } else if (
-      this.state.stage === "war" &&
-      !this.state.activeAttack &&
-      player.turnOrder === this.state.turnIndex
-    ) {
-      this.advanceWarTurn();
+    } else if (this.state.stage === "war" && !this.state.activeAttack) {
+      if (player.turnOrder === this.state.turnIndex) {
+        // The current attacker left — move on to the next player.
+        this.advanceWarTurn();
+      } else if (cancelledAttack && this.state.warTurnExpiresAt === 0) {
+        // A non-current player (the defender) abandoned mid-attack. The
+        // attack was cancelled, but the attacker's turn deadline was
+        // zeroed when the attack began — without re-arming it the tick
+        // loop never auto-attacks and the match softlocks. Give the
+        // current attacker a fresh deadline to act (or be auto-attacked).
+        this.state.warTurnExpiresAt = Date.now() + WAR_TURN_TIMER_MS;
+      }
     }
 
     // If a question is waiting on this player's answer, the
@@ -1875,6 +1885,11 @@ export class MatchRoom extends Room<MatchState> {
   }
 
   private endGameByWalkover(winnerId: string): void {
+    // Idempotency guard — both the walkover tick and a natural game-end
+    // path (or a late endAttack setTimeout) can race into an end call.
+    // persistFinalSnapshot → updatePlayerStats does non-idempotent ELO /
+    // W-L / coin increments, so a double-entry would corrupt stats.
+    if (this.state.stage === "ended") return;
     this.state.winnerId = winnerId;
     this.state.stage = "ended";
     this.state.status = "completed";
@@ -1889,6 +1904,9 @@ export class MatchRoom extends Room<MatchState> {
     points: Map<string, number>,
     counts: Map<string, number>,
   ): void {
+    // Idempotency guard — see endGameByWalkover. Prevents a double
+    // persist / double ELO write if two end paths fire in one window.
+    if (this.state.stage === "ended") return;
     // Winner — most points among alive players (sole_survivor) or among
     // everyone (rounds_exhausted). winnerByLands ranks by counts (we feed
     // it the points map for a tie-friendly ranking).

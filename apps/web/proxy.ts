@@ -6,7 +6,6 @@ const protectedRoutes = [
   "/settings",
   "/leaderboard",
   "/play",
-  "/tournaments",
   "/friends",
   "/admin/avatars",
 ];

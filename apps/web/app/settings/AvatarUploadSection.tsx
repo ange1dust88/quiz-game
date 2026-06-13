@@ -105,7 +105,7 @@ export default function AvatarUploadSection({
           </div>
         )}
 
-        <div className="flex-1 min-w-[200px] flex flex-col gap-2">
+        <div className="flex-1 min-w-0 md:min-w-[200px] flex flex-col gap-2">
           {state.ok && (
             <p className="font-mono text-[11px] text-win">
               Uploaded! Your avatar is queued for admin review.
@@ -121,7 +121,7 @@ export default function AvatarUploadSection({
                 "en-US",
                 { month: "short", day: "numeric" },
               )}
-              ). New uploads are locked until it's processed.
+              ). New uploads are locked until it&apos;s processed.
             </p>
           )}
           {wasRejected && !state.ok && (

@@ -11,7 +11,7 @@ const registerSchema = z.object({
   nickname: z.string().min(3).max(20),
 });
 
-export async function register(prevState: any, formData: FormData) {
+export async function register(_prevState: unknown, formData: FormData) {
   const result = registerSchema.safeParse(Object.fromEntries(formData));
 
   if (!result.success) {

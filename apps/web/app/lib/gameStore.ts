@@ -7,6 +7,11 @@
 
 import { create } from "zustand";
 import { Client, Room } from "colyseus.js";
+import type {
+  MatchState,
+  Player as SchemaPlayer,
+  Country as SchemaCountry,
+} from "@quiz/shared/schemas";
 import { claimGameRoomId, getGameRoomId } from "@/app/lobby/[id]/actions";
 
 const SERVER_URL =
@@ -158,9 +163,9 @@ const emptyState: GameStateMirror = {
   activeAttack: null,
 };
 
-function snapshot(s: any): GameStateMirror {
+function snapshot(s: MatchState): GameStateMirror {
   const players: PlayerMirror[] = [];
-  s.players?.forEach((p: any) => {
+  s.players?.forEach((p: SchemaPlayer) => {
     players.push({
       id: p.id,
       profileId: p.profileId,
@@ -175,7 +180,7 @@ function snapshot(s: any): GameStateMirror {
   });
 
   const countries: CountryMirror[] = [];
-  s.countries?.forEach((c: any) => {
+  s.countries?.forEach((c: SchemaCountry) => {
     countries.push({
       id: c.id,
       svgId: c.svgId,
