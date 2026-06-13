@@ -36,6 +36,11 @@ export type DatasetRow = {
   riskAppetite: number | null;
   aggression: number | null;
   autoPickRate: number | null;
+  giantSlayerRate: number | null;
+  bullyRate: number | null;
+  capitalAggression: number | null;
+  targetStrength: number | null;
+  deliberateAttacks: number;
   warAnswers: number;
   numericAnswers: number;
   joined: string;
@@ -75,6 +80,11 @@ const COLS: Col[] = [
   { key: "riskAppetite", label: "Risk%", group: "Behaviour", num: true },
   { key: "aggression", label: "Aggr.", group: "Behaviour", num: true },
   { key: "autoPickRate", label: "Auto%", group: "Behaviour", num: true },
+  { key: "giantSlayerRate", label: "Slayer%", group: "Targeting", num: true },
+  { key: "bullyRate", label: "Bully%", group: "Targeting", num: true },
+  { key: "capitalAggression", label: "CapAggr%", group: "Targeting", num: true },
+  { key: "targetStrength", label: "TgtStr%", group: "Targeting", num: true },
+  { key: "deliberateAttacks", label: "nAtk", group: "Targeting", num: true },
   { key: "warAnswers", label: "nWar", group: "Behaviour", num: true },
   { key: "numericAnswers", label: "nNum", group: "Behaviour", num: true },
   { key: "joined", label: "Joined", group: "Meta" },
@@ -85,6 +95,7 @@ const GROUP_COLOR: Record<string, string> = {
   Psychometrics: "var(--color-blue2)",
   Progression: "var(--color-gold)",
   Behaviour: "var(--color-accent)",
+  Targeting: "var(--color-lose)",
   Meta: "var(--color-mute)",
   "": "var(--color-mute)",
 };
@@ -271,9 +282,13 @@ export default function DatasetTable({ rows }: { rows: DatasetRow[] }) {
         (last 500 snapshots). War% = MC war accuracy; Numeric% = closeness
         of numeric guesses; Think ms = time to first keystroke; Hesit. =
         avg input changes; Risk% = share of risky capital picks; Aggr. =
-        attacks initiated per match; Auto% = picks that timed out. nWar /
-        nNum are the per-player answer sample sizes. Empty cell (·) = not
-        collected / no data.
+        attacks initiated per match; Auto% = picks that timed out.
+        Targeting (deliberate attacks only, auto excluded, each %% over
+        attacks where the option was reachable): Slayer% = attacked the
+        leader; Bully% = picked the weakest of ≥2 options; CapAggr% =
+        attacked a capital; TgtStr% = where in the reachable strength
+        range the target sat (0 = weakest, 100 = strongest). nAtk / nWar
+        / nNum are sample sizes. Empty cell (·) = not collected / no data.
       </p>
     </div>
   );

@@ -133,9 +133,22 @@ export default function UserMenu({
             <MenuLink href="/settings">Settings</MenuLink>
             <MenuLink href="/friends">Friends</MenuLink>
             {isAdmin && (
-              <MenuLink href="/admin/avatars" accent="var(--color-purple2)">
-                Admin · avatars
-              </MenuLink>
+              <>
+                <div className="border-t border-stroke mt-1 pt-1">
+                  <span className="font-head text-[9px] text-dim px-4 py-1 block">
+                    Admin
+                  </span>
+                </div>
+                <MenuLink href="/analytics" accent="var(--color-blue2)">
+                  Analytics · research
+                </MenuLink>
+                <MenuLink href="/analytics/dataset" accent="var(--color-blue2)">
+                  Analytics · raw dataset
+                </MenuLink>
+                <MenuLink href="/admin/avatars" accent="var(--color-purple2)">
+                  Avatar moderation
+                </MenuLink>
+              </>
             )}
 
             <button

@@ -127,6 +127,7 @@ export default async function AnalyticsPage() {
   const clusterAnalysis = buildClusters(features, metaById);
   const correlations = buildCorrelations(features, metaById, currentYearForAge);
   const mbtiSplits = buildMbtiSplits(features, metaById);
+  const targetingSummary = buildTargetingSummary(features);
 
   const profileByPlayer = new Map<string, string>();
   let totalNumericAnswers = 0;
@@ -350,6 +351,8 @@ export default async function AnalyticsPage() {
 
         <ClustersPanel clusters={clusterAnalysis} />
 
+        <TargetingPanel stats={targetingSummary} />
+
         <CorrelationsPanel rows={correlations} />
 
         <MbtiSplitPanel splits={mbtiSplits} />
@@ -528,8 +531,45 @@ function buildCorrelations(
       label: "Risk appetite ↔ Aggression",
       ...pearson(pairOf((f) => f.riskAppetite, (f) => f.aggression)),
     },
+    // Targeting-style correlations — null targeting features are dropped
+    // by pearson, so n reflects only players who faced that decision.
+    {
+      label: "IQ ↔ Giant-slayer rate",
+      ...pearson(pairOf(iq, (f) => f.giantSlayerRate)),
+    },
+    {
+      label: "IQ ↔ Target strength",
+      ...pearson(pairOf(iq, (f) => f.avgTargetStrengthPct)),
+    },
+    {
+      label: "Age ↔ Bully rate (picks weakest)",
+      ...pearson(pairOf(age, (f) => f.bullyRate)),
+    },
   ];
   return rows.filter((r) => r.n >= 2);
+}
+
+type TargetingStat = { label: string; value: number; sample: number; hint: string };
+
+// Population-level averages of the availability-aware targeting features.
+// Each value is a % averaged across the players who actually faced that
+// decision (null entries excluded), with the sample size.
+function buildTargetingSummary(features: PlayerFeatures[]): TargetingStat[] {
+  const avgPct = (pick: (f: PlayerFeatures) => number | null) => {
+    const vals = features
+      .map(pick)
+      .filter((v): v is number => v !== null && Number.isFinite(v));
+    const m = vals.length
+      ? Math.round((vals.reduce((s, x) => s + x, 0) / vals.length) * 100)
+      : 0;
+    return { value: m, sample: vals.length };
+  };
+  return [
+    { label: "Giant-slayer", hint: "attacked the leader when reachable", ...avgPct((f) => f.giantSlayerRate) },
+    { label: "Bully", hint: "picked the weakest of ≥2 options", ...avgPct((f) => f.bullyRate) },
+    { label: "Capital aggression", hint: "attacked a capital when reachable", ...avgPct((f) => f.capitalAggression) },
+    { label: "Target strength", hint: "0=weakest … 100=strongest reachable", ...avgPct((f) => f.avgTargetStrengthPct) },
+  ].filter((s) => s.sample > 0);
 }
 
 type MbtiSplit = {
@@ -757,6 +797,46 @@ function ClusterStat({
         {value}
       </span>
     </div>
+  );
+}
+
+function TargetingPanel({ stats }: { stats: TargetingStat[] }) {
+  return (
+    <PanelCard title="War target-selection style" accent="#ff4244">
+      <p className="font-body text-xs text-mute mb-3 -mt-1">
+        How players choose attack targets — availability-aware (each %% is
+        averaged only over players who faced that decision; auto-attacks
+        excluded). A risk-calculus / dominance signal for the model.
+      </p>
+      {stats.length === 0 ? (
+        <p className="font-body text-sm text-dim italic">
+          No deliberate war attacks recorded yet.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {stats.map((s) => (
+            <div
+              key={s.label}
+              className="bg-panel border border-stroke p-3 flex flex-col gap-1"
+            >
+              <span className="font-head text-[10px] text-mute">
+                {s.label}
+              </span>
+              <span className="font-mono text-2xl font-bold text-white leading-none">
+                {s.value}
+                <span className="text-dim text-sm">%</span>
+              </span>
+              <span className="font-mono text-[10px] text-dim">
+                n={s.sample}
+              </span>
+              <span className="font-body text-[10px] text-dim leading-snug mt-0.5">
+                {s.hint}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </PanelCard>
   );
 }
 

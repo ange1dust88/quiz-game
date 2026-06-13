@@ -208,6 +208,38 @@ export class MatchRoom extends Room<MatchState> {
       // falling (their whole empire transfers to the attacker). The
       // daily-mission "capture a capital" check needs this flag.
       capitalFell?: boolean;
+      // Strategic decision context — present ONLY on the "started"
+      // record (the moment the attacker chose a target). It captures
+      // both the chosen target AND the full set of reachable enemy
+      // targets, so analytics can judge selection RELATIVE to what was
+      // available: "avoided the leader" only counts when the leader was
+      // actually reachable. auto-attacks carry this too but are flagged
+      // (auto=true) so they can be excluded from deliberate-choice
+      // analysis.
+      decision?: {
+        targetArmies: number;
+        targetPoints: number;
+        targetIsCapital: boolean;
+        targetIsLeader: boolean;
+        // Size of the reachable enemy set at decision time.
+        numTargets: number;
+        capitalAvailable: boolean;
+        leaderAvailable: boolean;
+        // Was the chosen target the weakest / strongest / most valuable
+        // option among those reachable?
+        pickedWeakestArmies: boolean;
+        pickedStrongestArmies: boolean;
+        pickedHighestValue: boolean;
+        // Min / max defended-strength across the reachable set, so a
+        // continuous "where in the strength range did they pick" feature
+        // can be derived: (targetArmies - setMinArmies) / (setMax - setMin).
+        setMinArmies: number;
+        setMaxArmies: number;
+        // Attacker's standing at decision time (1 = current leader),
+        // among players who still hold land.
+        attackerRank: number;
+        playersWithLand: number;
+      };
     }>;
   } = {
     numericAnswers: [],
@@ -1262,6 +1294,73 @@ export class MatchRoom extends Room<MatchState> {
 
   // --- War stage --------------------------------------------------------
 
+  // Capture the strategic situation at the moment a target is chosen.
+  // The chosen `target` is by construction a member of the reachable
+  // enemy set, so min/max comparisons include it. Standings are by total
+  // points held; leader = most points. Used as ML input features that
+  // describe target selection RELATIVE to the available options.
+  private computeAttackDecision(
+    attackerId: string,
+    target: Country,
+  ): {
+    targetArmies: number;
+    targetPoints: number;
+    targetIsCapital: boolean;
+    targetIsLeader: boolean;
+    numTargets: number;
+    capitalAvailable: boolean;
+    leaderAvailable: boolean;
+    pickedWeakestArmies: boolean;
+    pickedStrongestArmies: boolean;
+    pickedHighestValue: boolean;
+    setMinArmies: number;
+    setMaxArmies: number;
+    attackerRank: number;
+    playersWithLand: number;
+  } {
+    const pointsByPlayer = new Map<string, number>();
+    this.state.countries.forEach((c) => {
+      if (c.ownerId)
+        pointsByPlayer.set(
+          c.ownerId,
+          (pointsByPlayer.get(c.ownerId) ?? 0) + c.points,
+        );
+    });
+    const ranked = [...pointsByPlayer.entries()].sort((a, b) => b[1] - a[1]);
+    const leaderId = ranked.length > 0 ? ranked[0][0] : null;
+    const rankIdx = ranked.findIndex(([pid]) => pid === attackerId);
+    const attackerRank = rankIdx >= 0 ? rankIdx + 1 : ranked.length + 1;
+
+    const reachable = this.enemyNeighborSvgIds(attackerId);
+    const set: Country[] = [];
+    this.state.countries.forEach((c) => {
+      if (reachable.has(c.svgId)) set.push(c);
+    });
+    const armies = set.map((c) => c.armies);
+    const points = set.map((c) => c.points);
+    const minArmies = armies.length ? Math.min(...armies) : target.armies;
+    const maxArmies = armies.length ? Math.max(...armies) : target.armies;
+    const maxPoints = points.length ? Math.max(...points) : target.points;
+
+    return {
+      targetArmies: target.armies,
+      targetPoints: target.points,
+      targetIsCapital: target.isCapital,
+      targetIsLeader: leaderId !== null && target.ownerId === leaderId,
+      numTargets: set.length,
+      capitalAvailable: set.some((c) => c.isCapital),
+      leaderAvailable:
+        leaderId !== null && set.some((c) => c.ownerId === leaderId),
+      pickedWeakestArmies: target.armies === minArmies,
+      pickedStrongestArmies: target.armies === maxArmies,
+      pickedHighestValue: target.points === maxPoints,
+      setMinArmies: minArmies,
+      setMaxArmies: maxArmies,
+      attackerRank,
+      playersWithLand: ranked.length,
+    };
+  }
+
   private async handleAttack(
     attackerId: string,
     svgId: string | undefined,
@@ -1321,6 +1420,7 @@ export class MatchRoom extends Room<MatchState> {
       countryId: target.id,
       outcome: "started",
       auto,
+      decision: this.computeAttackDecision(attackerId, target),
     });
 
     console.log(

@@ -77,6 +77,18 @@ export default async function AppHeader() {
             </div>
           )}
 
+          {profile && isAdmin && (
+            <div className="hidden md:flex items-center px-2 border-l border-stroke">
+              <Link
+                href="/analytics"
+                className="font-head text-[11px] font-extrabold text-white bg-blue2 hover:opacity-90 transition-opacity px-3 py-1.5"
+                title="Research analytics (admin)"
+              >
+                ▦ Analytics
+              </Link>
+            </div>
+          )}
+
           <div className="flex items-center px-2 sm:px-3 border-l border-stroke shrink-0">
             {profile ? (
               <UserMenu

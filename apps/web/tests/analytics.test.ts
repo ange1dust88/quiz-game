@@ -228,7 +228,37 @@ describe("extractFeatures", () => {
         { playerId: "m2", auto: true },
       ],
       attacks: [
-        { attackerId: "m1", defenderId: "m2", outcome: "attacker_won", capitalFell: false },
+        // Real telemetry writes a "started" record (with decision
+        // context) and a separate resolution record per attack.
+        {
+          attackerId: "m1",
+          defenderId: "m2",
+          outcome: "started",
+          auto: false,
+          decision: {
+            targetArmies: 2,
+            targetPoints: 1500,
+            targetIsCapital: true,
+            targetIsLeader: true,
+            numTargets: 2,
+            capitalAvailable: true,
+            leaderAvailable: true,
+            pickedWeakestArmies: false,
+            pickedStrongestArmies: true,
+            pickedHighestValue: true,
+            setMinArmies: 1,
+            setMaxArmies: 3,
+            attackerRank: 2,
+            playersWithLand: 2,
+          },
+        },
+        {
+          attackerId: "m1",
+          defenderId: "m2",
+          outcome: "attacker_won",
+          auto: false,
+          capitalFell: false,
+        },
       ],
     },
   };
@@ -245,8 +275,17 @@ describe("extractFeatures", () => {
     expect(p1.avgThinkMs).toBe(500);
     expect(p1.avgHesitation).toBe(1);
     expect(p1.riskAppetite).toBe(1); // 1/1 risky
-    expect(p1.aggression).toBe(1); // 1 attack / 1 match
+    expect(p1.aggression).toBe(1); // 1 started attack / 1 match
     expect(p1.autoPickRate).toBe(0); // 0/2 auto
+
+    // Target-selection style — derived from the single deliberate attack
+    // whose decision context targeted the leader's capital (the
+    // strongest of two reachable options).
+    expect(p1.deliberateAttacks).toBe(1);
+    expect(p1.giantSlayerRate).toBe(1); // leader reachable + attacked
+    expect(p1.bullyRate).toBe(0); // 2 options, did NOT pick weakest
+    expect(p1.capitalAggression).toBe(1); // capital reachable + attacked
+    expect(p1.avgTargetStrengthPct).toBeCloseTo(0.5, 10); // (2-1)/(3-1)
 
     expect(p2.warAccuracy).toBe(0); // 0/1
     expect(p2.numericCloseness).toBeCloseTo(0.5, 10); // |50|/100 = 0.5 rel err → 0.5 closeness
@@ -255,6 +294,56 @@ describe("extractFeatures", () => {
     expect(p2.riskAppetite).toBe(0);
     expect(p2.aggression).toBe(0); // initiated none
     expect(p2.autoPickRate).toBe(1); // 2/2 auto
+    // Never attacked → no targeting decisions → all null.
+    expect(p2.deliberateAttacks).toBe(0);
+    expect(p2.giantSlayerRate).toBeNull();
+    expect(p2.bullyRate).toBeNull();
+    expect(p2.capitalAggression).toBeNull();
+    expect(p2.avgTargetStrengthPct).toBeNull();
+  });
+
+  it("excludes auto-attacks from targeting style but counts aggression", () => {
+    const autoSnap: SnapshotLike = {
+      finalState: {
+        players: [
+          { id: "x1", profileId: "px", nickname: "X" },
+          { id: "x2", profileId: "py", nickname: "Y" },
+        ],
+      },
+      telemetry: {
+        attacks: [
+          {
+            attackerId: "x1",
+            defenderId: "x2",
+            outcome: "started",
+            auto: true, // timer ran out → random target, not a choice
+            decision: {
+              targetArmies: 1,
+              targetPoints: 200,
+              targetIsCapital: false,
+              targetIsLeader: true,
+              numTargets: 3,
+              capitalAvailable: true,
+              leaderAvailable: true,
+              pickedWeakestArmies: true,
+              pickedStrongestArmies: false,
+              pickedHighestValue: false,
+              setMinArmies: 1,
+              setMaxArmies: 4,
+              attackerRank: 1,
+              playersWithLand: 2,
+            },
+          },
+        ],
+      },
+    };
+    const feats = extractFeatures([autoSnap]);
+    const px = feats.find((f) => f.profileId === "px")!;
+    expect(px.aggression).toBe(1); // auto attack still counts as initiated
+    expect(px.deliberateAttacks).toBe(0); // ...but not as a deliberate choice
+    expect(px.giantSlayerRate).toBeNull();
+    expect(px.bullyRate).toBeNull();
+    expect(px.avgTargetStrengthPct).toBeNull();
   });
 
   it("respects the minMatches filter", () => {

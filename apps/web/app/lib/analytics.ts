@@ -42,11 +42,31 @@ export type TerritoryPick = {
   auto: boolean;
 };
 
+export type AttackDecision = {
+  targetArmies: number;
+  targetPoints: number;
+  targetIsCapital: boolean;
+  targetIsLeader: boolean;
+  numTargets: number;
+  capitalAvailable: boolean;
+  leaderAvailable: boolean;
+  pickedWeakestArmies: boolean;
+  pickedStrongestArmies: boolean;
+  pickedHighestValue: boolean;
+  setMinArmies: number;
+  setMaxArmies: number;
+  attackerRank: number;
+  playersWithLand: number;
+};
+
 export type Attack = {
   attackerId: string;
   defenderId: string;
   outcome: string;
+  auto?: boolean;
   capitalFell?: boolean;
+  // Present only on the "started" record (target-choice moment).
+  decision?: AttackDecision;
 };
 
 export type Telemetry = {
@@ -87,14 +107,39 @@ export type PlayerFeatures = {
   avgHesitation: number;
   // 0..1 — share of capital picks made in the "risky" style.
   riskAppetite: number;
-  // Attacks initiated per match — an aggression proxy.
+  // Attacks initiated per match — an aggression proxy. Counts only the
+  // deliberate + auto "started" records (one per attack), not the
+  // resolution record.
   aggression: number;
   // 0..1 — share of picks (capital + territory) that timed out into an
   // auto-pick. A disengagement / AFK proxy.
   autoPickRate: number;
+
+  // --- Target-selection style (availability-aware) ----------------------
+  // All derived from DELIBERATE attacks only (auto-attacks excluded —
+  // they're a random forced pick, not a choice). Each rate's denominator
+  // counts only attacks where the relevant option actually existed, so
+  // "avoids the leader" is never inferred from an unreachable leader.
+  // null when the player never faced that decision.
+
+  // Share of attacks-where-the-leader-was-reachable that targeted the
+  // leader. High = giant-slayer / status-challenging.
+  giantSlayerRate: number | null;
+  // Share of attacks-with-≥2-options that picked the weakest-defended
+  // target. High = risk-averse / opportunistic ("bully").
+  bullyRate: number | null;
+  // Share of attacks-where-a-capital-was-reachable that targeted a
+  // capital. High = high-stakes / aggressive.
+  capitalAggression: number | null;
+  // Mean normalised position of the chosen target within the reachable
+  // strength range: 0 = always the weakest defended, 1 = always the most
+  // defended. A continuous risk-in-targeting feature.
+  avgTargetStrengthPct: number | null;
+
   // Counters kept so panels can show sample sizes / filter thin data.
   warAnswerCount: number;
   numericCount: number;
+  deliberateAttacks: number;
 };
 
 type Acc = {
@@ -116,6 +161,16 @@ type Acc = {
   attacksInitiated: number;
   autoPicks: number;
   totalPicks: number;
+  // Target-selection accumulators (deliberate attacks only).
+  deliberateAttacks: number;
+  leaderOpportunities: number;
+  leaderAttacks: number;
+  multiChoiceAttacks: number;
+  weakestPicks: number;
+  capitalOpportunities: number;
+  capitalAttacks: number;
+  targetStrengthSum: number;
+  targetStrengthCount: number;
 };
 
 function emptyAcc(): Acc {
@@ -138,6 +193,15 @@ function emptyAcc(): Acc {
     attacksInitiated: 0,
     autoPicks: 0,
     totalPicks: 0,
+    deliberateAttacks: 0,
+    leaderOpportunities: 0,
+    leaderAttacks: 0,
+    multiChoiceAttacks: 0,
+    weakestPicks: 0,
+    capitalOpportunities: 0,
+    capitalAttacks: 0,
+    targetStrengthSum: 0,
+    targetStrengthCount: 0,
   };
 }
 
@@ -225,9 +289,39 @@ export function extractFeatures(
     }
 
     for (const at of tel.attacks ?? []) {
+      // Each attack produces TWO telemetry rows — a "started" record
+      // (carries the decision context) and a resolution record. Count
+      // aggression + targeting only from the "started" record to avoid
+      // double-counting.
+      if (at.outcome !== "started") continue;
       const pid = toProfile.get(at.attackerId);
       if (!pid) continue;
-      get(pid).attacksInitiated += 1;
+      const a = get(pid);
+      a.attacksInitiated += 1;
+
+      // Target-selection style — deliberate (non-auto) attacks only.
+      const d = at.decision;
+      if (!at.auto && d) {
+        a.deliberateAttacks += 1;
+        if (d.leaderAvailable) {
+          a.leaderOpportunities += 1;
+          if (d.targetIsLeader) a.leaderAttacks += 1;
+        }
+        if (d.numTargets >= 2) {
+          a.multiChoiceAttacks += 1;
+          if (d.pickedWeakestArmies) a.weakestPicks += 1;
+        }
+        if (d.capitalAvailable) {
+          a.capitalOpportunities += 1;
+          if (d.targetIsCapital) a.capitalAttacks += 1;
+        }
+        if (d.setMaxArmies > d.setMinArmies) {
+          a.targetStrengthSum +=
+            (d.targetArmies - d.setMinArmies) /
+            (d.setMaxArmies - d.setMinArmies);
+          a.targetStrengthCount += 1;
+        }
+      }
     }
   });
 
@@ -247,8 +341,25 @@ export function extractFeatures(
       riskAppetite: safeDiv(a.riskyCapitals, a.totalCapitals),
       aggression: safeDiv(a.attacksInitiated, matches),
       autoPickRate: safeDiv(a.autoPicks, a.totalPicks),
+      giantSlayerRate:
+        a.leaderOpportunities > 0
+          ? a.leaderAttacks / a.leaderOpportunities
+          : null,
+      bullyRate:
+        a.multiChoiceAttacks > 0
+          ? a.weakestPicks / a.multiChoiceAttacks
+          : null,
+      capitalAggression:
+        a.capitalOpportunities > 0
+          ? a.capitalAttacks / a.capitalOpportunities
+          : null,
+      avgTargetStrengthPct:
+        a.targetStrengthCount > 0
+          ? a.targetStrengthSum / a.targetStrengthCount
+          : null,
       warAnswerCount: a.warTotal,
       numericCount: a.numericCount,
+      deliberateAttacks: a.deliberateAttacks,
     });
   }
   return out;
