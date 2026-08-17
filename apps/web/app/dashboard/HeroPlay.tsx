@@ -18,7 +18,6 @@ type Props = {
   rank: number;
   streakKind: "W" | "L" | null;
   streakLen: number;
-  warAccuracyPct: number;
 };
 
 export default function HeroPlay({
@@ -30,7 +29,6 @@ export default function HeroPlay({
   rank,
   streakKind,
   streakLen,
-  warAccuracyPct,
 }: Props) {
   return (
     <section className="relative grid grid-cols-1 lg:grid-cols-[1fr_360px] border border-stroke overflow-hidden bg-gradient-to-br from-surface-hi via-surface to-surface min-h-[280px]">
@@ -111,7 +109,9 @@ export default function HeroPlay({
           />
         </div>
 
-        <div className="grid grid-cols-3 gap-2 mt-1">
+        {/* War accuracy lives in the stat tiles below — no metric
+            appears twice on the dashboard. */}
+        <div className="grid grid-cols-2 gap-2 mt-1">
           <MiniStat label="Rank" value={`#${rank}`} />
           <MiniStat
             label="Streak"
@@ -128,7 +128,6 @@ export default function HeroPlay({
                   : undefined
             }
           />
-          <MiniStat label="War acc" value={`${warAccuracyPct}%`} />
         </div>
       </div>
     </section>

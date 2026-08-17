@@ -1,10 +1,8 @@
-// FACEIT-style dashboard. Left column: hero CONQUER THE MAP + rank
-// widget on top, stat tiles row, full match history. Right column:
-// live matches feed, leaderboard preview, daily missions.
-//
-// Features without a real backend yet (online count, currency, live
-// match list, daily missions, K/D stat) render with mock data — the
-// markup is in place so wiring them up later is mechanical.
+// FACEIT-style dashboard, kept deliberately lean. Left column: hero
+// (CONQUER THE MAP + rank widget), a 3-tile stat row, match history.
+// Right column: live matches feed, top-3 leaderboard, daily missions.
+// Everything renders real DB data; deep per-phase stats live on the
+// profile page, the full leaderboard behind the header tab.
 
 import { redirect } from "next/navigation";
 import { prisma } from "@quiz/db";
@@ -101,30 +99,10 @@ export default async function Dashboard() {
   const totalSnapshots = await prisma.matchSnapshot.count({
     where: { session: { players: { some: { profileId: profile.id } } } },
   });
-  let myCapitals = 0;
-  let myTerritories = 0;
-  for (const s of snapshotsForKd) {
-    const fs = s.finalState as
-      | {
-          players?: { id: string; profileId: string }[];
-          countries?: { ownerId: string | null; isCapital: boolean }[];
-        }
-      | null;
-    if (!fs?.players || !fs.countries) continue;
-    const me = fs.players.find((p) => p.profileId === profile.id);
-    if (!me) continue;
-    for (const c of fs.countries) {
-      if (c.ownerId !== me.id) continue;
-      myTerritories += 1;
-      if (c.isCapital) myCapitals += 1;
-    }
-  }
   const winRate =
     profile.gamesPlayed > 0
       ? Math.round((profile.gamesWon / profile.gamesPlayed) * 100)
       : 0;
-  const warTotal = warWins + warLosses;
-  const warWinPct = warTotal > 0 ? Math.round((warWins / warTotal) * 100) : 0;
 
   return (
     <div className="min-h-[calc(100vh-4rem)] text-white bg-canvas">
@@ -139,16 +117,13 @@ export default async function Dashboard() {
             rank={myRank}
             streakKind={streakKind}
             streakLen={streakLen}
-            warAccuracyPct={warAccuracyPct}
           />
 
           <StatTiles
             matches={totalSnapshots}
             winRate={winRate}
-            capitals={myCapitals}
-            territories={myTerritories}
-            warWinPct={warWinPct}
-            warTotal={warTotal}
+            warAccuracyPct={warAccuracyPct}
+            warTotal={warAnswersTotal}
             warWins={warWins}
           />
 

@@ -102,14 +102,18 @@ export default async function DatasetPage() {
       gamesPlayed: p.gamesPlayed,
       gamesWon: p.gamesWon,
       winRate,
-      // Behaviour (null when the player has no telemetry yet)
+      // Behaviour (null when the player has no telemetry yet). Null vs 0
+      // matters: this CSV feeds research/analysis.py, where an empty
+      // cell becomes NaN → imputed, while 0 would be treated as an
+      // observed value and bias the models. Guard every rate by its
+      // sample count, same as the models page.
       matches: f?.matches ?? 0,
-      warAccuracy: f ? round(f.warAccuracy * 100) : null,
+      warAccuracy: f && f.warAnswerCount > 0 ? round(f.warAccuracy * 100) : null,
       attackerAccuracy: f && f.warAnswerCount > 0 ? round(f.attackerAccuracy * 100) : null,
       defenderAccuracy: f && f.warAnswerCount > 0 ? round(f.defenderAccuracy * 100) : null,
       numericCloseness: f && f.numericCount > 0 ? round(f.numericCloseness * 100) : null,
       avgThinkMs: f && f.avgThinkMs > 0 ? round(f.avgThinkMs) : null,
-      avgHesitation: f ? round(f.avgHesitation, 1) : null,
+      avgHesitation: f && f.numericCount > 0 ? round(f.avgHesitation, 1) : null,
       riskAppetite: f ? round(f.riskAppetite * 100) : null,
       aggression: f ? round(f.aggression, 2) : null,
       autoPickRate: f ? round(f.autoPickRate * 100) : null,
@@ -145,12 +149,20 @@ export default async function DatasetPage() {
               CSV for analysis.
             </p>
           </div>
-          <Link
-            href="/analytics"
-            className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2 shrink-0"
-          >
-            ← Analytics
-          </Link>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href="/analytics/models"
+              className="font-head text-[11px] font-extrabold text-white bg-purple2 hover:opacity-90 transition-opacity px-4 py-2"
+            >
+              Model plan →
+            </Link>
+            <Link
+              href="/analytics"
+              className="font-head text-[11px] text-mute hover:text-white border border-stroke hover:border-mute transition-colors px-4 py-2"
+            >
+              ← Analytics
+            </Link>
+          </div>
         </div>
       </section>
 

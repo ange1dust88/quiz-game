@@ -112,6 +112,16 @@ export class MatchRoom extends Room<MatchState> {
     categories: [] as string[],
   };
 
+  // groupKeys already served in THIS match, per pool. Sampling
+  // "with replacement" from a pool of a few hundred groups repeats
+  // questions surprisingly often (birthday paradox: ~30% chance of a
+  // repeat within 15 draws from 320) — and worse under a category
+  // filter that shrinks the pool. Excluding served keys turns each
+  // match into sampling without replacement. When the whole (filtered)
+  // pool is exhausted we reset and allow repeats rather than stall.
+  private servedQuestionKeys = new Set<string>();
+  private servedWarQuestionKeys = new Set<string>();
+
   // Counts active client sessions per playerInGameId. A player can have
   // multiple tabs open; we only flip player.connected=false when ALL of
   // their tabs have closed. Refreshing one tab no longer "disconnects"
@@ -855,22 +865,72 @@ export class MatchRoom extends Room<MatchState> {
   // English-fallback row (or the first row if no en exists) for
   // numeric scoring, plus a packed JSON map of text-by-language for
   // the per-player render path.
+  // Pick one random groupKey from a question pool, sampling WITHOUT
+  // replacement within the match. Resolution order:
+  //   1. category filter + not-yet-served
+  //   2. category filter, served set reset (filtered pool exhausted)
+  //   3. full pool + not-yet-served (filter matched nothing at all)
+  //   4. full pool, served set reset
+  // Each tier is a cheap count; only the winning tier does the skip.
+  // Returns null only if the table itself is empty.
+  private async pickUnservedGroupKey(
+    table: "question" | "warQuestion",
+    served: Set<string>,
+  ): Promise<string | null> {
+    // Prisma model delegates don't unify into a callable union, so wrap
+    // the two operations we need behind plain closures.
+    const countRows =
+      table === "question"
+        ? (where: never) => prisma.question.count({ where })
+        : (where: never) => prisma.warQuestion.count({ where });
+    const seedRow =
+      table === "question"
+        ? (where: never, skip: number) =>
+            prisma.question.findFirst({ where, skip, select: { groupKey: true } })
+        : (where: never, skip: number) =>
+            prisma.warQuestion.findFirst({ where, skip, select: { groupKey: true } });
+    const catWhere = this.questionWhere();
+    const attempts: Array<{ where: Record<string, unknown> | undefined; resetServed: boolean; note: string }> = [
+      { where: catWhere, resetServed: false, note: "" },
+      { where: catWhere, resetServed: true, note: "filtered pool exhausted — allowing repeats" },
+      ...(catWhere !== undefined
+        ? [
+            { where: undefined, resetServed: false, note: "category filter matches 0 rows — falling back to full pool" },
+            { where: undefined, resetServed: true, note: "full pool exhausted — allowing repeats" },
+          ]
+        : []),
+    ];
+    for (const a of attempts) {
+      const where = {
+        ...(a.where ?? {}),
+        ...(a.resetServed || served.size === 0
+          ? {}
+          : { groupKey: { notIn: [...served] } }),
+      } as never;
+      const count = await countRows(where);
+      if (count === 0) continue;
+      if (a.note) console.warn(`[match ${this.roomId}] ${table}: ${a.note}`);
+      if (a.resetServed) served.clear();
+      const seed = await seedRow(where, Math.floor(Math.random() * count));
+      if (seed) return seed.groupKey;
+    }
+    return null;
+  }
+
   private async pickQuestionGroup(): Promise<{
     main: { id: number; text: string; answer: number; category: string };
     textsJson: string;
   } | null> {
-    const where = this.questionWhere() as never;
-    const count = await prisma.question.count({ where });
-    if (count === 0) {
+    const groupKey = await this.pickUnservedGroupKey(
+      "question",
+      this.servedQuestionKeys,
+    );
+    if (!groupKey) {
       console.warn(`[match ${this.roomId}] no Question rows in DB`);
       return null;
     }
-    const seed = await prisma.question.findFirst({
-      where,
-      skip: Math.floor(Math.random() * count),
-      select: { groupKey: true },
-    });
-    if (!seed) return null;
+    this.servedQuestionKeys.add(groupKey);
+    const seed = { groupKey };
 
     const rows = await prisma.question.findMany({
       where: { groupKey: seed.groupKey },
@@ -910,18 +970,16 @@ export class MatchRoom extends Room<MatchState> {
     correctOption: string;
     correctIndex: number;
   } | null> {
-    const where = this.questionWhere() as never;
-    const count = await prisma.warQuestion.count({ where });
-    if (count === 0) {
+    const groupKey = await this.pickUnservedGroupKey(
+      "warQuestion",
+      this.servedWarQuestionKeys,
+    );
+    if (!groupKey) {
       console.warn(`[match ${this.roomId}] no WarQuestion rows`);
       return null;
     }
-    const seed = await prisma.warQuestion.findFirst({
-      where,
-      skip: Math.floor(Math.random() * count),
-      select: { groupKey: true },
-    });
-    if (!seed) return null;
+    this.servedWarQuestionKeys.add(groupKey);
+    const seed = { groupKey };
 
     const rows = await prisma.warQuestion.findMany({
       where: { groupKey: seed.groupKey },
@@ -991,7 +1049,13 @@ export class MatchRoom extends Room<MatchState> {
     if (this.state.pickOrder.length > 0) return;
 
     const picked = await this.pickQuestionGroup();
-    if (!picked) return;
+    if (!picked) {
+      // Pool empty or DB hiccup. tick() already zeroed nextQuestionAt,
+      // so without re-arming it the expand stage would freeze forever.
+      // Schedule a retry instead.
+      this.state.nextQuestionAt = Date.now() + PHASE_DELAY_MS;
+      return;
+    }
     const { main, textsJson } = picked;
 
     const aq = new ActiveQuestion();
@@ -1088,8 +1152,20 @@ export class MatchRoom extends Room<MatchState> {
 
     if (sorted.length === 0 && totalPlayers > 0) {
       // Nobody answered — random lucky pick so the game doesn't stall.
+      // Only among players still in the match: a "lucky" abandoned
+      // player would head pickOrder and stall the pick window for the
+      // full timeout.
       const playerIds: string[] = [];
-      this.state.players.forEach((p) => playerIds.push(p.id));
+      this.state.players.forEach((p) => {
+        if (!p.abandoned) playerIds.push(p.id);
+      });
+      if (playerIds.length === 0) {
+        // Everyone left — clear the question and let walkover end the
+        // game instead of re-resolving a ghost question every tick.
+        this.state.activeQuestion = null;
+        this.state.nextQuestionAt = 0;
+        return;
+      }
       const lucky = playerIds[Math.floor(Math.random() * playerIds.length)];
       pickOrder = computePickOrder([lucky], totalPlayers);
       results = playerIds.map((pid, i) => {
@@ -1385,7 +1461,16 @@ export class MatchRoom extends Room<MatchState> {
     if (!enemyNeighbors.has(svgId)) return;
 
     const picked = await this.pickWarQuestionGroup();
-    if (!picked) return;
+    if (!picked) {
+      // Pool empty or DB hiccup. When this attack was auto-triggered,
+      // tick() already zeroed warTurnExpiresAt — without re-arming it
+      // the war stage would freeze forever. Give the current attacker a
+      // fresh deadline so the turn retries (or auto-attacks again).
+      if (this.state.warTurnExpiresAt === 0) {
+        this.state.warTurnExpiresAt = Date.now() + WAR_TURN_TIMER_MS;
+      }
+      return;
+    }
 
     const aa = new ActiveAttack();
     aa.id = `${picked.main.id}-${Date.now()}`;
@@ -1397,7 +1482,6 @@ export class MatchRoom extends Room<MatchState> {
     aa.questionTextsJson = picked.questionTextsJson;
     aa.options = new ArraySchema<string>(...picked.main.options);
     aa.optionsJson = picked.optionsJson;
-    aa.correctIndex = picked.correctIndex;
     aa.category = picked.main.category;
     aa.expiresAt = Date.now() + this.settings.warMcTimerMs;
     this.state.activeAttack = aa;
@@ -1435,8 +1519,15 @@ export class MatchRoom extends Room<MatchState> {
     const ca = this.currentAttack;
     if (!ca) return;
     if (this.state.activeAttack?.tieQuestionId) return; // in tie phase
+    // Reveal window — the correct option is already synced to clients,
+    // so a submission now could just echo the revealed answer.
+    if ((this.state.activeAttack?.resolveRevealEndsAt ?? 0) > 0) return;
     if (playerId !== ca.attackerId && playerId !== ca.defenderId) return;
     if (typeof payload.option !== "string") return;
+    // First answer is final — no resubmission. Without this a client
+    // could overwrite its answer and push a telemetry row per message,
+    // inflating war-accuracy analytics and mission counters.
+    if (ca.answers.has(playerId)) return;
 
     const isCorrect = payload.option === ca.correctOption;
     const submittedAtMs = Math.max(
@@ -1682,7 +1773,6 @@ export class MatchRoom extends Room<MatchState> {
     aa.questionTextsJson = picked.questionTextsJson;
     aa.options = new ArraySchema<string>(...picked.main.options);
     aa.optionsJson = picked.optionsJson;
-    aa.correctIndex = picked.correctIndex;
     aa.category = picked.main.category;
     aa.expiresAt = Date.now() + this.settings.warMcTimerMs;
     aa.tieQuestionId = 0;

@@ -1,6 +1,6 @@
 "use server";
 
-import { getProfile } from "@/app/lib/auth";
+import { getProfile, getProfileSafe } from "@/app/lib/auth";
 import { prisma } from "@quiz/db";
 import { isValidChoice } from "@quiz/shared/matchChoices";
 import {
@@ -203,6 +203,21 @@ export async function claimGameRoomId(
 ): Promise<{ ok: boolean; canonicalRoomId: string | null }> {
   if (!sessionId || !roomId)
     return { ok: false, canonicalRoomId: null };
+  // Only a signed-in member of this session may claim the room id —
+  // it's a one-shot write (never reset), so an unauthenticated call
+  // could permanently point the session at a bogus Colyseus room.
+  const profile = await getProfileSafe();
+  if (!profile) return { ok: false, canonicalRoomId: null };
+  const membership = await prisma.playerInGame.findUnique({
+    where: {
+      gameSessionId_profileId: {
+        gameSessionId: sessionId,
+        profileId: profile.id,
+      },
+    },
+    select: { id: true },
+  });
+  if (!membership) return { ok: false, canonicalRoomId: null };
   const result = await prisma.gameSession.updateMany({
     where: { id: sessionId, gameRoomId: null },
     data: { gameRoomId: roomId },
@@ -227,6 +242,10 @@ export async function getGameRoomId(
   sessionId: string,
 ): Promise<string | null> {
   if (!sessionId) return null;
+  // Read-only, but still gated to signed-in users — no reason to let
+  // anonymous callers enumerate room ids.
+  const profile = await getProfileSafe();
+  if (!profile) return null;
   const row = await prisma.gameSession.findUnique({
     where: { id: sessionId },
     select: { gameRoomId: true },

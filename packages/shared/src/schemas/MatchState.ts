@@ -133,11 +133,6 @@ export class ActiveAttack extends Schema {
   // translations. Same fallback rules as ActiveQuestion.textsJson.
   declare questionTextsJson: string;
   declare correctOption: string;
-  // Position (0-based) of the correct option after shuffle. Same
-  // across every language since translated options are kept in lockstep
-  // order. Clients submit by index and the server validates against
-  // this — language-independent.
-  declare correctIndex: number;
   declare options: ArraySchema<string>;
   // JSON-encoded `{ en: [...], ru: [...], uk: [...], pl: [...] }` of the
   // shuffled options arrays per language. Index N in any language is
@@ -184,7 +179,6 @@ export class ActiveAttack extends Schema {
     this.questionText = "";
     this.questionTextsJson = "";
     this.correctOption = "";
-    this.correctIndex = -1;
     this.options = new ArraySchema<string>();
     this.optionsJson = "";
     this.category = "general";
@@ -217,7 +211,6 @@ defineTypes(ActiveAttack, {
   questionText: "string",
   questionTextsJson: "string",
   correctOption: "string",
-  correctIndex: "number",
   options: ["string"],
   optionsJson: "string",
   category: "string",

@@ -142,6 +142,9 @@ export default function UserMenu({
                 <MenuLink href="/analytics" accent="var(--color-blue2)">
                   Analytics · research
                 </MenuLink>
+                <MenuLink href="/analytics/models" accent="var(--color-blue2)">
+                  Analytics · model plan
+                </MenuLink>
                 <MenuLink href="/analytics/dataset" accent="var(--color-blue2)">
                   Analytics · raw dataset
                 </MenuLink>

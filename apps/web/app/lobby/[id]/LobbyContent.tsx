@@ -162,13 +162,39 @@ export function LobbyContent({
     lobbyPlayerIdsRef.current = new Set(session.players.map((p) => p.id));
   }, [session.players]);
 
+  // Was the viewer a lobby member at any point? Lets refetch tell
+  // "kicked" (was member, now gone from roster → redirect) apart from
+  // "spectating non-member" (never was → stay on the join prompt).
+  const wasMemberRef = useRef(
+    initialSession.players.some((p) => p.profileId === currentUser.id),
+  );
+
   useEffect(() => {
     const supabase = createClient();
 
     const refetch = async () => {
-      const response = await fetch(`/api/sessions/${sessionId}`);
-      const freshSession = await response.json();
-      setSession((prev) => ({ ...prev, ...freshSession }));
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}`);
+        // Don't merge error payloads (401/404/500 bodies) into state.
+        if (!response.ok) return;
+        const freshSession = (await response.json()) as GameSession;
+        if (!Array.isArray(freshSession.players)) return;
+        setSession((prev) => ({ ...prev, ...freshSession }));
+        const amMember = freshSession.players.some(
+          (p) => p.profileId === currentUser.id,
+        );
+        if (amMember) {
+          wasMemberRef.current = true;
+        } else if (wasMemberRef.current) {
+          // Was in the lobby, now absent from the fresh roster — the
+          // host kicked us (DELETE payloads only carry the PK under
+          // default REPLICA IDENTITY, so this roster diff is the only
+          // reliable kick signal). Back to the dashboard.
+          router.push("/dashboard");
+        }
+      } catch {
+        // Network blip — the next realtime event or refresh retries.
+      }
     };
 
     // Only refetch for a MatchChoice change that belongs to a player in
@@ -193,23 +219,18 @@ export function LobbyContent({
       )
       .on(
         "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "PlayerInGame",
-          filter: `gameSessionId=eq.${sessionId}`,
-        },
-        async (payload) => {
-          // If the deleted row was the current viewer's seat (host
-          // kicked us), drop back to the dashboard. Otherwise pull a
-          // fresh roster so the empty slot reappears.
-          const oldProfileId =
-            (payload.old as { profileId?: string } | null)?.profileId;
-          if (oldProfileId === currentUser.id) {
-            router.push("/dashboard");
-            return;
+        // No server-side filter: DELETE payloads only carry the PK under
+        // default REPLICA IDENTITY, so a gameSessionId filter would never
+        // match and the event would simply not be delivered. Scope
+        // client-side by PK against this lobby's known seat ids instead.
+        { event: "DELETE", schema: "public", table: "PlayerInGame" },
+        (payload) => {
+          const pigId = (payload.old as { id?: string } | null)?.id;
+          if (pigId && lobbyPlayerIdsRef.current.has(pigId)) {
+            // refetch redirects us if it was OUR seat (roster diff),
+            // otherwise just frees the slot for everyone else.
+            refetch();
           }
-          refetch();
         },
       )
       .on(

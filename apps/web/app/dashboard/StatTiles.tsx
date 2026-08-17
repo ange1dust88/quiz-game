@@ -1,15 +1,14 @@
-// 5-up stat row sitting between the hero and match history. Uses the
-// shared StatBlock primitive — colour-coded for the two "headline"
-// stats (Win Rate green, War Win % cyan).
+// 3-up stat row sitting between the hero and match history. Kept
+// deliberately lean — deep per-phase stats live on the profile page.
+// War accuracy shows here (and only here — the hero's mini stats carry
+// Rank + Streak, so no metric appears twice on the dashboard).
 
 import StatBlock from "@/app/components/ui/StatBlock";
 
 type Props = {
   matches: number;
   winRate: number;
-  capitals: number;
-  territories: number;
-  warWinPct: number;
+  warAccuracyPct: number;
   warTotal: number;
   warWins: number;
 };
@@ -17,14 +16,12 @@ type Props = {
 export default function StatTiles({
   matches,
   winRate,
-  capitals,
-  territories,
-  warWinPct,
+  warAccuracyPct,
   warTotal,
   warWins,
 }: Props) {
   return (
-    <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+    <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       <StatBlock label="Matches" value={matches.toLocaleString()} />
       <StatBlock
         label="Win rate"
@@ -32,24 +29,10 @@ export default function StatTiles({
         accent="var(--color-win)"
       />
       <StatBlock
-        label="Capitals"
-        value={capitals.toLocaleString()}
-        sub={matches > 0 ? `${(capitals / matches).toFixed(1)} / match` : "—"}
-      />
-      <StatBlock
-        label="Territories"
-        value={territories.toLocaleString()}
-        sub={
-          matches > 0
-            ? `${(territories / matches).toFixed(1)} / match`
-            : "—"
-        }
-      />
-      <StatBlock
-        label="War win %"
-        value={`${warWinPct}%`}
+        label="War accuracy"
+        value={`${warAccuracyPct}%`}
         accent="var(--color-accent)"
-        sub={`${warWins} / ${warTotal}`}
+        sub={warTotal > 0 ? `${warWins} / ${warTotal} answers` : "—"}
       />
     </section>
   );

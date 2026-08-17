@@ -14,16 +14,16 @@ Prisma client.
 quiz-game/
 ├── apps/
 │   ├── web/         Next.js 16 (auth, lobby, profile, settings,
-│   │                analytics, match-new — connects to Colyseus)
+│   │                analytics, match — connects to Colyseus)
 │   └── game/        Colyseus 0.16 game server (authoritative state)
 ├── packages/
 │   ├── db/          Shared Prisma client + schema
 │   └── shared/      Pure game logic, schemas, JWT helper
 ```
 
-The legacy `apps/web/app/match/[id]` route + `actions.ts` etc. (Supabase
-Realtime + Postgres-as-message-queue) is still in the codebase but **not
-routed to from the lobby**. New flow uses `/match-new/[id]`.
+The live match UI lives at `apps/web/app/match/[id]` and talks to the
+Colyseus game server (the old Supabase-Realtime match flow has been
+fully removed).
 
 ## Commands
 
@@ -82,7 +82,7 @@ that mirrors the synced state as a plain JS object. React components
 subscribe via narrow selectors (`useStage`, `useCountries`, `usePlayers`,
 `useActiveQuestion`, etc.) — no whole-tree rerenders on every state tick.
 
-Match UI lives in `apps/web/app/match-new/[id]/`:
+Match UI lives in `apps/web/app/match/[id]/`:
 - `page.tsx` — server component, verifies cookie + PlayerInGame, passes
   JWT + sessionId + myPlayerId to MatchClient
 - `MatchClient.tsx` — connects on mount, renders skeleton + 3-pane layout

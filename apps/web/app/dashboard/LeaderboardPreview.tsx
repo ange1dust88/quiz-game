@@ -1,6 +1,6 @@
-// Top-5 leaderboard panel for the sidebar. Rank · level-hex · nickname
-// + country tag · ELO. Everything is real DB data — links to the full
-// leaderboard for filtering / paging.
+// Top-3 leaderboard panel for the sidebar — kept deliberately compact
+// (the header tab links to the full leaderboard). Rank · level-hex ·
+// nickname + country tag · ELO, all real DB data.
 
 import Link from "next/link";
 import { prisma } from "@quiz/db";
@@ -11,7 +11,7 @@ import FlagTag from "@/app/components/ui/FlagTag";
 export default async function LeaderboardPreview() {
   const top = await prisma.playerProfile.findMany({
     orderBy: [{ elo: "desc" }, { gamesWon: "desc" }],
-    take: 5,
+    take: 3,
     select: {
       id: true,
       nickname: true,

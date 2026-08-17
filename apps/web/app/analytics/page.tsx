@@ -252,6 +252,12 @@ export default async function AnalyticsPage() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link
+              href="/analytics/models"
+              className="font-head text-[11px] font-extrabold text-white bg-purple2 hover:opacity-90 transition-opacity px-4 py-2"
+            >
+              Model plan →
+            </Link>
+            <Link
               href="/analytics/dataset"
               className="font-head text-[11px] font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-4 py-2"
             >
@@ -517,7 +523,7 @@ function buildCorrelations(
     },
     {
       label: "IQ ↔ Hesitation",
-      ...pearson(pairOf(iq, (f) => f.avgHesitation)),
+      ...pearson(pairOf(iq, (f) => (f.numericCount > 0 ? f.avgHesitation : null))),
     },
     {
       label: "Age ↔ Think time",
