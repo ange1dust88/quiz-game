@@ -74,29 +74,127 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
     return redirectToMatch(id);
   }
 
+
+  // For finished matches, the ONLY source of truth is MatchSnapshot —
+  // the legacy MatchCountry / MatchEvent tables are not written during
+  // a Colyseus match, so lands / points / per-player stats must come
+  // from finalState + telemetry, not from session.matchMap / events.
+  const abandonedByPlayerId = new Map<string, boolean>();
+  let snapshotCountries: Array<{
+    id: string;
+    ownerId: string | null;
+    isCapital: boolean;
+    points: number;
+  }> | null = null;
+  let snapshotStats: Array<{
+    playerId: string;
+    roundsWon: number;
+    attacksWon: number;
+    defended: number;
+    capitalsTaken: number;
+  }> = [];
+  let snapshotWarTurns: number | null = null;
+  if (session.status === "completed") {
+    const snap = await prisma.matchSnapshot.findUnique({
+      where: { sessionId: id },
+      select: { finalState: true, telemetry: true },
+    });
+    type SnapPlayer = { id: string; abandoned?: boolean };
+    type SnapCountry = {
+      svgId: string;
+      ownerId: string | null;
+      isCapital: boolean;
+      points: number;
+    };
+    const fs = snap?.finalState as {
+      players?: SnapPlayer[];
+      countries?: SnapCountry[];
+      warTurns?: number;
+    } | null;
+    fs?.players?.forEach((sp) => {
+      abandonedByPlayerId.set(sp.id, Boolean(sp.abandoned));
+    });
+    if (fs?.countries) {
+      snapshotCountries = fs.countries.map((c) => ({
+        id: c.svgId,
+        ownerId: c.ownerId,
+        isCapital: c.isCapital,
+        points: c.points,
+      }));
+    }
+    if (typeof fs?.warTurns === "number") snapshotWarTurns = fs.warTurns;
+
+    // Per-player aggregates from telemetry. Attacks log two rows per
+    // attack (a "started" record + a resolution record) — count only
+    // resolutions. Expand-round wins: group numeric answers by question
+    // and credit the closest guess (earlier submission breaks ties).
+    type Tel = {
+      attacks?: Array<{
+        attackerId: string;
+        defenderId: string;
+        outcome: string;
+        capitalFell?: boolean;
+      }>;
+      numericAnswers?: Array<{
+        playerId: string;
+        questionId: number;
+        diff: number;
+        timeMs: number;
+      }>;
+    };
+    const tel = (snap?.telemetry ?? {}) as Tel;
+    const agg = new Map<
+      string,
+      { roundsWon: number; attacksWon: number; defended: number; capitalsTaken: number }
+    >();
+    const bump = (
+      pid: string,
+      key: "roundsWon" | "attacksWon" | "defended" | "capitalsTaken",
+    ) => {
+      const a =
+        agg.get(pid) ??
+        { roundsWon: 0, attacksWon: 0, defended: 0, capitalsTaken: 0 };
+      a[key] += 1;
+      agg.set(pid, a);
+    };
+    for (const at of tel.attacks ?? []) {
+      if (at.outcome === "attacker_won") {
+        bump(at.attackerId, "attacksWon");
+        if (at.capitalFell) bump(at.attackerId, "capitalsTaken");
+      } else if (at.outcome === "defender_held") {
+        bump(at.defenderId, "defended");
+      }
+    }
+    const byQuestion = new Map<
+      number,
+      { playerId: string; diff: number; timeMs: number }
+    >();
+    for (const na of tel.numericAnswers ?? []) {
+      const best = byQuestion.get(na.questionId);
+      if (
+        !best ||
+        na.diff < best.diff ||
+        (na.diff === best.diff && na.timeMs < best.timeMs)
+      ) {
+        byQuestion.set(na.questionId, na);
+      }
+    }
+    for (const w of byQuestion.values()) bump(w.playerId, "roundsWon");
+    snapshotStats = [...agg.entries()].map(([playerId, a]) => ({
+      playerId,
+      ...a,
+    }));
+  }
+
   const totalPlayers = session.players.length;
+  const effectiveWarTurns = snapshotWarTurns ?? session.warTurns;
   const warRound =
     totalPlayers > 0
       ? Math.min(
           MAX_WAR_ROUNDS,
-          Math.floor(session.warTurns / totalPlayers) + 1,
+          Math.floor(effectiveWarTurns / totalPlayers) + 1,
         )
       : 1;
-
-  // For finished matches we want to mark abandoners as "leavers" in the
-  // results screen. The snapshot's finalState.players carries that flag.
-  const abandonedByPlayerId = new Map<string, boolean>();
-  if (session.status === "completed") {
-    const snap = await prisma.matchSnapshot.findUnique({
-      where: { sessionId: id },
-      select: { finalState: true },
-    });
-    type SnapPlayer = { id: string; abandoned?: boolean };
-    const fs = snap?.finalState as { players?: SnapPlayer[] } | null;
-    fs?.players?.forEach((sp) => {
-      abandonedByPlayerId.set(sp.id, Boolean(sp.abandoned));
-    });
-  }
 
   const initialSession = {
     id: session.id,
@@ -125,12 +223,17 @@ const LobbyPage = async ({ params }: { params: Promise<{ id: string }> }) => {
       },
       choices: p.choices.map((c) => ({ key: c.key, value: c.value })),
     })),
-    countries: session.matchMap.map((c) => ({
-      id: c.id,
-      ownerId: c.ownerId,
-      isCapital: c.isCapital,
-      points: c.points,
-    })),
+    // Completed matches read the authoritative snapshot; the legacy
+    // matchMap only covers pre-Colyseus data.
+    countries:
+      snapshotCountries ??
+      session.matchMap.map((c) => ({
+        id: c.id,
+        ownerId: c.ownerId,
+        isCapital: c.isCapital,
+        points: c.points,
+      })),
+    snapshotStats,
     events: session.events.map((e) => ({
       id: e.id,
       type: e.type,

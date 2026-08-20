@@ -99,6 +99,13 @@ interface GameSession {
   players: Player[];
   countries: Country[];
   events: EventRow[];
+  snapshotStats: Array<{
+    playerId: string;
+    roundsWon: number;
+    attacksWon: number;
+    defended: number;
+    capitalsTaken: number;
+  }>;
 }
 
 export interface InviteCandidate {
@@ -323,7 +330,7 @@ export function LobbyContent({
         sessionId={sessionId}
         players={players}
         countries={session.countries}
-        events={session.events}
+        stats={session.snapshotStats}
         winnerId={session.winnerId}
         warRound={session.warRound}
         maxRounds={session.maxWarRounds}

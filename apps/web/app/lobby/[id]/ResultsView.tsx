@@ -8,11 +8,12 @@ import Link from "next/link";
 import { PLAYER_COLORS } from "@/app/lib/constants";
 import PanelCard from "@/app/components/ui/PanelCard";
 import Slash from "@/app/components/ui/Slash";
+import Avatar from "@/app/components/ui/Avatar";
 
 type Player = {
   id: string;
   abandoned?: boolean;
-  profile: { nickname: string };
+  profile: { nickname: string; avatarUrl?: string | null };
 };
 
 type Country = {
@@ -22,18 +23,21 @@ type Country = {
   points: number;
 };
 
-type EventRow = {
-  id: string;
-  type: string;
-  actorId: string | null;
-  payload: Record<string, unknown>;
+type PlayerStats = {
+  playerId: string;
+  roundsWon: number;
+  attacksWon: number;
+  defended: number;
+  capitalsTaken: number;
 };
 
 type Props = {
   sessionId: string;
   players: Player[];
   countries: Country[];
-  events: EventRow[];
+  // Per-player aggregates derived server-side from MatchSnapshot
+  // telemetry (the legacy MatchEvent log is not written by Colyseus).
+  stats: PlayerStats[];
   winnerId: string | null;
   warRound: number;
   maxRounds: number;
@@ -44,7 +48,7 @@ export default function ResultsView({
   sessionId,
   players,
   countries,
-  events,
+  stats: statsRows,
   winnerId,
   warRound,
   maxRounds,
@@ -72,32 +76,7 @@ export default function ResultsView({
 
   const totalPoints = countries.reduce((s, c) => s + (c.points ?? 0), 0);
 
-  const stats = new Map<
-    string,
-    {
-      capitalsTaken: number;
-      attacksWon: number;
-      defended: number;
-      roundsWon: number;
-    }
-  >();
-  for (const p of players) {
-    stats.set(p.id, {
-      capitalsTaken: 0,
-      attacksWon: 0,
-      defended: 0,
-      roundsWon: 0,
-    });
-  }
-  for (const e of events) {
-    if (!e.actorId) continue;
-    const s = stats.get(e.actorId);
-    if (!s) continue;
-    if (e.type === "capital_fell") s.capitalsTaken += 1;
-    if (e.type === "attack_won") s.attacksWon += 1;
-    if (e.type === "attack_held") s.defended += 1;
-    if (e.type === "round") s.roundsWon += 1;
-  }
+  const stats = new Map(statsRows.map((r) => [r.playerId, r]));
 
   const winner = winnerId ? players.find((p) => p.id === winnerId) : null;
   const winnerColor = winner
@@ -136,13 +115,16 @@ export default function ResultsView({
           {winner ? (
             <>
               <div
-                className="w-16 h-16 flex items-center justify-center text-2xl font-bold text-black border-2"
-                style={{
-                  backgroundColor: winnerColor ?? "#666",
-                  borderColor: heroAccent,
-                }}
+                className="border-2"
+                style={{ borderColor: heroAccent }}
               >
-                {winner.profile.nickname.charAt(0).toUpperCase()}
+                <Avatar
+                  nickname={winner.profile.nickname}
+                  avatarUrl={winner.profile.avatarUrl ?? null}
+                  size={64}
+                  shape="square"
+                  color={winnerColor ?? "#666"}
+                />
               </div>
               <h1
                 className="font-head text-white leading-none"
@@ -187,9 +169,6 @@ export default function ResultsView({
               const isYou = row.player.id === currentPlayerId;
               const isWinner = row.player.id === winnerId;
               const isLeaver = Boolean(row.player.abandoned);
-              const initial = row.player.profile.nickname
-                .charAt(0)
-                .toUpperCase();
               const lands = row.lands;
               const points = row.points;
               const sharePct =
@@ -234,12 +213,13 @@ export default function ResultsView({
                   >
                     #{idx + 1}
                   </span>
-                  <div
-                    className="w-10 h-10 flex items-center justify-center text-sm font-bold shrink-0 text-black"
-                    style={{ backgroundColor: row.color }}
-                  >
-                    {initial}
-                  </div>
+                  <Avatar
+                    nickname={row.player.profile.nickname}
+                    avatarUrl={row.player.profile.avatarUrl ?? null}
+                    size={40}
+                    shape="square"
+                    color={row.color}
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2">
                       <Link
