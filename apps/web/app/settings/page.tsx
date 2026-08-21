@@ -16,6 +16,7 @@ import {
 import PanelCard from "@/app/components/ui/PanelCard";
 import Slash from "@/app/components/ui/Slash";
 import { updateSettings } from "./actions";
+import SaveButton from "./SaveButton";
 import AvatarUploadSection from "./AvatarUploadSection";
 
 export default async function SettingsPage() {
@@ -235,18 +236,7 @@ export default async function SettingsPage() {
             >
               Cancel
             </Link>
-            <button
-              type="submit"
-              className="font-head text-sm font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-6 py-2"
-              style={{ transform: "skewX(-10deg)" }}
-            >
-              <span
-                className="inline-block"
-                style={{ transform: "skewX(10deg)" }}
-              >
-                Save
-              </span>
-            </button>
+            <SaveButton />
           </div>
         </form>
       </div>

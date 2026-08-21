@@ -338,7 +338,7 @@ function WarView({
             />
             <button
               onClick={submitTie}
-              className="font-head text-sm font-extrabold text-black bg-gold transition-colors px-4 py-2"
+              className="font-head text-sm font-extrabold text-black bg-gold hover:opacity-90 transition-all px-4 py-2"
               style={{ transform: "skewX(-10deg)" }}
             >
               <span className="inline-block" style={{ transform: "skewX(10deg)" }}>

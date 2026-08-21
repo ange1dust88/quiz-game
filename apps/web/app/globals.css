@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* Tailwind v4 preflight sets `cursor: default` on buttons. Restore the
+   web-native affordance: anything clickable shows a pointer, disabled
+   controls show not-allowed. One rule instead of sprinkling
+   `cursor-pointer` across every component. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  select:not(:disabled),
+  summary,
+  label:has(> input[type="checkbox"]),
+  label:has(> input[type="radio"]) {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
 /* -------- Theme tokens --------
    Match the palette spec for the FACEIT-style "competitive cyan" look.
    Tailwind v4 picks these up from @theme and generates utilities like

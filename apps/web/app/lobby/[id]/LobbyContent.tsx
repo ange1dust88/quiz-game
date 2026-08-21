@@ -729,18 +729,25 @@ function StartButton({
   return (
     <form action={startGame}>
       <input type="hidden" name="sessionId" value={sessionId} />
-      <button
-        type="submit"
-        disabled={disabled}
-        title={disabled ? "Need at least 2 players" : "Start the match"}
-        className="font-head text-sm font-extrabold text-white bg-accent hover:bg-accent-dim disabled:bg-dim disabled:cursor-not-allowed transition-colors px-6 py-2"
-        style={{ transform: "skewX(-10deg)" }}
-      >
-        <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
-          Start ▶
-        </span>
-      </button>
+      <StartSubmit disabled={disabled} />
     </form>
+  );
+}
+
+function StartSubmit({ disabled }: { disabled: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={disabled || pending}
+      title={disabled ? "Need at least 2 players" : "Start the match"}
+      className="font-head text-sm font-extrabold text-white bg-accent hover:bg-accent-dim disabled:bg-dim disabled:cursor-not-allowed transition-colors px-6 py-2"
+      style={{ transform: "skewX(-10deg)" }}
+    >
+      <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
+        {pending ? "Starting…" : "Start ▶"}
+      </span>
+    </button>
   );
 }
 

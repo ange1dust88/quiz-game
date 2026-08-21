@@ -4,6 +4,7 @@
 // panel — level hex, ELO, XP bar, 3 mini stats.
 
 import { createRoom } from "./actions";
+import PlayNowButton from "./PlayNowButton";
 import Hexagon from "@/app/components/ui/Hexagon";
 import Slash from "@/app/components/ui/Slash";
 import MicroBar from "@/app/components/ui/MicroBar";
@@ -58,15 +59,7 @@ export default function HeroPlay({
 
         <div className="mt-auto flex flex-col sm:flex-row sm:items-end gap-4 sm:gap-5">
           <form action={createRoom}>
-            <button
-              type="submit"
-              className="font-head text-lg font-extrabold text-white bg-accent hover:bg-accent-dim transition-colors px-9 py-4"
-              style={{ transform: "skewX(-10deg)" }}
-            >
-              <span className="inline-block" style={{ transform: "skewX(10deg)" }}>
-                ► Play now
-              </span>
-            </button>
+            <PlayNowButton />
           </form>
           <JoinByCodeForm />
         </div>
