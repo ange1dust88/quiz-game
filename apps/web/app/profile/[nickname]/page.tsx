@@ -12,6 +12,9 @@ import { prisma } from "@quiz/db";
 import { getProfileSafe } from "@/app/lib/auth";
 import StatBlock from "@/app/components/ui/StatBlock";
 import HeroHeader, { type ProfileTab } from "./HeroHeader";
+import ModelInsight from "./ModelInsight";
+import { extractFeatures, type SnapshotLike } from "@/app/lib/analytics";
+import { predictProfile } from "@/app/lib/modelPredict";
 import EloChart from "./EloChart";
 import PhasePerformance from "./PhasePerformance";
 import MostCaptured from "./MostCaptured";
@@ -379,6 +382,21 @@ export default async function ProfilePage({
     </section>
   );
 
+  // Model prediction for the profile owner — features pooled from their
+  // snapshots, inference via exported Python weights (no live Python).
+  const MODEL_MIN_MATCHES = 3;
+  let modelPrediction = null;
+  let modelMatches = 0;
+  if (isOwnProfile) {
+    const myFeatures = extractFeatures(snapshots as SnapshotLike[]).find(
+      (f) => f.profileId === profile.id,
+    );
+    modelMatches = myFeatures?.matches ?? 0;
+    if (myFeatures && myFeatures.matches >= MODEL_MIN_MATCHES) {
+      modelPrediction = predictProfile(myFeatures);
+    }
+  }
+
   let body: React.ReactNode;
   if (tab === "overview") {
     body = (
@@ -398,6 +416,14 @@ export default async function ProfilePage({
           </div>
         </div>
         <div className="flex flex-col gap-4 min-w-0">
+          {isOwnProfile && (
+            <ModelInsight
+              prediction={modelPrediction}
+              matches={modelMatches}
+              minMatches={MODEL_MIN_MATCHES}
+              actualMbti={profile.mbti}
+            />
+          )}
           <AchievementsGrid unlocks={achievementRows} />
           {profileFriends.length > 0 ? (
             <FriendsPreview

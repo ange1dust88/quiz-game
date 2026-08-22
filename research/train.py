@@ -120,6 +120,35 @@ def main() -> int:
     (MODELS_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"[done] {len(manifest)} models + manifest.json in {MODELS_DIR}/")
 
+    # ---- export portable weights for in-app (TypeScript) inference --------
+    # Final models are linear pipelines (mean-impute -> standardise ->
+    # ridge/logistic), so inference is w·((x-μ)/σ)+b — trivially portable.
+    # The web app loads this JSON and predicts server-side with no Python.
+    weights: dict[str, dict] = {}
+    for name, meta in manifest.items():
+        m = joblib.load(MODELS_DIR / f"{name}.joblib")
+        imp, sc, est = m.named_steps["imp"], m.named_steps["sc"], m.named_steps["m"]
+        coef = est.coef_[0] if meta["kind"] == "binary" else est.coef_
+        weights[name] = {
+            **{k: meta[k] for k in ("kind", "n") if k in meta},
+            "positiveLetter": meta.get("positive_letter"),
+            "cv": meta.get("cv_balanced_acc", meta.get("cv_mae")),
+            "baseline": meta.get("baseline", meta.get("baseline_mae")),
+            "beatsBaseline": meta["beats_baseline"],
+            "features": FEATURES,
+            "imputeMeans": [round(float(v), 6) for v in imp.statistics_],
+            "scaleMeans": [round(float(v), 6) for v in sc.mean_],
+            "scaleStds": [round(float(v), 6) for v in sc.scale_],
+            "coef": [round(float(v), 6) for v in np.ravel(coef)],
+            "intercept": round(float(np.ravel(est.intercept_)[0]), 6),
+        }
+    payload = json.dumps({"trainedAt": pd.Timestamp.utcnow().isoformat(),
+                          "minMatches": args.min_matches, "models": weights}, indent=1)
+    (MODELS_DIR / "weights.json").write_text(payload)
+    web_copy = Path(__file__).parent.parent / "apps/web/app/lib/modelWeights.json"
+    web_copy.write_text(payload)
+    print(f"[export] weights.json -> models/ and {web_copy.relative_to(Path(__file__).parent.parent)}")
+
     # ---- demo: predict for a few players ----------------------------------
     if args.demo and manifest:
         print("\n[demo] predictions vs actual")
