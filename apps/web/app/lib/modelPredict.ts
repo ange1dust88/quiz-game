@@ -51,7 +51,8 @@ function featureVector(f: PlayerFeatures): Array<number | null> {
 function linear(m: ModelWeights, x: Array<number | null>): number {
   let z = m.intercept;
   for (let i = 0; i < m.coef.length; i++) {
-    const raw = x[i] ?? m.imputeMeans[i];
+    const xi = x[i];
+    const raw = xi !== null && Number.isFinite(xi) ? xi : m.imputeMeans[i];
     z += m.coef[i] * ((raw - m.scaleMeans[i]) / (m.scaleStds[i] || 1));
   }
   return z;

@@ -151,6 +151,7 @@ type Acc = {
   defenderCorrect: number;
   defenderTotal: number;
   relErrSum: number;
+  relErrCount: number;
   numericCount: number;
   thinkSum: number;
   thinkCount: number;
@@ -183,6 +184,7 @@ function emptyAcc(): Acc {
     defenderCorrect: 0,
     defenderTotal: 0,
     relErrSum: 0,
+    relErrCount: 0,
     numericCount: 0,
     thinkSum: 0,
     thinkCount: 0,
@@ -258,9 +260,15 @@ export function extractFeatures(
       const pid = toProfile.get(na.playerId);
       if (!pid) continue;
       const a = get(pid);
+      // Legacy telemetry (pre-correctAnswer) yields NaN here — skip the
+      // closeness contribution but keep timing/hesitation, which those
+      // rows do carry.
       const denom = Math.max(1, Math.abs(na.correctAnswer));
       const relErr = Math.min(1, Math.abs(na.diff) / denom);
-      a.relErrSum += relErr;
+      if (Number.isFinite(relErr)) {
+        a.relErrSum += relErr;
+        a.relErrCount += 1;
+      }
       a.numericCount += 1;
       if (na.firstInputAtMs !== null) {
         a.thinkSum += na.firstInputAtMs;
@@ -335,7 +343,7 @@ export function extractFeatures(
       warAccuracy: safeDiv(a.warCorrect, a.warTotal),
       attackerAccuracy: safeDiv(a.attackerCorrect, a.attackerTotal),
       defenderAccuracy: safeDiv(a.defenderCorrect, a.defenderTotal),
-      numericCloseness: 1 - safeDiv(a.relErrSum, a.numericCount, 1),
+      numericCloseness: 1 - safeDiv(a.relErrSum, a.relErrCount, 1),
       avgThinkMs: safeDiv(a.thinkSum, a.thinkCount),
       avgHesitation: safeDiv(a.hesitationSum, a.hesitationCount),
       riskAppetite: safeDiv(a.riskyCapitals, a.totalCapitals),
