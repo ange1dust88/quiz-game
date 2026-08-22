@@ -346,6 +346,27 @@ describe("extractFeatures", () => {
     expect(px.avgTargetStrengthPct).toBeNull();
   });
 
+  it("survives legacy telemetry rows without correctAnswer (no NaN)", () => {
+    // Old snapshots predate the correctAnswer field; their closeness
+    // contribution must be skipped, not poison the average with NaN.
+    const legacy: SnapshotLike = {
+      finalState: { players: [{ id: "m1", profileId: "p1", nickname: "A" }] },
+      telemetry: {
+        numericAnswers: [
+          // legacy row — no correctAnswer, diff undefined
+          { playerId: "m1", category: "geo", timeMs: 3000, firstInputAtMs: 900, inputChangeCount: 2 } as never,
+          // modern row — clean
+          { playerId: "m1", category: "geo", diff: 10, correctAnswer: 100, timeMs: 2000, firstInputAtMs: 500, inputChangeCount: 1 },
+        ],
+      },
+    };
+    const f = extractFeatures([legacy]).find((x) => x.profileId === "p1")!;
+    expect(Number.isFinite(f.numericCloseness)).toBe(true);
+    expect(f.numericCloseness).toBeCloseTo(0.9, 10); // only the modern row counts
+    expect(f.avgThinkMs).toBe(700); // timing still pools BOTH rows
+    expect(f.numericCount).toBe(2);
+  });
+
   it("respects the minMatches filter", () => {
     expect(extractFeatures([snapshot], 2)).toHaveLength(0);
     expect(extractFeatures([snapshot], 1)).toHaveLength(2);
