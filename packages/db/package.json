@@ -12,7 +12,8 @@
   "scripts": {
     "generate": "prisma generate",
     "db:push": "prisma db push",
-    "studio": "prisma studio"
+    "studio": "prisma studio",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.2",
