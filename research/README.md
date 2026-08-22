@@ -43,6 +43,15 @@ needed — it stays in sync with the export.
 
 ## Run
 
+Notebook (charts + narrative — the thesis-friendly format):
+
+```bash
+.venv/bin/jupyter notebook analysis.ipynb
+# or headless re-run: .venv/bin/jupyter nbconvert --to notebook --execute --inplace analysis.ipynb
+```
+
+Script (same models, terminal output):
+
 ```bash
 python analysis.py europequiz-dataset.csv
 # only players with >= 3 completed matches (cleaner behavioural signal):

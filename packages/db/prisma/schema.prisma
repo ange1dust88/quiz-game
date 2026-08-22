@@ -58,6 +58,11 @@ model PlayerProfile {
   // mixed-language lobbies are fine, each player just reads their own.
   language          QuestionLanguage @default(en)
 
+  // True for seeded test players (generated profiles + matches).
+  // Invisible in the app UI; surfaced only in the admin dataset/CSV so
+  // synthetic rows are filterable in analysis and wipeable in one query.
+  synthetic         Boolean       @default(false)
+
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   games       PlayerInGame[]

@@ -61,6 +61,7 @@ export default async function DatasetPage() {
         mbti: true,
         iqScore: true,
         personalityTraits: true,
+        synthetic: true,
         createdAt: true,
       },
     }),
@@ -124,6 +125,7 @@ export default async function DatasetPage() {
       deliberateAttacks: f?.deliberateAttacks ?? 0,
       warAnswers: f?.warAnswerCount ?? 0,
       numericAnswers: f?.numericCount ?? 0,
+      synthetic: p.synthetic,
       joined: p.createdAt.toISOString().slice(0, 10),
     };
   });

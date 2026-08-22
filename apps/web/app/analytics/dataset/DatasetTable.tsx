@@ -43,6 +43,7 @@ export type DatasetRow = {
   deliberateAttacks: number;
   warAnswers: number;
   numericAnswers: number;
+  synthetic: boolean;
   joined: string;
 };
 
@@ -87,6 +88,7 @@ const COLS: Col[] = [
   { key: "deliberateAttacks", label: "nAtk", group: "Targeting", num: true },
   { key: "warAnswers", label: "nWar", group: "Behaviour", num: true },
   { key: "numericAnswers", label: "nNum", group: "Behaviour", num: true },
+  { key: "synthetic", label: "Syn", group: "Meta" },
   { key: "joined", label: "Joined", group: "Meta" },
 ];
 
@@ -104,6 +106,7 @@ function cell(row: DatasetRow, key: keyof DatasetRow): string {
   const v = row[key];
   if (v === null || v === undefined) return "";
   if (Array.isArray(v)) return v.join("; ");
+  if (typeof v === "boolean") return v ? "yes" : "";
   return String(v);
 }
 
