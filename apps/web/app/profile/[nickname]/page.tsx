@@ -55,6 +55,25 @@ export default async function ProfilePage({
   if (!viewer) redirect("/login");
   const isOwnProfile = viewer.id === profile.id;
 
+  // Admins (ADMIN_EMAILS) can see the AI-inference card on any profile —
+  // it's research tooling; regular players still only see their own.
+  let viewerIsAdmin = false;
+  if (!isOwnProfile) {
+    const adminEmails = (process.env.ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (adminEmails.length) {
+      const viewerUser = await prisma.user.findUnique({
+        where: { id: viewer.userId },
+        select: { email: true },
+      });
+      viewerIsAdmin = Boolean(
+        viewerUser && adminEmails.includes(viewerUser.email.toLowerCase()),
+      );
+    }
+  }
+
   const [
     snapshots,
     eloHistory,
@@ -387,7 +406,7 @@ export default async function ProfilePage({
   const MODEL_MIN_MATCHES = 3;
   let modelPrediction = null;
   let modelMatches = 0;
-  if (isOwnProfile) {
+  if (isOwnProfile || viewerIsAdmin) {
     const myFeatures = extractFeatures(snapshots as SnapshotLike[]).find(
       (f) => f.profileId === profile.id,
     );
@@ -416,12 +435,13 @@ export default async function ProfilePage({
           </div>
         </div>
         <div className="flex flex-col gap-4 min-w-0">
-          {isOwnProfile && (
+          {(isOwnProfile || viewerIsAdmin) && (
             <ModelInsight
               prediction={modelPrediction}
               matches={modelMatches}
               minMatches={MODEL_MIN_MATCHES}
               actualMbti={profile.mbti}
+              adminView={!isOwnProfile}
             />
           )}
           <AchievementsGrid unlocks={achievementRows} />

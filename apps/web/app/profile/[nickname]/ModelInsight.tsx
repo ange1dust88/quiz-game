@@ -16,18 +16,41 @@ export default function ModelInsight({
   matches,
   minMatches,
   actualMbti,
+  adminView = false,
 }: {
   prediction: ModelPrediction | null;
   matches: number;
   minMatches: number;
   actualMbti: string | null;
+  adminView?: boolean;
 }) {
   return (
-    <PanelCard title="AI · what your play style suggests" accent="#ff6cf3">
+    <PanelCard
+      title={adminView ? "AI · play style inference" : "AI · what your play style suggests"}
+      accent="#ff6cf3"
+    >
+      {adminView && (
+        <div
+          className="border px-3 py-1.5 mb-3 flex items-center gap-2"
+          style={{
+            background: "color-mix(in srgb, var(--color-gold) 10%, transparent)",
+            borderColor: "color-mix(in srgb, var(--color-gold) 35%, transparent)",
+          }}
+        >
+          <span className="font-head text-[9px]" style={{ color: "var(--color-gold)" }}>
+            ADMIN VIEW
+          </span>
+          <span className="font-mono text-[9px] text-dim">
+            visible only to admins — the player doesn&apos;t see this on
+            their public profile
+          </span>
+        </div>
+      )}
       {!prediction ? (
         <p className="font-body text-xs text-mute leading-relaxed">
-          Play at least {minMatches} matches ({matches}/{minMatches} so far)
-          and the research model will guess your profile from how you play.
+          {adminView
+            ? `This player needs at least ${minMatches} matches (${matches}/${minMatches} so far) before the model can infer their profile.`
+            : `Play at least ${minMatches} matches (${matches}/${minMatches} so far) and the research model will guess your profile from how you play.`}
         </p>
       ) : (
         <div className="flex flex-col gap-3">
@@ -125,9 +148,9 @@ export default function ModelInsight({
 
           <p className="font-mono text-[9px] text-dim leading-relaxed">
             Research demo — linear models trained on the current dataset,
-            visible only to you. Accuracy is limited by sample size; axes
-            that don&apos;t beat chance yet are shown anyway for
-            transparency.
+            visible only to {adminView ? "admins" : "you"}. Accuracy is
+            limited by sample size; axes that don&apos;t beat chance yet
+            are shown anyway for transparency.
           </p>
         </div>
       )}
