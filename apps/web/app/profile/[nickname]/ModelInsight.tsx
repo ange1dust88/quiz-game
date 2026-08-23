@@ -17,12 +17,17 @@ export default function ModelInsight({
   minMatches,
   actualMbti,
   adminView = false,
+  lifetimeMatches = 0,
 }: {
   prediction: ModelPrediction | null;
   matches: number;
   minMatches: number;
   actualMbti: string | null;
   adminView?: boolean;
+  // PlayerProfile.gamesPlayed — can exceed `matches` because old
+  // sessions are cleaned up (snapshots deleted, counters kept). The
+  // model can only analyse matches whose telemetry still exists.
+  lifetimeMatches?: number;
 }) {
   return (
     <PanelCard
@@ -49,8 +54,15 @@ export default function ModelInsight({
       {!prediction ? (
         <p className="font-body text-xs text-mute leading-relaxed">
           {adminView
-            ? `This player needs at least ${minMatches} matches (${matches}/${minMatches} so far) before the model can infer their profile.`
-            : `Play at least ${minMatches} matches (${matches}/${minMatches} so far) and the research model will guess your profile from how you play.`}
+            ? `This player needs at least ${minMatches} analysable matches (${matches}/${minMatches} with telemetry so far) before the model can infer their profile.`
+            : `Play at least ${minMatches} matches (${matches}/${minMatches} analysable so far) and the research model will guess your profile from how you play.`}
+          {lifetimeMatches > matches && (
+            <span className="block mt-1 font-mono text-[10px] text-dim">
+              {lifetimeMatches} played lifetime — telemetry for older
+              matches has been cleaned up, so they can&apos;t feed the
+              model.
+            </span>
+          )}
         </p>
       ) : (
         <div className="flex flex-col gap-3">

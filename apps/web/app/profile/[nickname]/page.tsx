@@ -442,6 +442,7 @@ export default async function ProfilePage({
               minMatches={MODEL_MIN_MATCHES}
               actualMbti={profile.mbti}
               adminView={!isOwnProfile}
+              lifetimeMatches={profile.gamesPlayed}
             />
           )}
           <AchievementsGrid unlocks={achievementRows} />
