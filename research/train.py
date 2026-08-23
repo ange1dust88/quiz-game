@@ -117,6 +117,38 @@ def main() -> int:
         print(f"── {name:12s} n={len(yy):3d}  CV bal.acc {cv_ba:.3f} vs 0.500"
               f"  {'✓ beats' if cv_ba > 0.5 else '✗ no better'}  → {path.name}")
 
+    # ---- multi-class targets (education / occupation) ----------------------
+    for name, col in [("education", "Education"), ("occupation", "Occupation")]:
+        if col not in df.columns:
+            continue
+        y = df[col].astype("object")
+        mask = y.notna() & (y.astype(str).str.len() > 0)
+        X, yy = df.loc[mask, FEATURES], y[mask].astype(str)
+        classes = yy.value_counts()
+        if len(yy) < 10 or len(classes) < 2:
+            print(f"── {name:12s} skipped (n={len(yy)}, classes={len(classes)})")
+            continue
+        model = pipe(LogisticRegression(max_iter=1000))
+        cv_ba = None
+        k = int(min(5, classes.min()))
+        if k >= 2:
+            cv = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
+            cv_pred = cross_val_predict(model, X, yy, cv=cv)
+            cv_ba = balanced_accuracy_score(yy, cv_pred)
+        chance = 1.0 / len(classes)
+        model.fit(X, yy)
+        path = MODELS_DIR / f"{name}.joblib"
+        joblib.dump(model, path)
+        manifest[name] = {"kind": "multiclass", "model": "logistic", "n": int(len(yy)),
+                          "classes": list(model.named_steps["m"].classes_),
+                          "cv_balanced_acc": round(cv_ba, 3) if cv_ba is not None else None,
+                          "baseline": round(chance, 3),
+                          "beats_baseline": bool(cv_ba is not None and cv_ba > chance),
+                          "features": FEATURES}
+        cv_s = f"{cv_ba:.3f}" if cv_ba is not None else "n/a"
+        print(f"── {name:12s} n={len(yy):3d}  CV bal.acc {cv_s} vs chance {chance:.3f}"
+              f"  ({len(classes)} classes)  → {path.name}")
+
     (MODELS_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"[done] {len(manifest)} models + manifest.json in {MODELS_DIR}/")
 
@@ -128,7 +160,13 @@ def main() -> int:
     for name, meta in manifest.items():
         m = joblib.load(MODELS_DIR / f"{name}.joblib")
         imp, sc, est = m.named_steps["imp"], m.named_steps["sc"], m.named_steps["m"]
-        coef = est.coef_[0] if meta["kind"] == "binary" else est.coef_
+        if meta["kind"] == "multiclass":
+            coef = [[round(float(v), 6) for v in row] for row in est.coef_]
+            intercept = [round(float(v), 6) for v in est.intercept_]
+        else:
+            coef = [round(float(v), 6) for v in np.ravel(
+                est.coef_[0] if meta["kind"] == "binary" else est.coef_)]
+            intercept = round(float(np.ravel(est.intercept_)[0]), 6)
         weights[name] = {
             **{k: meta[k] for k in ("kind", "n") if k in meta},
             "positiveLetter": meta.get("positive_letter"),
@@ -139,8 +177,9 @@ def main() -> int:
             "imputeMeans": [round(float(v), 6) for v in imp.statistics_],
             "scaleMeans": [round(float(v), 6) for v in sc.mean_],
             "scaleStds": [round(float(v), 6) for v in sc.scale_],
-            "coef": [round(float(v), 6) for v in np.ravel(coef)],
-            "intercept": round(float(np.ravel(est.intercept_)[0]), 6),
+            "classes": meta.get("classes"),
+            "coef": coef,
+            "intercept": intercept,
         }
     payload = json.dumps({"trainedAt": pd.Timestamp.utcnow().isoformat(),
                           "minMatches": args.min_matches, "models": weights}, indent=1)

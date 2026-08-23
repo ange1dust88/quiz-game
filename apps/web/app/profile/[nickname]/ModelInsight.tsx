@@ -5,6 +5,11 @@
 
 import PanelCard from "@/app/components/ui/PanelCard";
 import type { ModelPrediction } from "@/app/lib/modelPredict";
+import {
+  EDUCATION_OPTIONS,
+  OCCUPATION_OPTIONS,
+  labelOf,
+} from "@/app/lib/profileOptions";
 
 export default function ModelInsight({
   prediction,
@@ -69,6 +74,33 @@ export default function ModelInsight({
               );
             })}
           </div>
+
+          {(prediction.education || prediction.occupation) && (
+            <div className="grid grid-cols-2 gap-2">
+              {prediction.education && (
+                <div className="bg-panel border border-stroke px-3 py-2 flex flex-col">
+                  <span className="font-head text-[9px] text-dim">Est. education</span>
+                  <span className="font-mono text-sm font-bold text-white leading-tight">
+                    {labelOf(prediction.education.label, EDUCATION_OPTIONS)}
+                  </span>
+                  <span className="font-mono text-[9px] text-dim mt-0.5">
+                    {Math.round(prediction.education.probability * 100)}% conf
+                  </span>
+                </div>
+              )}
+              {prediction.occupation && (
+                <div className="bg-panel border border-stroke px-3 py-2 flex flex-col">
+                  <span className="font-head text-[9px] text-dim">Est. field</span>
+                  <span className="font-mono text-sm font-bold text-white leading-tight">
+                    {labelOf(prediction.occupation.label, OCCUPATION_OPTIONS)}
+                  </span>
+                  <span className="font-mono text-[9px] text-dim mt-0.5">
+                    {Math.round(prediction.occupation.probability * 100)}% conf
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           {(prediction.iq || prediction.age) && (
             <div className="grid grid-cols-2 gap-2">
