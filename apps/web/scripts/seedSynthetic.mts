@@ -15,6 +15,11 @@ import { evaluateAchievements } from "@quiz/shared/achievements";
 import bcrypt from "bcrypt";
 
 const TARGET = parseInt(process.argv[2] ?? "25", 10);
+// Every synthetic player is topped up to this TOTAL match count range —
+// existing seeded players included, so re-running the script after
+// raising these adds matches without touching profiles.
+const MIN_GAMES = parseInt(process.argv[3] ?? "10", 10);
+const MAX_GAMES = parseInt(process.argv[4] ?? "15", 10);
 
 // Esports-style tags (invented, not real people's identities).
 const NICKS = [
@@ -73,7 +78,7 @@ function makeLatent(): Latent & { mbtiType: string } {
 async function main() {
   const existing = await prisma.playerProfile.count();
   const need = TARGET - existing;
-  if (need <= 0) { console.log(`already ${existing} players (target ${TARGET}) — nothing to do`); return; }
+  if (need <= 0) console.log(`already ${existing} players (target ${TARGET}) — topping up matches only`);
   console.log(`players: ${existing} → target ${TARGET} (creating ${need} synthetic)`);
 
   const templates = await prisma.countryTemplate.findMany({ select: { id: true, svgId: true } });
@@ -128,9 +133,32 @@ async function main() {
   }
   console.log(`created ${created.length} profiles`);
 
-  // ---- matches: 2-4 synthetic players each, everyone gets 3-6 games ----
-  const gamesTarget = new Map(created.map((c) => [c.profileId, int(3, 6)]));
-  const gamesDone = new Map(created.map((c) => [c.profileId, 0]));
+  // ---- roster: new + existing synthetic players ------------------------
+  // Latents for existing players are rebuilt from their stored MBTI/IQ,
+  // so extra matches keep each player's behavioural style consistent
+  // with what they already played.
+  const knownIds = new Set(created.map((c) => c.profileId));
+  const existingSynths = await prisma.playerProfile.findMany({
+    where: { synthetic: true, id: { notIn: [...knownIds] } },
+    select: { id: true, nickname: true, mbti: true, iqScore: true, birthYear: true,
+              elo: true, level: true, experience: true, gamesWon: true, gamesLost: true },
+  });
+  for (const e of existingSynths) {
+    const iq = e.iqScore ?? clamp(Math.round(gauss(104, 13)), 78, 142);
+    const m = e.mbti && e.mbti.length === 4 ? e.mbti : dealMbti();
+    created.push({
+      profileId: e.id, nickname: e.nickname,
+      lat: { iq, age: e.birthYear ? 2026 - e.birthYear : int(16, 41), mbtiType: m,
+             E: m[0] === "E", N: m[1] === "N", T: m[2] === "T", J: m[3] === "J",
+             skill: clamp(0.5 + (iq - 104) / 80 + gauss(0, 0.12), 0.05, 0.95) } as never,
+      elo: e.elo, xp: (e.level - 1) * 1000 + e.experience,
+      wins: e.gamesWon, losses: e.gamesLost,
+    });
+  }
+
+  // ---- matches: top everyone up to MIN..MAX total games ----------------
+  const gamesTarget = new Map(created.map((c) => [c.profileId, int(MIN_GAMES, MAX_GAMES)]));
+  const gamesDone = new Map(created.map((c) => [c.profileId, c.wins + c.losses]));
   let sessionsMade = 0;
 
   while (true) {
