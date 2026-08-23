@@ -82,10 +82,24 @@ async function main() {
   if (!templates.length || !questions.length || !warQs.length) throw new Error("need CountryTemplate + Question + WarQuestion rows");
 
   const hash = await bcrypt.hash(`synthetic-${Date.now()}`, 10);
+  // Nicknames must be unique across seeding runs — earlier batches may
+  // have consumed the base pool, so suffix until free.
+  const taken = new Set(
+    (await prisma.playerProfile.findMany({ select: { nickname: true } })).map(
+      (p) => p.nickname.toLowerCase(),
+    ),
+  );
+  const freeNick = (base: string): string => {
+    let cand = base;
+    let n = 2;
+    while (taken.has(cand.toLowerCase())) cand = `${base}${n++}`;
+    taken.add(cand.toLowerCase());
+    return cand;
+  };
   const created: Array<{ profileId: string; nickname: string; lat: Latent; elo: number; xp: number; wins: number; losses: number; }> = [];
 
   for (let i = 0; i < need; i++) {
-    const nickname = NICKS[i % NICKS.length] + (i >= NICKS.length ? String(i) : "");
+    const nickname = freeNick(NICKS[i % NICKS.length]);
     const lat = makeLatent();
     const [country, city, language] = pick(COUNTRIES);
     const nTraits = int(2, 5);
