@@ -8,6 +8,7 @@ import type { ModelPrediction } from "@/app/lib/modelPredict";
 import {
   EDUCATION_OPTIONS,
   OCCUPATION_OPTIONS,
+  PERSONALITY_TRAITS,
   labelOf,
 } from "@/app/lib/profileOptions";
 
@@ -134,6 +135,54 @@ export default function ModelInsight({
                   </span>
                 </div>
               )}
+            </div>
+          )}
+
+          {(prediction.country || prediction.gender) && (
+            <div className="grid grid-cols-2 gap-2">
+              {prediction.country && (
+                <div className="bg-panel border border-stroke px-3 py-2 flex flex-col">
+                  <span className="font-head text-[9px] text-dim">Est. country</span>
+                  <span className="font-mono text-sm font-bold text-white leading-tight">
+                    {prediction.country.label}
+                  </span>
+                  <span className="font-mono text-[9px] text-dim mt-0.5">
+                    {Math.round(prediction.country.probability * 100)}% conf
+                  </span>
+                </div>
+              )}
+              {prediction.gender && (
+                <div className="bg-panel border border-stroke px-3 py-2 flex flex-col">
+                  <span className="font-head text-[9px] text-dim">Est. gender</span>
+                  <span className="font-mono text-sm font-bold text-white leading-tight capitalize">
+                    {prediction.gender.label}
+                  </span>
+                  <span className="font-mono text-[9px] text-dim mt-0.5">
+                    {Math.round(prediction.gender.probability * 100)}% conf
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {prediction.traits.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="font-head text-[9px] text-dim">
+                Likely traits
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {prediction.traits.map((t) => (
+                  <span
+                    key={t.trait}
+                    className="font-head text-[10px] px-2 py-1 border border-stroke bg-panel text-mute"
+                  >
+                    {labelOf(t.trait, PERSONALITY_TRAITS)}{" "}
+                    <span className="font-mono text-[9px] text-dim">
+                      {Math.round(t.probability * 100)}%
+                    </span>
+                  </span>
+                ))}
+              </div>
             </div>
           )}
 

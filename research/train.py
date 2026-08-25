@@ -118,7 +118,8 @@ def main() -> int:
               f"  {'✓ beats' if cv_ba > 0.5 else '✗ no better'}  → {path.name}")
 
     # ---- multi-class targets (education / occupation) ----------------------
-    for name, col in [("education", "Education"), ("occupation", "Occupation")]:
+    for name, col in [("education", "Education"), ("occupation", "Occupation"),
+                      ("country", "Country"), ("gender", "Gender")]:
         if col not in df.columns:
             continue
         y = df[col].astype("object")
@@ -149,6 +150,43 @@ def main() -> int:
         print(f"── {name:12s} n={len(yy):3d}  CV bal.acc {cv_s} vs chance {chance:.3f}"
               f"  ({len(classes)} classes)  → {path.name}")
 
+    # ---- personality traits (multi-label: one binary head per trait) -------
+    TRAITS = ["analytical","creative","organized","spontaneous","sociable",
+              "reserved","calm","energetic","ambitious","easygoing",
+              "empathetic","pragmatic","curious","cautious","risk_taking",
+              "detail_oriented"]
+    if "Traits" in df.columns:
+        traits_raw = df["Traits"].astype("string")
+        labelled_mask = traits_raw.notna() & (traits_raw.str.len() > 0)
+        trait_sets = traits_raw[labelled_mask].apply(
+            lambda v: {t.strip() for t in str(v).split(";")})
+        for tr in TRAITS:
+            y = pd.Series(np.nan, index=df.index, dtype="float")
+            y[labelled_mask] = trait_sets.apply(lambda st: float(tr in st))
+            mask = y.notna()
+            X, yy = df.loc[mask, FEATURES], y[mask]
+            npos = int((yy == 1).sum())
+            if len(yy) < 12 or npos < 3 or (len(yy) - npos) < 3:
+                continue  # too thin / degenerate — skip silently
+            k = int(min(5, yy.value_counts().min()))
+            model = pipe(LogisticRegression(max_iter=1000))
+            cv_ba = None
+            if k >= 2:
+                cv = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
+                cv_pred = cross_val_predict(model, X, yy, cv=cv)
+                cv_ba = balanced_accuracy_score(yy, cv_pred)
+            model.fit(X, yy)
+            name = f"trait_{tr}"
+            joblib.dump(model, MODELS_DIR / f"{name}.joblib")
+            manifest[name] = {"kind": "binary", "model": "logistic", "n": int(len(yy)),
+                              "trait": tr, "positive_letter": None,
+                              "cv_balanced_acc": round(cv_ba, 3) if cv_ba is not None else None,
+                              "baseline": 0.5,
+                              "beats_baseline": bool(cv_ba is not None and cv_ba > 0.5),
+                              "features": FEATURES}
+        n_traits = sum(1 for k2 in manifest if k2.startswith("trait_"))
+        print(f"── traits       {n_traits}/{len(TRAITS)} heads trained (rest too thin)")
+
     (MODELS_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"[done] {len(manifest)} models + manifest.json in {MODELS_DIR}/")
 
@@ -178,6 +216,7 @@ def main() -> int:
             "scaleMeans": [round(float(v), 6) for v in sc.mean_],
             "scaleStds": [round(float(v), 6) for v in sc.scale_],
             "classes": meta.get("classes"),
+            "trait": meta.get("trait"),
             "coef": coef,
             "intercept": intercept,
         }
@@ -201,7 +240,7 @@ def main() -> int:
                 for pl, pr, ac in zip(sample["Player"], pred, actual):
                     ac_s = f"{ac:.0f}" if pd.notna(ac) else "—"
                     print(f"   {name:8s} {pl:16s} pred {pr:6.1f}  actual {ac_s}")
-            else:
+            elif meta.get("positive_letter"):
                 letter = meta["positive_letter"]
                 proba = model.predict_proba(X)[:, 1]
                 pos = int({"E":0,"S":1,"T":2,"J":3}[letter])

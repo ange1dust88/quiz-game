@@ -23,6 +23,7 @@ type ModelWeights = {
   coef: number[] | number[][];
   intercept: number | number[];
   classes?: string[] | null;
+  trait?: string | null;
 };
 
 const MODELS = (weightsFile as { models: Record<string, ModelWeights> }).models;
@@ -103,6 +104,8 @@ export type AxisPrediction = {
 
 export type ClassPrediction = { label: string; probability: number; n: number };
 
+export type TraitPrediction = { trait: string; probability: number };
+
 export type ModelPrediction = {
   trainedAt: string;
   axes: AxisPrediction[];
@@ -111,6 +114,10 @@ export type ModelPrediction = {
   age: { value: number; cvMae: number; beatsBaseline: boolean } | null;
   education: ClassPrediction | null;
   occupation: ClassPrediction | null;
+  country: ClassPrediction | null;
+  gender: ClassPrediction | null;
+  // Traits the model considers likely (p >= 0.5), strongest first.
+  traits: TraitPrediction[];
 };
 
 const AXES: Array<{ key: string; axis: AxisPrediction["axis"]; letters: [string, string] }> = [
@@ -149,5 +156,13 @@ export function predictProfile(f: PlayerFeatures): ModelPrediction {
     age: ageM ? { value: Math.round(linear(ageM, x)), cvMae: ageM.cv ?? 0, beatsBaseline: ageM.beatsBaseline } : null,
     education: classPred("education"),
     occupation: classPred("occupation"),
+    country: classPred("country"),
+    gender: classPred("gender"),
+    traits: Object.entries(MODELS)
+      .filter(([k, m]) => k.startsWith("trait_") && m.kind === "binary" && m.trait)
+      .map(([, m]) => ({ trait: m.trait as string, probability: sigmoid(linear(m, x)) }))
+      .filter((t) => t.probability >= 0.5)
+      .sort((a, b) => b.probability - a.probability)
+      .slice(0, 6),
   };
 }
