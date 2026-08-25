@@ -75,8 +75,19 @@ function classify(
   const classes = m.classes ?? [];
   const coef = m.coef as number[][];
   const intercept = m.intercept as number[];
-  if (classes.length < 2 || coef.length !== classes.length) return null;
+  if (classes.length < 2) return null;
   const xs = standardize(m, x);
+  // sklearn stores TWO-class "multiclass" logistic with a single
+  // coefficient row: sigmoid(z) is P(classes[1]).
+  if (classes.length === 2 && coef.length === 1) {
+    let z = intercept[0];
+    for (let i = 0; i < coef[0].length; i++) z += coef[0][i] * xs[i];
+    const p1 = 1 / (1 + Math.exp(-z));
+    return p1 >= 0.5
+      ? { label: classes[1], probability: p1 }
+      : { label: classes[0], probability: 1 - p1 };
+  }
+  if (coef.length !== classes.length) return null;
   const scores = coef.map((row, c) => {
     let z = intercept[c];
     for (let i = 0; i < row.length; i++) z += row[i] * xs[i];
